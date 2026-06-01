@@ -8,20 +8,27 @@ export const metadata: Metadata = {
 };
 
 /** Map login query flags to a banner. */
-function noticeFor(params: { registered?: string; verified?: string; verify?: string }): NoticeData | undefined {
+function noticeFor(params: {
+  registered?: string;
+  verified?: string;
+  verify?: string;
+  reset?: string;
+}): NoticeData | undefined {
   if (params.registered === "1")
     return { type: "success", message: "Email verification has been sent — please check your email, then log in." };
   if (params.verified === "1")
     return { type: "success", message: "Your email is verified. You can now log in." };
   if (params.verify === "invalid")
     return { type: "error", message: "That verification link is invalid or has expired." };
+  if (params.reset === "1")
+    return { type: "success", message: "Your password has been reset. You can now log in." };
   return undefined;
 }
 
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ registered?: string; verified?: string; verify?: string }>;
+  searchParams: Promise<{ registered?: string; verified?: string; verify?: string; reset?: string }>;
 }) {
   const notice = noticeFor(await searchParams);
   return <AuthCard mode="login" notice={notice} />;

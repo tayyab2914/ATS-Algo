@@ -21,9 +21,31 @@ model User {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
-  verificationTokens VerificationToken[]
+  // Account settings
+  avatarUrl            String?
+  tradingViewConnected Boolean @default(false)
+  walletConnected      Boolean @default(false)
+  walletAddress        String?
+
+  verificationTokens  VerificationToken[]
+  passwordResetTokens PasswordResetToken[]
+  exchangeConnections ExchangeConnection[]
 
   @@map("users")
+}
+
+/// A user's connection to an exchange's API (key stored masked, never raw).
+model ExchangeConnection {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  exchange     String
+  permissions  String   @default("Read & Trade")
+  apiKeyMasked String?
+  createdAt    DateTime @default(now())
+
+  @@unique([userId, exchange])
+  @@map("exchange_connections")
 }
 
 enum Role {
@@ -53,4 +75,18 @@ model VerificationToken {
 
   @@index([userId])
   @@map("verification_tokens")
+}
+
+/// Single-use, expiring password-reset token. Stored as a SHA-256 hash; the
+/// raw token only ever lives in the emailed reset link.
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  tokenHash String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@map("password_reset_tokens")
 }

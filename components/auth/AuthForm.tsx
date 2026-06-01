@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/Button";
@@ -101,6 +102,15 @@ export function AuthForm({ mode, notice }: { mode: AuthMode; notice?: NoticeData
           />
         )}
       </div>
+
+      {!isSignup && (
+        <Link
+          href="/forgot-password"
+          className="-mt-1 self-end text-xs text-muted transition-colors hover:text-accent"
+        >
+          Forgot password?
+        </Link>
+      )}
 
       <Button type="submit" variant="primary" disabled={pending}>
         {pending ? "Please wait…" : "Sign Up"}

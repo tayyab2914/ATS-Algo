@@ -11,7 +11,7 @@ import { SESSION_COOKIE, verifyToken } from "@/lib/auth/jwt";
  *
  * Authoritative checks still run in route handlers / server components.
  */
-const PROTECTED = ["/dashboard"];
+const PROTECTED = ["/dashboard", "/account"];
 const ADMIN_ONLY = ["/admin/dashboard"];
 const AUTH_PAGES = ["/login", "/signup"];
 
@@ -38,5 +38,5 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/admin/dashboard/:path*", "/login", "/signup"],
+  matcher: ["/dashboard/:path*", "/account/:path*", "/admin/dashboard/:path*", "/login", "/signup"],
 };

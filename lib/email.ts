@@ -39,6 +39,24 @@ export async function sendAdminCodeEmail(to: string, code: string): Promise<void
   });
 }
 
+/** Send a password-reset email containing the reset link. */
+export async function sendPasswordResetEmail(to: string, resetUrl: string): Promise<void> {
+  await getTransporter().sendMail({
+    from: process.env.SMTP_FROM ?? process.env.SMTP_USER,
+    to,
+    subject: "Reset your Adrian Trading System password",
+    text: `We received a request to reset your password.\n\nReset it here: ${resetUrl}\n\nThis link expires in 1 hour. If you didn't request this, you can ignore this email.`,
+    html: `
+      <div style="font-family:Inter,Arial,sans-serif;background:#0a0a0a;color:#fff;padding:32px;border-radius:16px;max-width:480px">
+        <h1 style="font-size:20px;margin:0 0 8px">Reset your password</h1>
+        <p style="color:#b5b5b5;font-size:14px;line-height:21px">We received a request to reset your Adrian Trading System password.</p>
+        <a href="${resetUrl}" style="display:inline-block;margin-top:16px;background:#28b8d5;color:#121212;font-weight:600;text-decoration:none;padding:12px 24px;border-radius:12px">Reset password</a>
+        <p style="color:#6b7280;font-size:12px;margin-top:24px">This link expires in 1 hour. If you didn't request a reset, you can safely ignore this email.</p>
+      </div>
+    `,
+  });
+}
+
 /** Send the account verification email containing a confirmation link. */
 export async function sendVerificationEmail(to: string, verifyUrl: string): Promise<void> {
   await getTransporter().sendMail({
