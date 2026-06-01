@@ -1,0 +1,35 @@
+import type { NextRequest } from "next/server";
+import { ok, fail, zodFail } from "@/lib/api";
+import { toPublicUser } from "@/lib/auth/account";
+import { verifyPassword } from "@/lib/auth/password";
+import { createSession } from "@/lib/auth/session";
+import { prisma } from "@/lib/db";
+import { loginSchema } from "@/lib/validation";
+
+export async function POST(request: NextRequest) {
+  const parsed = loginSchema.safeParse(await request.json().catch(() => null));
+  if (!parsed.success) return zodFail(parsed.error);
+
+  const { email, password } = parsed.data;
+
+  const user = await prisma.user.findUnique({ where: { email } });
+  // Same response whether the user is missing or the password is wrong, to
+  // avoid leaking which emails are registered.
+  if (!user || !(await verifyPassword(password, user.passwordHash))) {
+    return fail("Invalid email or password", 401);
+  }
+
+  // Block sign-in until the email address is confirmed.
+  if (user.emailVerified === null) {
+    return fail("Please verify your email before logging in. Check your inbox for the confirmation link.", 403);
+  }
+
+  await createSession({
+    sub: user.id,
+    email: user.email,
+    role: user.role === "ADMIN" ? "ADMIN" : "USER",
+    emailVerified: user.emailVerified !== null,
+  });
+
+  return ok({ user: toPublicUser(user) });
+}
