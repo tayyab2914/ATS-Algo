@@ -9,7 +9,7 @@ import { HERO_STATS } from "@/lib/landing-content";
  * Above-the-fold hero: animated background, an announcement pill, a gradient
  * headline, dual CTAs, count-up trust stats and the floating product preview.
  */
-export function Hero() {
+export function Hero({ loggedIn = false }: { loggedIn?: boolean }) {
   return (
     <section id="top" className="relative isolate overflow-hidden px-5 pb-20 pt-28 sm:px-8 sm:pt-32 lg:pb-28">
       <BackgroundFX />
@@ -45,10 +45,10 @@ export function Hero() {
           <Reveal delay={240}>
             <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">
               <Link
-                href="/signup"
+                href={loggedIn ? "/dashboard" : "/signup"}
                 className="group inline-flex h-12 items-center justify-center rounded-2xl bg-accent px-6 text-base font-semibold text-[#06141a] shadow-[0_0_40px_-8px_rgba(40,184,213,0.9)] transition-transform hover:-translate-y-0.5"
               >
-                Start trading free
+                {loggedIn ? "My Dashboard" : "Start trading free"}
                 <span aria-hidden className="ml-2 transition-transform group-hover:translate-x-1">
                   →
                 </span>

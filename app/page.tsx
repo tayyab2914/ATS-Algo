@@ -9,6 +9,7 @@ import { LandingNav } from "@/components/landing/LandingNav";
 import { Platform } from "@/components/landing/Platform";
 import { PriceTicker } from "@/components/landing/PriceTicker";
 import { Testimonials } from "@/components/landing/Testimonials";
+import { getSession } from "@/lib/auth/session";
 
 export const metadata: Metadata = {
   title: "Adrian Trading System — Automated Algorithmic Trading",
@@ -18,21 +19,24 @@ export const metadata: Metadata = {
 
 /**
  * Public marketing landing page. Composes the animated marketing sections and
- * funnels visitors toward /signup and /login. Replaces the old root redirect.
+ * funnels visitors toward /signup and /login. Visitors with a valid session see
+ * a "My Dashboard" shortcut instead of the sign-in / get-started CTAs.
  */
-export default function Home() {
+export default async function Home() {
+  const loggedIn = (await getSession()) !== null;
+
   return (
     <div className="relative flex min-h-screen flex-col bg-background">
-      <LandingNav />
+      <LandingNav loggedIn={loggedIn} />
       <main className="flex-1">
-        <Hero />
+        <Hero loggedIn={loggedIn} />
         <PriceTicker />
         <Features />
         <Platform />
         <HowItWorks />
         <ExchangeMarquee />
         <Testimonials />
-        <CtaSection />
+        <CtaSection loggedIn={loggedIn} />
       </main>
       <LandingFooter />
     </div>

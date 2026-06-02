@@ -5,7 +5,7 @@ import { Reveal } from "@/components/landing/Reveal";
  * Closing conversion panel: a glowing gradient slab with a rotating conic ring,
  * a panning grid and the primary sign-up CTA.
  */
-export function CtaSection() {
+export function CtaSection({ loggedIn = false }: { loggedIn?: boolean }) {
   return (
     <section className="px-5 py-20 sm:px-8 lg:py-28">
       <Reveal className="mx-auto max-w-5xl">
@@ -40,21 +40,35 @@ export function CtaSection() {
             </p>
 
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-              <Link
-                href="/signup"
-                className="group inline-flex h-12 items-center justify-center rounded-2xl bg-accent px-7 text-base font-semibold text-[#06141a] shadow-[0_0_44px_-8px_rgba(40,184,213,0.95)] transition-transform hover:-translate-y-0.5"
-              >
-                Create free account
-                <span aria-hidden className="ml-2 transition-transform group-hover:translate-x-1">
-                  →
-                </span>
-              </Link>
-              <Link
-                href="/login"
-                className="inline-flex h-12 items-center justify-center rounded-2xl border border-line bg-background/40 px-7 text-base font-medium text-white backdrop-blur transition-colors hover:border-accent/60 hover:text-accent"
-              >
-                Sign in
-              </Link>
+              {loggedIn ? (
+                <Link
+                  href="/dashboard"
+                  className="group inline-flex h-12 items-center justify-center rounded-2xl bg-accent px-7 text-base font-semibold text-[#06141a] shadow-[0_0_44px_-8px_rgba(40,184,213,0.95)] transition-transform hover:-translate-y-0.5"
+                >
+                  My Dashboard
+                  <span aria-hidden className="ml-2 transition-transform group-hover:translate-x-1">
+                    →
+                  </span>
+                </Link>
+              ) : (
+                <>
+                  <Link
+                    href="/signup"
+                    className="group inline-flex h-12 items-center justify-center rounded-2xl bg-accent px-7 text-base font-semibold text-[#06141a] shadow-[0_0_44px_-8px_rgba(40,184,213,0.95)] transition-transform hover:-translate-y-0.5"
+                  >
+                    Create free account
+                    <span aria-hidden className="ml-2 transition-transform group-hover:translate-x-1">
+                      →
+                    </span>
+                  </Link>
+                  <Link
+                    href="/login"
+                    className="inline-flex h-12 items-center justify-center rounded-2xl border border-line bg-background/40 px-7 text-base font-medium text-white backdrop-blur transition-colors hover:border-accent/60 hover:text-accent"
+                  >
+                    Sign in
+                  </Link>
+                </>
+              )}
             </div>
           </div>
         </div>

@@ -21,7 +21,7 @@ export async function createPasswordReset(userId: string, email: string): Promis
     data: { tokenHash: sha256(token), userId, expiresAt: new Date(Date.now() + RESET_TTL_MS) },
   });
 
-  const base = process.env.APP_URL ?? "http://localhost:3000";
+  const base = process.env.APP_URL ?? "https://ats-algo.vercel.app";
   await sendPasswordResetEmail(email, `${base}/reset-password?token=${token}`);
 }
 

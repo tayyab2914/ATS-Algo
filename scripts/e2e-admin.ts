@@ -2,7 +2,7 @@ import "dotenv/config";
 import { hashPassword } from "../lib/auth/password";
 import { prisma } from "../lib/db";
 
-const BASE = "http://localhost:3000";
+const BASE = "https://ats-algo.vercel.app";
 const log = (label: string, ...rest: unknown[]) => console.log(`• ${label}`, ...rest);
 
 async function adminCookie(): Promise<string> {

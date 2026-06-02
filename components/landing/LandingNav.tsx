@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Logo } from "@/components/brand/Logo";
 import { NAV_LINKS } from "@/lib/landing-content";
@@ -11,9 +12,13 @@ import { cn } from "@/lib/cn";
  * blurred glass bar once the page is scrolled. Collapses to a slide-down sheet
  * on mobile.
  */
-export function LandingNav() {
+export function LandingNav({ loggedIn = false }: { loggedIn?: boolean }) {
+  const router = useRouter();
   const [scrolled, setScrolled] = useState(false);
   const [open, setOpen] = useState(false);
+  // Seed from the server render, then confirm against the live session so a
+  // stale tab (loaded before sign-in) self-corrects without a manual reload.
+  const [authed, setAuthed] = useState(loggedIn);
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 16);
@@ -21,6 +26,22 @@ export function LandingNav() {
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/auth/me", { cache: "no-store" })
+      .then((res) => res.ok)
+      .catch(() => loggedIn)
+      .then((live) => {
+        if (cancelled || live === loggedIn) return;
+        setAuthed(live);
+        // Re-render the server components (Hero / CTA) with the correct state.
+        router.refresh();
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [loggedIn, router]);
 
   return (
     <header
@@ -55,21 +76,35 @@ export function LandingNav() {
           >
             Bot Library
           </Link>
-          <Link
-            href="/login"
-            className="rounded-full px-4 py-2 text-sm font-medium text-white/90 transition-colors hover:text-accent"
-          >
-            Login
-          </Link>
-          <Link
-            href="/signup"
-            className="group relative inline-flex h-10 items-center justify-center rounded-full bg-accent px-5 text-sm font-semibold text-[#06141a] shadow-[0_0_24px_-6px_rgba(40,184,213,0.8)] transition-transform hover:-translate-y-0.5"
-          >
-            Get Started
-            <span aria-hidden className="ml-1.5 transition-transform group-hover:translate-x-0.5">
-              →
-            </span>
-          </Link>
+          {authed ? (
+            <Link
+              href="/dashboard"
+              className="group relative inline-flex h-10 items-center justify-center rounded-full bg-accent px-5 text-sm font-semibold text-[#06141a] shadow-[0_0_24px_-6px_rgba(40,184,213,0.8)] transition-transform hover:-translate-y-0.5"
+            >
+              My Dashboard
+              <span aria-hidden className="ml-1.5 transition-transform group-hover:translate-x-0.5">
+                →
+              </span>
+            </Link>
+          ) : (
+            <>
+              <Link
+                href="/login"
+                className="rounded-full px-4 py-2 text-sm font-medium text-white/90 transition-colors hover:text-accent"
+              >
+                Login
+              </Link>
+              <Link
+                href="/signup"
+                className="group relative inline-flex h-10 items-center justify-center rounded-full bg-accent px-5 text-sm font-semibold text-[#06141a] shadow-[0_0_24px_-6px_rgba(40,184,213,0.8)] transition-transform hover:-translate-y-0.5"
+              >
+                Get Started
+                <span aria-hidden className="ml-1.5 transition-transform group-hover:translate-x-0.5">
+                  →
+                </span>
+              </Link>
+            </>
+          )}
         </div>
 
         <button
@@ -129,20 +164,32 @@ export function LandingNav() {
               Bot Library
             </Link>
             <div className="mt-2 flex gap-2">
-              <Link
-                href="/login"
-                onClick={() => setOpen(false)}
-                className="flex h-11 flex-1 items-center justify-center rounded-xl border border-line text-sm font-medium text-white"
-              >
-                Login
-              </Link>
-              <Link
-                href="/signup"
-                onClick={() => setOpen(false)}
-                className="flex h-11 flex-1 items-center justify-center rounded-xl bg-accent text-sm font-semibold text-[#06141a]"
-              >
-                Get Started
-              </Link>
+              {authed ? (
+                <Link
+                  href="/dashboard"
+                  onClick={() => setOpen(false)}
+                  className="flex h-11 flex-1 items-center justify-center rounded-xl bg-accent text-sm font-semibold text-[#06141a]"
+                >
+                  My Dashboard
+                </Link>
+              ) : (
+                <>
+                  <Link
+                    href="/login"
+                    onClick={() => setOpen(false)}
+                    className="flex h-11 flex-1 items-center justify-center rounded-xl border border-line text-sm font-medium text-white"
+                  >
+                    Login
+                  </Link>
+                  <Link
+                    href="/signup"
+                    onClick={() => setOpen(false)}
+                    className="flex h-11 flex-1 items-center justify-center rounded-xl bg-accent text-sm font-semibold text-[#06141a]"
+                  >
+                    Get Started
+                  </Link>
+                </>
+              )}
             </div>
           </div>
         </div>

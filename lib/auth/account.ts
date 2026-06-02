@@ -39,6 +39,6 @@ export async function issueVerificationEmail(userId: string, email: string): Pro
   await prisma.verificationToken.create({
     data: { token, userId, expiresAt: new Date(Date.now() + VERIFICATION_TTL_MS) },
   });
-  const base = process.env.APP_URL ?? "http://localhost:3000";
+  const base = process.env.APP_URL ?? "https://ats-algo.vercel.app";
   await sendVerificationEmail(email, `${base}/api/auth/verify?token=${token}`);
 }
