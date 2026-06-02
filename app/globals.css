@@ -26,3 +26,267 @@ body {
   color: #ffffff;
   font-family: var(--font-sans);
 }
+
+/* ===========================================================================
+ * Landing-page motion system
+ * ---------------------------------------------------------------------------
+ * Dependency-free animations (no framer-motion) built on plain keyframes so
+ * the marketing surface stays in the same minimal footprint as the rest of the
+ * app. Everything degrades gracefully under `prefers-reduced-motion`.
+ * ======================================================================== */
+
+@keyframes ats-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-14px);
+  }
+}
+
+@keyframes ats-float-slow {
+  0%,
+  100% {
+    transform: translateY(0) translateX(0);
+  }
+  50% {
+    transform: translateY(18px) translateX(-10px);
+  }
+}
+
+@keyframes ats-orb-drift {
+  0% {
+    transform: translate(0, 0) scale(1);
+  }
+  33% {
+    transform: translate(40px, -30px) scale(1.08);
+  }
+  66% {
+    transform: translate(-30px, 20px) scale(0.96);
+  }
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+}
+
+@keyframes ats-gradient-pan {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+@keyframes ats-grid-pan {
+  0% {
+    background-position: 0 0;
+  }
+  100% {
+    background-position: 0 56px;
+  }
+}
+
+@keyframes ats-marquee {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+@keyframes ats-marquee-reverse {
+  0% {
+    transform: translateX(-50%);
+  }
+  100% {
+    transform: translateX(0);
+  }
+}
+
+@keyframes ats-spin-slow {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes ats-pulse-ring {
+  0% {
+    transform: scale(0.9);
+    opacity: 0.7;
+  }
+  70% {
+    transform: scale(2.4);
+    opacity: 0;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes ats-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@keyframes ats-shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes ats-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes ats-rise {
+  from {
+    transform: scaleY(0.15);
+    opacity: 0.4;
+  }
+  to {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+}
+
+/* --- reusable utility classes ------------------------------------------- */
+
+.animate-float {
+  animation: ats-float 6s ease-in-out infinite;
+}
+.animate-float-slow {
+  animation: ats-float-slow 9s ease-in-out infinite;
+}
+.animate-orb {
+  animation: ats-orb-drift 18s ease-in-out infinite;
+}
+.animate-spin-slow {
+  animation: ats-spin-slow 14s linear infinite;
+}
+.animate-blink {
+  animation: ats-blink 1.6s ease-in-out infinite;
+}
+.animate-marquee {
+  animation: ats-marquee 32s linear infinite;
+}
+.animate-marquee-reverse {
+  animation: ats-marquee-reverse 40s linear infinite;
+}
+
+/* Animated, pannable hairline grid used behind the hero. */
+.bg-grid {
+  background-image:
+    linear-gradient(to right, rgba(40, 184, 213, 0.07) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(40, 184, 213, 0.07) 1px, transparent 1px);
+  background-size: 56px 56px;
+  animation: ats-grid-pan 8s linear infinite;
+}
+
+/* Moving gradient text — pair with a clipped gradient background. */
+.text-gradient {
+  background: linear-gradient(110deg, #28b8d5 0%, #3b82f6 35%, #28b8d5 60%, #23e774 100%);
+  background-size: 220% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: ats-gradient-pan 6s ease infinite;
+}
+
+/* Conic "live" border for cards/CTAs. */
+.gradient-ring {
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    rgba(40, 184, 213, 0.65) 90deg,
+    transparent 200deg
+  );
+}
+
+/* Live pulse halo behind status dots. */
+.pulse-ring::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: currentColor;
+  animation: ats-pulse-ring 1.8s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+
+/* Diagonal sheen sweep across a surface. */
+.shimmer {
+  position: relative;
+  overflow: hidden;
+}
+.shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.08),
+    transparent
+  );
+  animation: ats-shimmer 3.5s ease-in-out infinite;
+}
+
+/* SVG path that draws itself in. Caller sets a matching dash length. */
+.draw-line {
+  stroke-dasharray: 1200;
+  stroke-dashoffset: 1200;
+  animation: ats-draw 2.4s ease-out forwards;
+}
+
+/* Scroll-reveal: hidden until the Reveal helper adds `.is-visible`. */
+.reveal {
+  opacity: 0;
+  transform: translateY(28px);
+  transition:
+    opacity 0.7s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: opacity, transform;
+}
+.reveal.is-visible {
+  opacity: 1;
+  transform: none;
+}
+
+/* Honour user motion preferences — kill all of the above. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-float,
+  .animate-float-slow,
+  .animate-orb,
+  .animate-spin-slow,
+  .animate-blink,
+  .animate-marquee,
+  .animate-marquee-reverse,
+  .bg-grid,
+  .text-gradient,
+  .pulse-ring::after,
+  .shimmer::after,
+  .draw-line {
+    animation: none !important;
+  }
+  .draw-line {
+    stroke-dashoffset: 0;
+  }
+  .reveal {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}

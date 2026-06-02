@@ -25,11 +25,24 @@ function noticeFor(params: {
   return undefined;
 }
 
+/** Only allow internal, non-protocol-relative redirect targets. */
+function safeNext(value?: string): string | undefined {
+  if (value && value.startsWith("/") && !value.startsWith("//")) return value;
+  return undefined;
+}
+
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ registered?: string; verified?: string; verify?: string; reset?: string }>;
+  searchParams: Promise<{
+    registered?: string;
+    verified?: string;
+    verify?: string;
+    reset?: string;
+    next?: string;
+  }>;
 }) {
-  const notice = noticeFor(await searchParams);
-  return <AuthCard mode="login" notice={notice} />;
+  const params = await searchParams;
+  const notice = noticeFor(params);
+  return <AuthCard mode="login" notice={notice} next={safeNext(params.next)} />;
 }

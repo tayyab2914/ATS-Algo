@@ -1,72 +1,66 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
+import { AdminSidebar } from "@/components/admin/AdminSidebar";
+import { BotCycleTable } from "@/components/admin/BotCycleTable";
+import { ContentControl } from "@/components/admin/ContentControl";
+import { DateStatusPanel } from "@/components/admin/DateStatusPanel";
+import { UploadHistoryTable } from "@/components/admin/UploadHistoryTable";
+import { UploadMetricsCard } from "@/components/admin/UploadMetricsCard";
 import { LogoutButton } from "@/components/auth/LogoutButton";
 import { getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
 
 export const metadata: Metadata = {
-  title: "Admin Dashboard · Adrian Trading System",
+  title: "Admin Staging Dashboard · Adrian Trading System",
 };
+
+function formatDate(date: Date): string {
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
 
 export default async function AdminDashboardPage() {
   const session = await getSession();
   if (!session) redirect("/admin");
   if (session.role !== "ADMIN") redirect("/dashboard");
 
-  const users = await prisma.user.findMany({
-    orderBy: { createdAt: "desc" },
-    take: 50,
-    select: { id: true, email: true, role: true, emailVerified: true, createdAt: true },
-  });
+  const [uploads, total] = await Promise.all([
+    prisma.metricUpload.findMany({ orderBy: { createdAt: "desc" }, take: 20 }),
+    prisma.metricUpload.count(),
+  ]);
+
+  const latest = uploads[0];
+  const stats = {
+    lastUpload: latest ? formatDate(latest.createdAt) : "—",
+    version: latest ? latest.version : "v00",
+    syncStatus: total > 0 ? "Synced" : "—",
+    totalUploads: total,
+  };
+  const history = uploads.map((u) => ({
+    filename: u.filename,
+    date: formatDate(u.createdAt),
+    version: u.version,
+    status: u.status as "SUCCESS" | "FAILED",
+  }));
 
   return (
-    <main className="flex min-h-screen w-full justify-center bg-background px-6 py-12">
-      <div className="flex w-full max-w-[800px] flex-col gap-6">
-        <header className="flex items-center justify-between">
-          <div className="flex flex-col gap-0.5">
-            <h1 className="text-2xl font-semibold leading-[31px] text-heading">Admin Dashboard</h1>
-            <p className="text-xs leading-[18px] text-muted">
-              Signed in as {session.email} · {users.length} user{users.length === 1 ? "" : "s"}
-            </p>
+    <div className="flex min-h-screen w-full bg-background text-white">
+      <AdminSidebar />
+
+      <main className="flex min-w-0 flex-1 flex-col gap-6 p-6">
+        <header className="flex items-start justify-between gap-4">
+          <div className="flex flex-col gap-1">
+            <h1 className="text-2xl font-semibold leading-[31px] text-white">Admin Staging Dashboard</h1>
+            <p className="text-sm leading-[21px] text-muted">Manage platform data and update trading metrics.</p>
           </div>
           <LogoutButton redirectTo="/admin" />
         </header>
 
-        <section className="overflow-hidden rounded-2xl border border-line bg-surface">
-          <table className="w-full text-left text-sm">
-            <thead>
-              <tr className="border-b border-line text-xs text-muted">
-                <th className="px-4 py-3 font-medium">Email</th>
-                <th className="px-4 py-3 font-medium">Role</th>
-                <th className="px-4 py-3 font-medium">Verified</th>
-                <th className="px-4 py-3 font-medium">Joined</th>
-              </tr>
-            </thead>
-            <tbody>
-              {users.map((user) => (
-                <tr key={user.id} className="border-b border-line/60 last:border-0">
-                  <td className="px-4 py-3 text-white">{user.email}</td>
-                  <td className="px-4 py-3">
-                    <span
-                      className={
-                        user.role === "ADMIN"
-                          ? "rounded-md bg-accent/15 px-2 py-0.5 text-xs font-semibold text-accent"
-                          : "rounded-md bg-white/5 px-2 py-0.5 text-xs font-semibold text-muted"
-                      }
-                    >
-                      {user.role}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-muted">{user.emailVerified ? "Yes" : "No"}</td>
-                  <td className="px-4 py-3 text-muted">
-                    {new Date(user.createdAt).toLocaleDateString()}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </section>
-      </div>
-    </main>
+        <UploadMetricsCard />
+        <BotCycleTable />
+        <ContentControl />
+        <DateStatusPanel stats={stats} />
+        <UploadHistoryTable rows={history} />
+      </main>
+    </div>
   );
 }

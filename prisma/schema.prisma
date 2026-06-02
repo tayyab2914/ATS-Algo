@@ -27,9 +27,18 @@ model User {
   walletConnected      Boolean @default(false)
   walletAddress        String?
 
+  // When true, login requires a one-time code emailed to this address.
+  twoFactorEnabled Boolean @default(false)
+
+  // Set the first time the user accepts the mandatory Rules & Policy. While
+  // null, an authenticated user is held on the /policy acceptance gate and
+  // cannot reach any in-app route.
+  policyAcceptedAt DateTime?
+
   verificationTokens  VerificationToken[]
   passwordResetTokens PasswordResetToken[]
   exchangeConnections ExchangeConnection[]
+  twoFactorCodes      TwoFactorCode[]
 
   @@map("users")
 }
@@ -51,6 +60,22 @@ model ExchangeConnection {
 enum Role {
   USER
   ADMIN
+}
+
+enum UploadStatus {
+  SUCCESS
+  FAILED
+}
+
+/// A metrics file uploaded via the Admin Staging Dashboard.
+model MetricUpload {
+  id        String       @id @default(cuid())
+  filename  String
+  version   String
+  status    UploadStatus @default(SUCCESS)
+  createdAt DateTime     @default(now())
+
+  @@map("metric_uploads")
 }
 
 /// One-time, expiring code emailed to the admin address for passwordless admin
@@ -89,4 +114,18 @@ model PasswordResetToken {
 
   @@index([userId])
   @@map("password_reset_tokens")
+}
+
+/// One-time, expiring code emailed to a 2FA-enabled user during login. The code
+/// is stored hashed; only the latest code per user is valid.
+model TwoFactorCode {
+  id        String   @id @default(cuid())
+  codeHash  String
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@map("two_factor_codes")
 }

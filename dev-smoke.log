@@ -1,0 +1,13 @@
+
+> ats@0.1.0 dev
+> next dev
+
+▲ Next.js 16.2.6 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://192.168.100.117:3000
+- Environments: .env
+✓ Ready in 1006ms
+
+ GET /dashboard 200 in 1052ms (next.js: 341ms, application-code: 712ms)
+ GET /dashboard 200 in 135ms (next.js: 6ms, application-code: 129ms)
+[?25h

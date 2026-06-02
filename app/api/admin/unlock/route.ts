@@ -34,7 +34,14 @@ export async function POST(request: NextRequest) {
     },
   });
 
-  await createSession({ sub: admin.id, email: admin.email, role: "ADMIN", emailVerified: true });
+  // Admins are exempt from the user Rules & Policy gate.
+  await createSession({
+    sub: admin.id,
+    email: admin.email,
+    role: "ADMIN",
+    emailVerified: true,
+    policyAccepted: true,
+  });
 
   return ok({ user: toPublicUser(admin) });
 }

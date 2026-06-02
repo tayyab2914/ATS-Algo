@@ -17,6 +17,8 @@ export type SessionPayload = {
   email: string;
   role: SessionRole;
   emailVerified: boolean;
+  /** Has the user accepted the mandatory Rules & Policy? Gates all in-app routes. */
+  policyAccepted: boolean;
 };
 
 const ISSUER = "adrian-trading-system";
@@ -30,7 +32,12 @@ function getSecret(): Uint8Array {
 
 /** Sign a session payload into a JWT. */
 export async function createToken(payload: SessionPayload): Promise<string> {
-  return new SignJWT({ email: payload.email, role: payload.role, emailVerified: payload.emailVerified })
+  return new SignJWT({
+    email: payload.email,
+    role: payload.role,
+    emailVerified: payload.emailVerified,
+    policyAccepted: payload.policyAccepted,
+  })
     .setProtectedHeader({ alg: "HS256" })
     .setSubject(payload.sub)
     .setIssuer(ISSUER)
@@ -49,6 +56,7 @@ export async function verifyToken(token: string): Promise<SessionPayload | null>
       email: payload.email,
       role: payload.role === "ADMIN" ? "ADMIN" : "USER",
       emailVerified: payload.emailVerified === true,
+      policyAccepted: payload.policyAccepted === true,
     };
   } catch {
     return null;

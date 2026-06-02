@@ -9,7 +9,15 @@ import { AUTH_COPY, type AuthMode } from "@/lib/auth-config";
  *
  * @param notice - Optional banner forwarded to the form (e.g. ?verified=1).
  */
-export function AuthCard({ mode, notice }: { mode: AuthMode; notice?: NoticeData }) {
+export function AuthCard({
+  mode,
+  notice,
+  next,
+}: {
+  mode: AuthMode;
+  notice?: NoticeData;
+  next?: string;
+}) {
   const copy = AUTH_COPY[mode];
 
   return (
@@ -21,7 +29,7 @@ export function AuthCard({ mode, notice }: { mode: AuthMode; notice?: NoticeData
         <p className="text-xs leading-[18px] text-muted">{copy.subtitle}</p>
       </header>
 
-      <AuthForm mode={mode} notice={notice} />
+      <AuthForm mode={mode} notice={notice} next={next} />
     </div>
   );
 }

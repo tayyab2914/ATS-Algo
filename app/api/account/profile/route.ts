@@ -6,7 +6,10 @@ import { getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
 import { profileSchema } from "@/lib/validation";
 
-/** Update the signed-in user's profile (username, email, password, avatar). */
+/**
+ * Update the signed-in user's profile (username, password, avatar).
+ * Email is intentionally immutable here and is never updated, even if sent.
+ */
 export async function PATCH(request: NextRequest) {
   const session = await getSession();
   if (!session) return fail("Not authenticated", 401);
@@ -14,18 +17,12 @@ export async function PATCH(request: NextRequest) {
   const parsed = profileSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return zodFail(parsed.error);
 
-  const { username, email, password, avatarUrl } = parsed.data;
+  const { username, password, avatarUrl } = parsed.data;
   const data: Record<string, unknown> = {};
 
   if (username) data.name = username;
   if (avatarUrl) data.avatarUrl = avatarUrl;
   if (password) data.passwordHash = await hashPassword(password);
-
-  if (email && email !== session.email) {
-    const taken = await prisma.user.findUnique({ where: { email } });
-    if (taken && taken.id !== session.sub) return fail("That email is already in use", 409);
-    data.email = email;
-  }
 
   if (Object.keys(data).length === 0) return fail("Nothing to update", 400);
 

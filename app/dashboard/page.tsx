@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
-import { redirect } from "next/navigation";
+import { AppShell } from "@/components/app/AppShell";
+import { GuestGate } from "@/components/app/GuestGate";
 import { MyBotsPerformance } from "@/components/dashboard/MyBotsPerformance";
 import { PerformanceMetrics } from "@/components/dashboard/PerformanceMetrics";
 import { PortfolioAndHoldings } from "@/components/dashboard/PortfolioAndHoldings";
-import { Sidebar } from "@/components/dashboard/Sidebar";
 import { TopActiveBots } from "@/components/dashboard/TopActiveBots";
 import { TopAssets } from "@/components/dashboard/TopAssets";
 import { getSession } from "@/lib/auth/session";
@@ -14,26 +14,33 @@ export const metadata: Metadata = {
 
 export default async function DashboardPage() {
   const session = await getSession();
-  if (!session) redirect("/login");
+
+  const content = (
+    <>
+      <PerformanceMetrics />
+      <TopActiveBots />
+      <MyBotsPerformance />
+      <PortfolioAndHoldings />
+      <TopAssets />
+    </>
+  );
 
   return (
-    <div className="flex min-h-screen w-full bg-background text-white">
-      <Sidebar active="dashboard" />
+    <AppShell>
+      <header className="flex flex-col gap-1">
+        <h1 className="text-2xl font-semibold leading-[31px] text-white">Dashboard Overview</h1>
+        <p className="text-sm leading-[21px] text-muted">
+          Monitor all trading bots, portfolio balance, and performance metrics.
+        </p>
+      </header>
 
-      <main className="flex min-w-0 flex-1 flex-col gap-6 p-6">
-        <header className="flex flex-col gap-1">
-          <h1 className="text-2xl font-semibold leading-[31px] text-white">Dashboard Overview</h1>
-          <p className="text-sm leading-[21px] text-muted">
-            Monitor all trading bots, portfolio balance, and performance metrics.
-          </p>
-        </header>
-
-        <PerformanceMetrics />
-        <TopActiveBots />
-        <MyBotsPerformance />
-        <PortfolioAndHoldings />
-        <TopAssets />
-      </main>
-    </div>
+      {session ? (
+        content
+      ) : (
+        <GuestGate title="Dashboard" returnTo="/dashboard">
+          {content}
+        </GuestGate>
+      )}
+    </AppShell>
   );
 }

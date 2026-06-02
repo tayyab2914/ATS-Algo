@@ -25,6 +25,14 @@ export const adminCodeSchema = z.object({
   code: z.string().regex(/^\d{4}$/, "Enter the 4-digit code from your email"),
 });
 
+export const twoFactorCodeSchema = z.object({
+  code: z.string().regex(/^\d{6}$/, "Enter the 6-digit code from your email"),
+});
+
+export const twoFactorToggleSchema = z.object({
+  enabled: z.boolean(),
+});
+
 export const forgotPasswordSchema = z.object({ email });
 
 export const resetPasswordSchema = z
@@ -69,5 +77,7 @@ export type LoginInput = z.infer<typeof loginSchema>;
 export type SignupInput = z.infer<typeof signupSchema>;
 export type ProfileInput = z.infer<typeof profileSchema>;
 export type AdminCodeInput = z.infer<typeof adminCodeSchema>;
+export type TwoFactorCodeInput = z.infer<typeof twoFactorCodeSchema>;
+export type TwoFactorToggleInput = z.infer<typeof twoFactorToggleSchema>;
 export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
 export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;

@@ -3,6 +3,7 @@ import { ok, fail, zodFail } from "@/lib/api";
 import { toPublicUser } from "@/lib/auth/account";
 import { verifyPassword } from "@/lib/auth/password";
 import { createSession } from "@/lib/auth/session";
+import { createAndSendTwoFactorCode, startPendingTwoFactor } from "@/lib/auth/two-factor";
 import { prisma } from "@/lib/db";
 import { loginSchema } from "@/lib/validation";
 
@@ -24,11 +25,25 @@ export async function POST(request: NextRequest) {
     return fail("Please verify your email before logging in. Check your inbox for the confirmation link.", 403);
   }
 
+  // Second factor: email a one-time code and hold a pending challenge instead
+  // of starting a session. The session is only created once the code is verified.
+  if (user.twoFactorEnabled) {
+    try {
+      await createAndSendTwoFactorCode(user.id, user.email);
+    } catch (error) {
+      console.error("2FA code email failed:", error);
+      return fail("Could not send your verification code. Please try again.", 500);
+    }
+    await startPendingTwoFactor(user.id);
+    return ok({ twoFactorRequired: true });
+  }
+
   await createSession({
     sub: user.id,
     email: user.email,
     role: user.role === "ADMIN" ? "ADMIN" : "USER",
     emailVerified: user.emailVerified !== null,
+    policyAccepted: user.policyAcceptedAt !== null,
   });
 
   return ok({ user: toPublicUser(user) });

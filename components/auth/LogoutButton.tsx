@@ -4,10 +4,10 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { cn } from "@/lib/cn";
 
-/** Signs the user out via the API, then returns to `redirectTo` (default /login). */
+/** Signs the user out via the API, then returns to `redirectTo` (default home "/"). */
 export function LogoutButton({
   className,
-  redirectTo = "/login",
+  redirectTo = "/",
 }: {
   className?: string;
   redirectTo?: string;

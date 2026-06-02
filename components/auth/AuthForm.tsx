@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
+import { PinInput } from "@/components/admin/PinInput";
 import { Button } from "@/components/ui/Button";
 import { Divider } from "@/components/ui/Divider";
 import { Notice, type NoticeData } from "@/components/ui/Notice";
@@ -15,19 +16,35 @@ import type { AuthMode } from "@/lib/auth-config";
  * - Signup: creates the account, then redirects to /login with a "verification
  *   sent" banner. The user is NOT signed in until they confirm their email.
  * - Login: signs in and redirects to the dashboard; unverified accounts are
- *   rejected with a clear message.
+ *   rejected with a clear message. When the account has two-factor enabled, the
+ *   form switches to a code step and the session only starts once the emailed
+ *   6-digit code is verified.
  *
  * @param notice - Optional banner seeded from the page (e.g. ?verified=1).
  */
-export function AuthForm({ mode, notice }: { mode: AuthMode; notice?: NoticeData }) {
+export function AuthForm({
+  mode,
+  notice,
+  next,
+}: {
+  mode: AuthMode;
+  notice?: NoticeData;
+  /** Where to land after a successful login (defaults to the dashboard). */
+  next?: string;
+}) {
   const isSignup = mode === "signup";
   const router = useRouter();
+  const destination = next ?? "/dashboard";
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [banner, setBanner] = useState<NoticeData | null>(notice ?? null);
   const [pending, setPending] = useState(false);
+
+  // Two-factor login challenge (login mode only).
+  const [awaitingCode, setAwaitingCode] = useState(false);
+  const [code, setCode] = useState("");
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -55,13 +72,93 @@ export function AuthForm({ mode, notice }: { mode: AuthMode; notice?: NoticeData
         return;
       }
 
-      router.push("/dashboard");
+      // Two-factor enabled: move to the code step instead of redirecting.
+      if (data.twoFactorRequired) {
+        setAwaitingCode(true);
+        setCode("");
+        setBanner({ type: "success", message: "We emailed a 6-digit code to your address. Enter it below to continue." });
+        return;
+      }
+
+      router.push(destination);
       router.refresh();
     } catch {
       setBanner({ type: "error", message: "Network error. Please try again." });
     } finally {
       setPending(false);
     }
+  }
+
+  async function verifyCode(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBanner(null);
+    if (code.length !== 6) {
+      setBanner({ type: "error", message: "Enter the 6-digit code from your email." });
+      return;
+    }
+    setPending(true);
+    try {
+      const res = await fetch("/api/auth/2fa/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setBanner({ type: "error", message: data.error ?? "Verification failed." });
+        return;
+      }
+      router.push(destination);
+      router.refresh();
+    } catch {
+      setBanner({ type: "error", message: "Network error. Please try again." });
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function resendCode() {
+    setBanner(null);
+    setPending(true);
+    try {
+      const res = await fetch("/api/auth/2fa/resend", { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setBanner({ type: "error", message: data.error ?? "Could not resend the code." });
+        return;
+      }
+      setBanner({ type: "success", message: "A new code is on its way. Check your inbox." });
+    } catch {
+      setBanner({ type: "error", message: "Network error. Please try again." });
+    } finally {
+      setPending(false);
+    }
+  }
+
+  if (awaitingCode) {
+    return (
+      <form className="flex w-full flex-col gap-4" onSubmit={verifyCode}>
+        {banner && <Notice notice={banner} />}
+
+        <div className="flex w-full flex-col gap-2">
+          <span className="text-xs leading-[18px] text-muted">Verification Code</span>
+          <PinInput length={6} onChange={setCode} />
+        </div>
+
+        <Button type="submit" variant="primary" disabled={pending}>
+          {pending ? "Verifying…" : "Verify & Sign In"}
+        </Button>
+
+        <button
+          type="button"
+          onClick={resendCode}
+          disabled={pending}
+          className="self-center text-xs text-muted underline-offset-4 transition-colors hover:text-accent hover:underline disabled:opacity-60"
+        >
+          Didn&apos;t get it? Resend code
+        </button>
+      </form>
+    );
   }
 
   return (
@@ -113,7 +210,7 @@ export function AuthForm({ mode, notice }: { mode: AuthMode; notice?: NoticeData
       )}
 
       <Button type="submit" variant="primary" disabled={pending}>
-        {pending ? "Please wait…" : "Sign Up"}
+        {pending ? "Please wait…" : isSignup ? "Sign Up" : "Login"}
       </Button>
 
       <Divider label="or continue with" />

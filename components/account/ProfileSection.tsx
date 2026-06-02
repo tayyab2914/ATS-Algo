@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { PrimaryAction, SettingsCard } from "@/components/account/SettingsCard";
 import { Notice, type NoticeData } from "@/components/ui/Notice";
@@ -9,9 +10,13 @@ type Initial = { username: string; email: string; avatarUrl: string | null };
 
 const MAX_AVATAR_BYTES = 1.5 * 1024 * 1024;
 
+/**
+ * Profile Information section. Users can change their name, avatar and password.
+ * The email address is shown but locked — it can't be edited here.
+ */
 export function ProfileSection({ initial }: { initial: Initial }) {
+  const router = useRouter();
   const [username, setUsername] = useState(initial.username);
-  const [email, setEmail] = useState(initial.email);
   const [password, setPassword] = useState("");
   const [avatar, setAvatar] = useState<string | null>(initial.avatarUrl);
   const [banner, setBanner] = useState<NoticeData | null>(null);
@@ -34,9 +39,9 @@ export function ProfileSection({ initial }: { initial: Initial }) {
     event.preventDefault();
     setBanner(null);
 
+    // Email is intentionally omitted — it can't be changed here.
     const body: Record<string, string> = {};
     if (username !== initial.username) body.username = username;
-    if (email !== initial.email) body.email = email;
     if (password) body.password = password;
     if (avatar && avatar !== initial.avatarUrl) body.avatarUrl = avatar;
 
@@ -59,6 +64,8 @@ export function ProfileSection({ initial }: { initial: Initial }) {
       }
       setPassword("");
       setBanner({ type: "success", message: "Profile updated." });
+      // Refresh so the sidebar (name + avatar) reflects the new values.
+      router.refresh();
     } catch {
       setBanner({ type: "error", message: "Network error. Please try again." });
     } finally {
@@ -73,8 +80,22 @@ export function ProfileSection({ initial }: { initial: Initial }) {
 
         <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
           <TextField id="username" label="Username" placeholder="Enter" value={username} onChange={(e) => setUsername(e.target.value)} />
-          <TextField id="email" label="Email Address" type="email" placeholder="Enter" value={email} onChange={(e) => setEmail(e.target.value)} />
-          <TextField id="password" label="Password" type="password" placeholder="Enter" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} />
+
+          <div className="flex w-full flex-col gap-1">
+            <TextField
+              id="email"
+              label="Email Address"
+              type="email"
+              value={initial.email}
+              readOnly
+              tabIndex={-1}
+              aria-disabled="true"
+              className="cursor-not-allowed select-none border-line/60 bg-background/40 text-muted focus:border-line/60"
+            />
+            <p className="text-[11px] leading-[16px] text-muted/70">Your email address can&apos;t be changed.</p>
+          </div>
+
+          <TextField id="password" label="New Password" type="password" placeholder="Enter" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} />
 
           <div className="flex flex-col gap-2">
             <span className="text-xs leading-[18px] text-muted">Avatar</span>

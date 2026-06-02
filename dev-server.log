@@ -1,0 +1,23 @@
+
+> ats@0.1.0 dev
+> next dev
+
+▲ Next.js 16.2.6 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://192.168.100.117:3000
+- Environments: .env
+✓ Ready in 751ms
+
+ GET /account 200 in 2.8s (next.js: 190ms, proxy.ts: 274ms, application-code: 2.3s)
+ GET /account 200 in 547ms (next.js: 13ms, proxy.ts: 24ms, application-code: 510ms)
+✓ Compiled in 705ms
+ POST /api/auth/logout 200 in 252ms (next.js: 209ms, application-code: 42ms)
+ GET /login 200 in 209ms (next.js: 90ms, proxy.ts: 11ms, application-code: 109ms)
+ GET /login 200 in 102ms (next.js: 11ms, proxy.ts: 15ms, application-code: 76ms)
+ GET /login 200 in 80ms (next.js: 6ms, proxy.ts: 11ms, application-code: 63ms)
+ GET /login 200 in 86ms (next.js: 6ms, proxy.ts: 13ms, application-code: 66ms)
+ GET / 200 in 1296ms (next.js: 84ms, application-code: 1212ms)
+ GET /login 200 in 100ms (next.js: 10ms, proxy.ts: 12ms, application-code: 78ms)
+ GET /signup 200 in 187ms (next.js: 102ms, proxy.ts: 11ms, application-code: 74ms)
+ GET /signup 200 in 84ms (next.js: 10ms, proxy.ts: 9ms, application-code: 65ms)
+[?25h
