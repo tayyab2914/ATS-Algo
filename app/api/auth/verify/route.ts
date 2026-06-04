@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { appBaseUrl } from "@/lib/app-url";
 import { prisma } from "@/lib/db";
 
 /**
@@ -8,7 +9,7 @@ import { prisma } from "@/lib/db";
  */
 export async function GET(request: NextRequest) {
   const token = request.nextUrl.searchParams.get("token");
-  const base = process.env.APP_URL ?? request.nextUrl.origin;
+  const base = appBaseUrl();
 
   const record = token
     ? await prisma.verificationToken.findUnique({ where: { token } })
