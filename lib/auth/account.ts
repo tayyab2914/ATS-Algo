@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { appBaseUrl } from "@/lib/app-url";
 import { prisma } from "@/lib/db";
 import { sendVerificationEmail } from "@/lib/email";
 import type { UserModel } from "@/lib/generated/prisma/models";
@@ -39,6 +40,6 @@ export async function issueVerificationEmail(userId: string, email: string): Pro
   await prisma.verificationToken.create({
     data: { token, userId, expiresAt: new Date(Date.now() + VERIFICATION_TTL_MS) },
   });
-  const base = process.env.APP_URL ?? "https://ats-algo.vercel.app";
+  const base = appBaseUrl();
   await sendVerificationEmail(email, `${base}/api/auth/verify?token=${token}`);
 }

@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { appBaseUrl } from "@/lib/app-url";
 import { hashPassword } from "@/lib/auth/password";
 import { prisma } from "@/lib/db";
 import { sendPasswordResetEmail } from "@/lib/email";
@@ -21,7 +22,7 @@ export async function createPasswordReset(userId: string, email: string): Promis
     data: { tokenHash: sha256(token), userId, expiresAt: new Date(Date.now() + RESET_TTL_MS) },
   });
 
-  const base = process.env.APP_URL ?? "https://ats-algo.vercel.app";
+  const base = appBaseUrl();
   await sendPasswordResetEmail(email, `${base}/reset-password?token=${token}`);
 }
 
