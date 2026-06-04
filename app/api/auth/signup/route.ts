@@ -10,17 +10,22 @@ export async function POST(request: NextRequest) {
   if (!parsed.success) return zodFail(parsed.error);
 
   const { email, password } = parsed.data;
+  const passwordHash = await hashPassword(password);
+  const role = isAdminEmail(email) ? "ADMIN" : "USER";
 
   const existing = await prisma.user.findUnique({ where: { email } });
-  if (existing) return fail("An account with this email already exists", 409);
 
-  const user = await prisma.user.create({
-    data: {
-      email,
-      passwordHash: await hashPassword(password),
-      role: isAdminEmail(email) ? "ADMIN" : "USER",
-    },
-  });
+  // Only a *verified* account counts as a real member and blocks re-signup.
+  // An unverified row is just a pending registration: nobody has proven they
+  // own the address, so re-signing up refreshes it (new password) and sends a
+  // fresh verification link instead of dead-ending on "already exists".
+  if (existing && existing.emailVerified !== null) {
+    return fail("An account with this email already exists", 409);
+  }
+
+  const user = existing
+    ? await prisma.user.update({ where: { id: existing.id }, data: { passwordHash, role } })
+    : await prisma.user.create({ data: { email, passwordHash, role } });
 
   // Email verification is best-effort: a failed send must not lose the account.
   // The user is NOT signed in — they must verify their email, then log in.

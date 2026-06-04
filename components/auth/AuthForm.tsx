@@ -46,9 +46,13 @@ export function AuthForm({
   const [awaitingCode, setAwaitingCode] = useState(false);
   const [code, setCode] = useState("");
 
+  // Login was blocked because the address isn't verified yet — offer a resend.
+  const [needsVerification, setNeedsVerification] = useState(false);
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBanner(null);
+    setNeedsVerification(false);
     setPending(true);
     try {
       const endpoint = isSignup ? "/api/auth/signup" : "/api/auth/login";
@@ -61,6 +65,9 @@ export function AuthForm({
       const data = await res.json().catch(() => ({}));
 
       if (!res.ok) {
+        // Login blocked because the email isn't confirmed (403): let the user
+        // request a fresh verification link right from the error.
+        if (!isSignup && res.status === 403) setNeedsVerification(true);
         setBanner({ type: "error", message: data.error ?? "Something went wrong. Please try again." });
         return;
       }
@@ -110,6 +117,29 @@ export function AuthForm({
       }
       router.push(destination);
       router.refresh();
+    } catch {
+      setBanner({ type: "error", message: "Network error. Please try again." });
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function resendVerification() {
+    setBanner(null);
+    setPending(true);
+    try {
+      const res = await fetch("/api/auth/resend-verification", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setBanner({ type: "error", message: data.error ?? "Could not send the link. Please try again." });
+        return;
+      }
+      setNeedsVerification(false);
+      setBanner({ type: "success", message: "Verification email sent. Check your inbox, then log in." });
     } catch {
       setBanner({ type: "error", message: "Network error. Please try again." });
     } finally {
@@ -212,6 +242,17 @@ export function AuthForm({
       <Button type="submit" variant="primary" disabled={pending}>
         {pending ? "Please wait…" : isSignup ? "Sign Up" : "Login"}
       </Button>
+
+      {!isSignup && needsVerification && (
+        <button
+          type="button"
+          onClick={resendVerification}
+          disabled={pending}
+          className="self-center text-xs text-muted underline-offset-4 transition-colors hover:text-accent hover:underline disabled:opacity-60"
+        >
+          Didn&apos;t get the email? Resend verification link
+        </button>
+      )}
 
       <Divider label="or continue with" />
 

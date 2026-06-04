@@ -37,6 +37,9 @@ export function isAdminEmail(email: string): boolean {
  */
 export async function issueVerificationEmail(userId: string, email: string): Promise<void> {
   const token = crypto.randomBytes(32).toString("hex");
+  // Invalidate any earlier links so only the newest one works (single active
+  // token), the same way password-reset tokens are issued.
+  await prisma.verificationToken.deleteMany({ where: { userId } });
   await prisma.verificationToken.create({
     data: { token, userId, expiresAt: new Date(Date.now() + VERIFICATION_TTL_MS) },
   });
