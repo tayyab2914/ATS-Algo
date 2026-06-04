@@ -9,12 +9,15 @@ import { FEATURES, HERO } from "@/lib/content";
  * Purely presentational — safe to render on the server. Content is capped at
  * 512px and scales its type/padding down on small screens.
  *
+ * Hidden below `lg`: on phones/tablets the auth + admin surfaces show only the
+ * form, so this marketing column is suppressed rather than stacked on top.
+ *
  * @param brand - Top-of-panel lockup. Defaults to the ADRIAN <Logo>; the admin
  *                surface passes its own ATS-ALGO mark.
  */
 export function BrandPanel({ brand = <Logo /> }: { brand?: ReactNode }) {
   return (
-    <section className="flex w-full flex-col items-start justify-center bg-surface px-6 py-12 sm:px-10 lg:flex-1 lg:px-16 lg:py-16">
+    <section className="hidden w-full flex-col items-start justify-center bg-surface px-6 py-12 sm:px-10 lg:flex lg:flex-1 lg:px-16 lg:py-16">
       <div className="flex w-full max-w-[512px] flex-col items-start gap-4">
         {brand}
 

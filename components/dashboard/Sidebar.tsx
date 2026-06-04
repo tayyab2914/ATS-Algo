@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import type { SVGProps } from "react";
+import { useEffect, useState } from "react";
 import { Logo } from "@/components/brand/Logo";
 import { NAV_ICONS } from "@/components/dashboard/icons";
 import { cn } from "@/lib/cn";
@@ -34,18 +36,41 @@ function initials(user: SidebarUser): string {
   return (parts[0]?.[0] ?? "") + (parts[1]?.[0] ?? "");
 }
 
+function MenuIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden {...props}>
+      <path d="M4 7h16M4 12h16M4 17h16" />
+    </svg>
+  );
+}
+
+function CloseIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden {...props}>
+      <path d="M6 6l12 12M18 6 6 18" />
+    </svg>
+  );
+}
+
 /**
- * Dashboard sidebar. Every item links to its route; the active tab is derived
- * from the current pathname so a nested route (e.g. a bot detail page) keeps
- * its parent tab highlighted. Guests can browse the Bot Library freely — the
- * other routes render a locked overlay until they sign in.
+ * Logo, nav links and the profile footer — shared by the desktop rail and the
+ * mobile drawer so both stay in sync.
+ *
+ * @param onNavigate - Called when a link is tapped; the drawer passes a closer.
  */
-export function Sidebar({ user }: { user?: SidebarUser | null }) {
-  const pathname = usePathname() ?? "";
+function SidebarContent({
+  pathname,
+  user,
+  onNavigate,
+}: {
+  pathname: string;
+  user?: SidebarUser | null;
+  onNavigate?: () => void;
+}) {
   const settingsActive = isActive(pathname, "/account");
 
   return (
-    <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col bg-surface lg:flex">
+    <>
       <div className="flex h-24 items-center justify-center border-b border-line px-6">
         <Logo />
       </div>
@@ -58,6 +83,7 @@ export function Sidebar({ user }: { user?: SidebarUser | null }) {
             <Link
               key={item.key}
               href={item.href}
+              onClick={onNavigate}
               aria-current={active ? "page" : undefined}
               className={cn(
                 "relative flex h-10 items-center gap-2 rounded-r-2xl px-4 text-sm transition-colors",
@@ -92,6 +118,7 @@ export function Sidebar({ user }: { user?: SidebarUser | null }) {
         {user && (
           <Link
             href="/account"
+            onClick={onNavigate}
             aria-current={settingsActive ? "page" : undefined}
             className={cn(
               "flex items-center gap-3 rounded-2xl border px-3 py-2.5 transition-colors",
@@ -118,6 +145,82 @@ export function Sidebar({ user }: { user?: SidebarUser | null }) {
           </Link>
         )}
       </div>
-    </aside>
+    </>
+  );
+}
+
+/**
+ * Dashboard navigation. On `lg`+ it's a fixed rail; below that the rail is
+ * replaced by a top bar with a hamburger that opens an off-canvas drawer, so
+ * the same links stay reachable on phones. Every item links to its route; the
+ * active tab is derived from the current pathname so a nested route (e.g. a bot
+ * detail page) keeps its parent tab highlighted. Guests can browse the Bot
+ * Library freely — the other routes render a locked overlay until they sign in.
+ */
+export function Sidebar({ user }: { user?: SidebarUser | null }) {
+  const pathname = usePathname() ?? "";
+  const [open, setOpen] = useState(false);
+
+  // Lock body scroll while the drawer is open so the page behind stays put.
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [open]);
+
+  return (
+    <>
+      {/* Desktop rail */}
+      <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col bg-surface lg:flex">
+        <SidebarContent pathname={pathname} user={user} />
+      </aside>
+
+      {/* Mobile top bar */}
+      <header className="sticky top-0 z-30 flex h-16 shrink-0 items-center justify-between border-b border-line bg-surface px-4 lg:hidden">
+        <Logo />
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          aria-label="Open menu"
+          aria-expanded={open}
+          className="flex size-10 items-center justify-center rounded-xl border border-line text-white transition-colors hover:bg-white/5"
+        >
+          <MenuIcon />
+        </button>
+      </header>
+
+      {/* Mobile drawer + backdrop */}
+      <div
+        className={cn("fixed inset-0 z-50 lg:hidden", !open && "pointer-events-none")}
+        aria-hidden={!open}
+      >
+        <div
+          onClick={() => setOpen(false)}
+          className={cn(
+            "absolute inset-0 bg-black/60 transition-opacity duration-300",
+            open ? "opacity-100" : "opacity-0",
+          )}
+        />
+        <aside
+          className={cn(
+            "absolute inset-y-0 left-0 flex h-full w-72 max-w-[85%] flex-col bg-surface shadow-2xl transition-transform duration-300",
+            open ? "translate-x-0" : "-translate-x-full",
+          )}
+        >
+          <button
+            type="button"
+            onClick={() => setOpen(false)}
+            aria-label="Close menu"
+            className="absolute right-3 top-3 z-10 flex size-9 items-center justify-center rounded-xl text-white/80 transition-colors hover:bg-white/5"
+          >
+            <CloseIcon />
+          </button>
+          <SidebarContent pathname={pathname} user={user} onNavigate={() => setOpen(false)} />
+        </aside>
+      </div>
+    </>
   );
 }

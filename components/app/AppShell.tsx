@@ -20,9 +20,9 @@ export async function AppShell({ children }: { children: ReactNode }) {
     : null;
 
   return (
-    <div className="flex min-h-screen w-full bg-background text-white">
+    <div className="flex min-h-screen w-full flex-col bg-background text-white lg:flex-row">
       <Sidebar user={user} />
-      <main className="flex min-w-0 flex-1 flex-col gap-6 p-6">{children}</main>
+      <main className="flex min-w-0 flex-1 flex-col gap-6 p-4 sm:p-6">{children}</main>
     </div>
   );
 }
