@@ -1,4 +1,4 @@
-// Prisma schema — Adrian Trading System
+// Prisma schema — ATS-ALGO
 // Docs: https://pris.ly/d/prisma-schema
 
 generator client {

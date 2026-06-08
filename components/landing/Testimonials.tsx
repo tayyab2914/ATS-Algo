@@ -11,7 +11,7 @@ export function Testimonials() {
           eyebrow="Loved by traders"
           title="Built for people who"
           highlight="hate babysitting charts."
-          subtitle="Thousands of traders run their strategies on Adrian every day. Here's what a few of them say."
+          subtitle="Thousands of traders run their strategies on ATS-ALGO every day. Here's what a few of them say."
         />
 
         <div className="mt-14 grid gap-6 md:grid-cols-3">

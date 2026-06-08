@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 /**
- * Design tokens — single source of truth for the Adrian Trading System theme.
+ * Design tokens — single source of truth for the ATS-ALGO theme.
  * Exposed to Tailwind as utility-generating custom properties (bg-*, text-*,
  * border-*, etc.) so component markup stays semantic rather than hex-littered.
  */

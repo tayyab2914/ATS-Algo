@@ -1,14 +1,14 @@
 /**
- * Adrian Trading System wordmark — the chevron mark plus the "ADRIAN /
+ * ATS-ALGO wordmark — the chevron mark plus the "ATS-ALGO / AUTOMATED
  * TRADING SYSTEM" lockup, rendered as SVG so it stays crisp at any scale.
  *
- * NOTE: the source design references a raster export (`upscale_image.png`).
- * Drop that file into `/public` and swap this component for a <Image> if a
- * pixel-identical logo is required.
+ * NOTE: official logo files are supplied separately. Drop the raster/SVG export
+ * into `/public` and swap this component for a <Image> if a pixel-identical
+ * logo is required.
  */
 export function Logo() {
   return (
-    <div className="flex h-12 w-[216px] items-center gap-3.5" aria-label="Adrian Trading System">
+    <div className="flex h-12 w-[248px] items-center gap-3.5" aria-label="ATS-ALGO — Automated Trading System">
       <svg
         width="48"
         height="40"
@@ -27,10 +27,10 @@ export function Logo() {
 
       <span className="leading-none">
         <span className="block text-[22px] font-semibold tracking-[0.22em] text-white">
-          ADRIAN
+          ATS-ALGO
         </span>
-        <span className="mt-1.5 block text-[9px] font-medium tracking-[0.32em] text-muted">
-          TRADING SYSTEM
+        <span className="mt-1.5 block whitespace-nowrap text-[9px] font-medium tracking-[0.18em] text-muted">
+          AUTOMATED TRADING SYSTEM
         </span>
       </span>
     </div>

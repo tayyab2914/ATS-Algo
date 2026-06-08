@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { ResetPasswordCard } from "@/components/auth/ResetPasswordCard";
 
 export const metadata: Metadata = {
-  title: "Set New Password · Adrian Trading System",
+  title: "Set New Password · ATS-ALGO",
   description: "Choose a new password for your account.",
 };
 

@@ -11,7 +11,7 @@ import { getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
 
 export const metadata: Metadata = {
-  title: "Admin Staging Dashboard · Adrian Trading System",
+  title: "Admin Staging Dashboard · ATS-ALGO",
 };
 
 function formatDate(date: Date): string {

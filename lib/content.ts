@@ -5,7 +5,7 @@ export const HERO = {
   title: "Automate Your Trading.",
   highlight: "Maximize Returns.",
   description:
-    "Advanced algorithmic trading bots powered by real-time market data. Deploy strategies across crypto, forex, and commodities with institutional-grade automation.",
+    "Advanced algorithmic trading bots powered by real-time market data. Deploy strategies across crypto, forex, and commodities with fully automated execution.",
 } as const;
 
 export type Feature = {
@@ -17,7 +17,7 @@ export type Feature = {
 
 /** Feature cards shown beneath the hero. */
 export const FEATURES: readonly Feature[] = [
-  { id: "bots", icon: "bot", title: "Active Bots", description: "AI-powered strategies" },
+  { id: "bots", icon: "bot", title: "Active Bots", description: "Automated strategies" },
   { id: "analytics", icon: "chart", title: "Analytics", description: "Real-Time Performance" },
   { id: "risk", icon: "shield", title: "Risk Mgmt", description: "Advanced Protection" },
 ] as const;

@@ -12,9 +12,9 @@ import { Testimonials } from "@/components/landing/Testimonials";
 import { getSession } from "@/lib/auth/session";
 
 export const metadata: Metadata = {
-  title: "Adrian Trading System — Automated Algorithmic Trading",
+  title: "ATS-ALGO — Automated Algorithmic Trading",
   description:
-    "Institutional-grade trading bots that automate crypto, forex and commodities around the clock. Real-time analytics, advanced risk controls, and millisecond execution.",
+    "Professional-grade trading bots that automate crypto, forex and commodities around the clock. Real-time analytics, advanced risk controls, and millisecond execution.",
 };
 
 /**

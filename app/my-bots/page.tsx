@@ -6,7 +6,7 @@ import { TabPreviewSkeleton } from "@/components/app/TabPreviewSkeleton";
 import { getSession } from "@/lib/auth/session";
 
 export const metadata: Metadata = {
-  title: "My Bots · Adrian Trading System",
+  title: "My Bots · ATS-ALGO",
 };
 
 export default async function MyBotsPage() {

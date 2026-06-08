@@ -41,7 +41,7 @@ export const TOP_BOTS = [
 
 export const MY_BOTS = [
   { id: "alpha", name: "Alpha BTC Bot", profile: "Balanced", pnlPositive: true },
-  { id: "eth", name: "ETH Grid Pro", profile: "Conservative", pnlPositive: true },
+  { id: "aapl", name: "Apple Swing", profile: "Conservative", pnlPositive: true },
   { id: "sql", name: "SQL Breakout", profile: "Aggressive", pnlPositive: false },
 ];
 

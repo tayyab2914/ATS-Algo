@@ -10,7 +10,7 @@ const inter = Inter({
 
 export const metadata: Metadata = {
   title: {
-    default: "Adrian Trading System",
+    default: "ATS-ALGO",
     template: "%s",
   },
   description: "Automate your trading. Maximize returns.",

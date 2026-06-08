@@ -27,7 +27,7 @@ export async function sendAdminCodeEmail(to: string, code: string): Promise<void
     from: process.env.SMTP_FROM ?? process.env.SMTP_USER,
     to,
     subject: `Your admin access code: ${code}`,
-    text: `Your Adrian Trading System admin access code is ${code}.\n\nIt expires in 10 minutes. If you didn't request this, you can ignore this email.`,
+    text: `Your ATS-ALGO admin access code is ${code}.\n\nIt expires in 10 minutes. If you didn't request this, you can ignore this email.`,
     html: `
       <div style="font-family:Inter,Arial,sans-serif;background:#0a0a0a;color:#fff;padding:32px;border-radius:16px;max-width:480px">
         <h1 style="font-size:20px;margin:0 0 8px">Admin access code</h1>
@@ -45,7 +45,7 @@ export async function sendTwoFactorCodeEmail(to: string, code: string): Promise<
     from: process.env.SMTP_FROM ?? process.env.SMTP_USER,
     to,
     subject: `Your login verification code: ${code}`,
-    text: `Your Adrian Trading System login verification code is ${code}.\n\nIt expires in 10 minutes. If you didn't try to sign in, change your password — someone may have it.`,
+    text: `Your ATS-ALGO login verification code is ${code}.\n\nIt expires in 10 minutes. If you didn't try to sign in, change your password — someone may have it.`,
     html: `
       <div style="font-family:Inter,Arial,sans-serif;background:#0a0a0a;color:#fff;padding:32px;border-radius:16px;max-width:480px">
         <h1 style="font-size:20px;margin:0 0 8px">Login verification code</h1>
@@ -62,12 +62,12 @@ export async function sendPasswordResetEmail(to: string, resetUrl: string): Prom
   await getTransporter().sendMail({
     from: process.env.SMTP_FROM ?? process.env.SMTP_USER,
     to,
-    subject: "Reset your Adrian Trading System password",
+    subject: "Reset your ATS-ALGO password",
     text: `We received a request to reset your password.\n\nReset it here: ${resetUrl}\n\nThis link expires in 1 hour. If you didn't request this, you can ignore this email.`,
     html: `
       <div style="font-family:Inter,Arial,sans-serif;background:#0a0a0a;color:#fff;padding:32px;border-radius:16px;max-width:480px">
         <h1 style="font-size:20px;margin:0 0 8px">Reset your password</h1>
-        <p style="color:#b5b5b5;font-size:14px;line-height:21px">We received a request to reset your Adrian Trading System password.</p>
+        <p style="color:#b5b5b5;font-size:14px;line-height:21px">We received a request to reset your ATS-ALGO password.</p>
         <a href="${resetUrl}" style="display:inline-block;margin-top:16px;background:#28b8d5;color:#121212;font-weight:600;text-decoration:none;padding:12px 24px;border-radius:12px">Reset password</a>
         <p style="color:#6b7280;font-size:12px;margin-top:24px">This link expires in 1 hour. If you didn't request a reset, you can safely ignore this email.</p>
       </div>
@@ -80,11 +80,11 @@ export async function sendVerificationEmail(to: string, verifyUrl: string): Prom
   await getTransporter().sendMail({
     from: process.env.SMTP_FROM ?? process.env.SMTP_USER,
     to,
-    subject: "Verify your Adrian Trading System account",
-    text: `Welcome to Adrian Trading System!\n\nConfirm your email address: ${verifyUrl}\n\nThis link expires in 24 hours.`,
+    subject: "Verify your ATS-ALGO account",
+    text: `Welcome to ATS-ALGO!\n\nConfirm your email address: ${verifyUrl}\n\nThis link expires in 24 hours.`,
     html: `
       <div style="font-family:Inter,Arial,sans-serif;background:#0a0a0a;color:#fff;padding:32px;border-radius:16px;max-width:480px">
-        <h1 style="font-size:20px;margin:0 0 8px">Welcome to Adrian Trading System</h1>
+        <h1 style="font-size:20px;margin:0 0 8px">Welcome to ATS-ALGO</h1>
         <p style="color:#b5b5b5;font-size:14px;line-height:21px">Confirm your email address to activate your account.</p>
         <a href="${verifyUrl}" style="display:inline-block;margin-top:16px;background:#28b8d5;color:#121212;font-weight:600;text-decoration:none;padding:12px 24px;border-radius:12px">Verify email</a>
         <p style="color:#6b7280;font-size:12px;margin-top:24px">This link expires in 24 hours. If you didn't create an account, you can ignore this email.</p>

@@ -21,7 +21,7 @@ export type SessionPayload = {
   policyAccepted: boolean;
 };
 
-const ISSUER = "adrian-trading-system";
+const ISSUER = "ats-algo";
 const EXPIRY = "7d";
 
 function getSecret(): Uint8Array {

@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { PinInput } from "@/components/admin/PinInput";
 import { Button } from "@/components/ui/Button";
-import { Divider } from "@/components/ui/Divider";
 import { Notice, type NoticeData } from "@/components/ui/Notice";
 import { TextField } from "@/components/ui/TextField";
 import type { AuthMode } from "@/lib/auth-config";
@@ -253,12 +252,6 @@ export function AuthForm({
           Didn&apos;t get the email? Resend verification link
         </button>
       )}
-
-      <Divider label="or continue with" />
-
-      <Button type="button" variant="outline">
-        Connect Wallet
-      </Button>
     </form>
   );
 }

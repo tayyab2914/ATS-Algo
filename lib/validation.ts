@@ -58,9 +58,8 @@ export const profileSchema = z.object({
 });
 
 export const connectionToggleSchema = z.object({
-  target: z.enum(["tradingview", "wallet"]),
+  target: z.literal("tradingview"),
   connected: z.boolean(),
-  address: z.string().trim().optional(),
 });
 
 export const exchangeAddSchema = z.object({

@@ -22,7 +22,7 @@ export function Hero({ loggedIn = false }: { loggedIn?: boolean }) {
               <span className="relative inline-flex text-success">
                 <span className="pulse-ring relative size-1.5 rounded-full bg-success" />
               </span>
-              New · AI-powered grid &amp; momentum bots
+              New · Quant trading desks
             </span>
           </Reveal>
 
@@ -36,17 +36,17 @@ export function Hero({ loggedIn = false }: { loggedIn?: boolean }) {
 
           <Reveal delay={160}>
             <p className="mt-6 max-w-xl text-base leading-relaxed text-muted sm:text-lg">
-              Institutional-grade algorithmic bots that trade crypto, forex and commodities
+              Professional-grade algorithmic bots that trade crypto, forex and commodities
               around the clock — powered by real-time market data and protected by advanced
               risk controls.
             </p>
           </Reveal>
 
           <Reveal delay={240}>
-            <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">
+            <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
               <Link
                 href={loggedIn ? "/dashboard" : "/signup"}
-                className="group inline-flex h-12 items-center justify-center rounded-2xl bg-accent px-6 text-base font-semibold text-[#06141a] shadow-[0_0_40px_-8px_rgba(40,184,213,0.9)] transition-transform hover:-translate-y-0.5"
+                className="group inline-flex h-12 shrink-0 items-center justify-center whitespace-nowrap rounded-2xl bg-accent px-6 text-base font-semibold text-[#06141a] shadow-[0_0_40px_-8px_rgba(40,184,213,0.9)] transition-transform hover:-translate-y-0.5"
               >
                 {loggedIn ? "My Dashboard" : "Start trading free"}
                 <span aria-hidden className="ml-2 transition-transform group-hover:translate-x-1">
@@ -55,16 +55,16 @@ export function Hero({ loggedIn = false }: { loggedIn?: boolean }) {
               </Link>
               <Link
                 href="/bot-library"
-                className="group inline-flex h-12 items-center justify-center gap-2 rounded-2xl border border-accent/60 bg-accent/5 px-6 text-base font-medium text-accent backdrop-blur transition-colors hover:bg-accent/10"
+                className="group inline-flex h-12 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-2xl border border-accent/60 bg-accent/5 px-6 text-base font-medium text-accent backdrop-blur transition-colors hover:bg-accent/10"
               >
-                <GridIcon /> Check out Bot Library
+                <BotIcon /> Check out Bot Library
                 <span aria-hidden className="transition-transform group-hover:translate-x-1">
                   →
                 </span>
               </Link>
               <a
                 href="#platform"
-                className="inline-flex h-12 items-center justify-center gap-2 rounded-2xl border border-line bg-surface/50 px-6 text-base font-medium text-white backdrop-blur transition-colors hover:border-accent/60 hover:text-accent"
+                className="inline-flex h-12 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-2xl border border-line bg-surface/50 px-6 text-base font-medium text-white backdrop-blur transition-colors hover:border-accent/60 hover:text-accent"
               >
                 <PlayIcon /> See the platform
               </a>
@@ -103,7 +103,7 @@ function PlayIcon() {
   );
 }
 
-function GridIcon() {
+function BotIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
       <rect x="4" y="8" width="16" height="12" rx="2" stroke="currentColor" strokeWidth="1.6" />

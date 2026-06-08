@@ -9,7 +9,7 @@ import { TopAssets } from "@/components/dashboard/TopAssets";
 import { getSession } from "@/lib/auth/session";
 
 export const metadata: Metadata = {
-  title: "Dashboard · Adrian Trading System",
+  title: "Dashboard · ATS-ALGO",
 };
 
 export default async function DashboardPage() {

@@ -40,16 +40,7 @@ async function main() {
   log("tradingview connect:", r.status);
   log("  persisted:", (await prisma.user.findUnique({ where: { id: user.id } }))?.tradingViewConnected ? "✓" : "✗");
 
-  // 3. Wallet connect (server generates address).
-  r = await fetch(`${BASE}/api/account/connections`, {
-    method: "POST",
-    headers: { ...json, cookie },
-    body: JSON.stringify({ target: "wallet", connected: true }),
-  });
-  const wallet = await r.json();
-  log("wallet connect:", r.status, "addr:", String(wallet.walletAddress).slice(0, 8) + "…");
-
-  // 4. Add an exchange.
+  // 3. Add an exchange.
   r = await fetch(`${BASE}/api/account/exchanges`, {
     method: "POST",
     headers: { ...json, cookie },
@@ -59,7 +50,7 @@ async function main() {
   const conn = await prisma.exchangeConnection.findFirst({ where: { userId: user.id, exchange: "Bitget" } });
   log("  row + masked key:", conn?.apiKeyMasked ?? "(none)");
 
-  // 5. Remove the exchange.
+  // 4. Remove the exchange.
   r = await fetch(`${BASE}/api/account/exchanges`, {
     method: "DELETE",
     headers: { ...json, cookie },
@@ -68,15 +59,15 @@ async function main() {
   log("exchange remove:", r.status);
   log("  row gone:", (await prisma.exchangeConnection.count({ where: { userId: user.id } })) === 0 ? "✓" : "✗");
 
-  // 6. Auth guard: no cookie → 401.
+  // 5. Auth guard: no cookie → 401.
   r = await fetch(`${BASE}/api/account/profile`, { method: "PATCH", headers: json, body: JSON.stringify({ username: "x" }) });
   log("profile update (no auth):", r.status);
 
-  // 7. Page renders.
+  // 6. Page renders.
   r = await fetch(`${BASE}/account`, { headers: { cookie } });
   const html = await r.text();
   log("/account:", r.status);
-  for (const m of ["Account Settings", "Profile Information", "TradingView Connection", "Wallet Connection", "Exchange API Connections", "Hyperliquid", "OKX"]) {
+  for (const m of ["Account Settings", "Profile Information", "TradingView Connection", "Exchange API Connections", "Hyperliquid", "OKX"]) {
     log(`  ${html.includes(m) ? "✓" : "✗"} ${m}`);
   }
 

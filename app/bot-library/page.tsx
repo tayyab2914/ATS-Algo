@@ -4,7 +4,7 @@ import { BotLibraryBrowser } from "@/components/bot-library/BotLibraryBrowser";
 import { BOTS_BY_CATEGORY } from "@/lib/bot-library";
 
 export const metadata: Metadata = {
-  title: "Bot Library · Adrian Trading System",
+  title: "Bot Library · ATS-ALGO",
 };
 
 /**

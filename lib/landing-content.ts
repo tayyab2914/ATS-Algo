@@ -52,7 +52,7 @@ export const LANDING_FEATURES: readonly LandingFeature[] = [
   {
     id: "bots",
     icon: "bot",
-    title: "AI Trading Bots",
+    title: "Proprietary & Quantitative Trading Desks",
     description:
       "Deploy battle-tested strategies that watch the market 24/7 and execute in milliseconds — no screen-watching required.",
   },
@@ -61,7 +61,7 @@ export const LANDING_FEATURES: readonly LandingFeature[] = [
     icon: "chart",
     title: "Real-Time Analytics",
     description:
-      "Track P&L, win rate, and drawdown live across every bot with institutional-grade dashboards.",
+      "Track P&L, win rate, and drawdown live across every bot with professional-grade dashboards.",
   },
   {
     id: "risk",
@@ -107,7 +107,7 @@ export const STEPS: readonly Step[] = [
     id: "deploy",
     title: "Deploy a strategy",
     description:
-      "Pick from proven bots or tune your own. Backtest, then go live with one tap.",
+      "Pick from proven bots. Backtest, then go live with one tap.",
   },
   {
     id: "earn",
@@ -135,7 +135,7 @@ export const TESTIMONIALS: readonly Testimonial[] = [
   {
     id: "t1",
     quote:
-      "I went from refreshing charts at 3am to letting Adrian run my grid bots. My win rate is up and my sleep is back.",
+      "I went from refreshing charts at 3am to letting ATS-ALGO run my bots. My win rate is up and my sleep is back.",
     name: "Marcus Reed",
     role: "Full-time crypto trader",
     initials: "MR",

@@ -18,7 +18,7 @@ const CODE_TTL_MS = 1000 * 60 * 10; // 10 minutes
 const PENDING_COOKIE = "ats_2fa_pending";
 const PENDING_TTL_SECONDS = 60 * 10; // 10 minutes
 const PENDING_PURPOSE = "2fa-pending";
-const ISSUER = "adrian-trading-system";
+const ISSUER = "ats-algo";
 
 function getSecret(): Uint8Array {
   const secret = process.env.JWT_SECRET;

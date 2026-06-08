@@ -75,24 +75,6 @@ const CRYPTO: BotRow[] = [
     detail: { winrate: 68.2, profitFactor: 1.84, netProfit: 788.33, tradeCount: 1247, stopLoss: 3, leverage: 7, slToBe: "TP1" },
   },
   {
-    slug: "eth-grid-pro",
-    name: "ETH Grid Pro",
-    category: "crypto",
-    pair: "ETH/USDT",
-    strategy: "Grid",
-    timeframe: "15m",
-    risk: "Low",
-    winRate: 50.0,
-    pf: 2.01,
-    d30: -1.88,
-    d90: 89.65,
-    d180: null,
-    d360: null,
-    avgTrade: 3.2,
-    users: 890,
-    detail: { winrate: 50.0, profitFactor: 2.01, netProfit: 89.65, tradeCount: 642, stopLoss: 2, leverage: 3, slToBe: "TP1" },
-  },
-  {
     slug: "sol-breakout",
     name: "SOL Breakout",
     category: "crypto",
@@ -167,7 +149,6 @@ const CRYPTO: BotRow[] = [
 const FOREX: BotRow[] = [
   { slug: "eurusd-trend", name: "EURUSD Trend", category: "forex", pair: "EUR/USD", strategy: "Trend", timeframe: "1H", risk: "Low", winRate: 61.2, pf: 2.4, d30: 1.92, d90: 8.4, d180: 17.6, d360: 33.2, avgTrade: 0.8, users: 980 },
   { slug: "gbpusd-breakout", name: "GBPUSD Breakout", category: "forex", pair: "GBP/USD", strategy: "Breakout", timeframe: "30m", risk: "Medium", winRate: 55.0, pf: 1.9, d30: -2.1, d90: 6.7, d180: 14.2, d360: 27.9, avgTrade: 0.6, users: 540 },
-  { slug: "usdjpy-grid", name: "USDJPY Grid", category: "forex", pair: "USD/JPY", strategy: "Grid", timeframe: "15m", risk: "Low", winRate: 70.5, pf: 2.7, d30: 2.4, d90: 9.8, d180: 19.1, d360: 38.5, avgTrade: 0.5, users: 760 },
   { slug: "audusd-carry", name: "AUDUSD Carry", category: "forex", pair: "AUD/USD", strategy: "Carry", timeframe: "4H", risk: "Medium", winRate: 58.8, pf: 2.0, d30: 1.1, d90: 5.5, d180: null, d360: null, avgTrade: 0.7, users: 410 },
 ];
 

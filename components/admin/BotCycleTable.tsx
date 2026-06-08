@@ -3,8 +3,8 @@ import { cn } from "@/lib/cn";
 
 const ROWS = [
   { bot: "Alpha BTC Bot", lastUpdate: "Apr 5, 2026", status: "Active" as const },
-  { bot: "ETH Grid Pro", lastUpdate: "Apr 4, 2026", status: "Active" as const },
-  { bot: "ETH Grid Pro", lastUpdate: "Apr 3, 2026", status: "Paused" as const },
+  { bot: "Gold Momentum", lastUpdate: "Apr 4, 2026", status: "Active" as const },
+  { bot: "EURUSD Trend", lastUpdate: "Apr 3, 2026", status: "Paused" as const },
 ];
 
 const CHART_URL = "https://www.tradingview.com/chart/";

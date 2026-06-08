@@ -3,7 +3,7 @@ import { AuthCard } from "@/components/auth/AuthCard";
 import type { NoticeData } from "@/components/ui/Notice";
 
 export const metadata: Metadata = {
-  title: "Login · Adrian Trading System",
+  title: "Login · ATS-ALGO",
   description: "Sign in to your trading dashboard.",
 };
 

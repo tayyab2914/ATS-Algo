@@ -7,14 +7,13 @@ import { ExchangeSection } from "@/components/account/ExchangeSection";
 import { ProfileSection } from "@/components/account/ProfileSection";
 import { TradingViewSection } from "@/components/account/TradingViewSection";
 import { TwoFactorSection } from "@/components/account/TwoFactorSection";
-import { WalletSection } from "@/components/account/WalletSection";
 import { LogoutButton } from "@/components/auth/LogoutButton";
 import type { ExchangeName } from "@/lib/account";
 import { getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
 
 export const metadata: Metadata = {
-  title: "Account Settings · Adrian Trading System",
+  title: "Account Settings · ATS-ALGO",
 };
 
 export default async function AccountPage() {
@@ -64,7 +63,6 @@ export default async function AccountPage() {
       />
       <TwoFactorSection initialEnabled={user.twoFactorEnabled} />
       <TradingViewSection initialConnected={user.tradingViewConnected} />
-      <WalletSection initialConnected={user.walletConnected} initialAddress={user.walletAddress} />
       <ExchangeSection initial={connections} />
     </AppShell>
   );

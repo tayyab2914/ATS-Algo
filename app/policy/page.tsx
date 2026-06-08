@@ -5,7 +5,7 @@ import { getSession } from "@/lib/auth/session";
 import { POLICY_INTRO, POLICY_SECTIONS, POLICY_VERSION } from "@/lib/policy-content";
 
 export const metadata: Metadata = {
-  title: "Mandatory Rules & Policy · Adrian Trading System",
+  title: "Mandatory Rules & Policy · ATS-ALGO",
 };
 
 /** Only allow internal, non-protocol-relative redirect targets. */
@@ -36,7 +36,7 @@ export default async function PolicyPage({
       <div className="flex w-full max-w-[640px] flex-col gap-4 rounded-3xl border border-line bg-surface p-6">
         <header className="flex flex-col gap-1">
           <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-accent">
-            Adrian Trading System
+            ATS-ALGO
           </span>
           <h1 className="text-xl font-semibold leading-7 text-heading">
             Mandatory Rules &amp; Policy

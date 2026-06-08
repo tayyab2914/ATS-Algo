@@ -38,7 +38,7 @@ export function LandingFooter() {
           <div className="flex flex-col gap-4">
             <Logo />
             <p className="max-w-xs text-sm leading-relaxed text-muted">
-              Institutional-grade algorithmic trading automation for crypto, forex and
+              Professional-grade algorithmic trading automation for crypto, forex and
               commodities.
             </p>
             <span className="inline-flex w-fit items-center gap-2 rounded-full border border-success/30 bg-success/10 px-3 py-1.5 text-xs font-medium text-success">
@@ -68,7 +68,7 @@ export function LandingFooter() {
 
         <div className="mt-12 flex flex-col items-center justify-between gap-4 border-t border-line pt-6 sm:flex-row">
           <p className="text-xs text-muted">
-            © {new Date().getFullYear()} Adrian Trading System. All rights reserved.
+            © {new Date().getFullYear()} ATS-ALGO. All rights reserved.
           </p>
           <p className="max-w-md text-center text-[11px] leading-relaxed text-muted/70 sm:text-right">
             Trading involves risk. Past performance is not indicative of future results.
