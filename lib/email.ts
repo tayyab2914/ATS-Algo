@@ -75,6 +75,42 @@ export async function sendPasswordResetEmail(to: string, resetUrl: string): Prom
   });
 }
 
+/**
+ * Email a team invitation, tailored to the granted role:
+ *  - ADMIN  → "you've been invited as an admin", CTA to the admin sign-in.
+ *  - USER   → "you've been added as a member", CTA to create their account.
+ */
+export async function sendTeamInviteEmail(
+  to: string,
+  role: "ADMIN" | "USER",
+  link: string,
+): Promise<void> {
+  const isAdminInvite = role === "ADMIN";
+  const subject = isAdminInvite
+    ? "You've been invited as an admin on ATS-ALGO"
+    : "You've been added to the ATS-ALGO team";
+  const heading = isAdminInvite ? "You're now an ATS-ALGO admin" : "Welcome to the ATS-ALGO team";
+  const body = isAdminInvite
+    ? "An administrator has granted you admin access. Open the admin sign-in to request your one-time access code and get started."
+    : "An administrator has added you as a team member. Create your account to access your trading dashboard.";
+  const cta = isAdminInvite ? "Go to admin sign-in" : "Create your account";
+
+  await getTransporter().sendMail({
+    from: process.env.SMTP_FROM ?? process.env.SMTP_USER,
+    to,
+    subject,
+    text: `${body}\n\n${cta}: ${link}\n\nIf you weren't expecting this, you can ignore this email.`,
+    html: `
+      <div style="font-family:Inter,Arial,sans-serif;background:#0a0a0a;color:#fff;padding:32px;border-radius:16px;max-width:480px">
+        <h1 style="font-size:20px;margin:0 0 8px">${heading}</h1>
+        <p style="color:#b5b5b5;font-size:14px;line-height:21px">${body}</p>
+        <a href="${link}" style="display:inline-block;margin-top:16px;background:#28b8d5;color:#121212;font-weight:600;text-decoration:none;padding:12px 24px;border-radius:12px">${cta}</a>
+        <p style="color:#6b7280;font-size:12px;margin-top:24px">If you weren't expecting this invitation, you can safely ignore this email.</p>
+      </div>
+    `,
+  });
+}
+
 /** Send the account verification email containing a confirmation link. */
 export async function sendVerificationEmail(to: string, verifyUrl: string): Promise<void> {
   await getTransporter().sendMail({

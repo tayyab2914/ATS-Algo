@@ -9,7 +9,6 @@ import {
   DotsIcon,
   GiftIcon,
   LogoutIcon,
-  PauseIcon,
   RotateIcon,
 } from "@/components/admin/admin-icons";
 import { Notice, type NoticeData } from "@/components/ui/Notice";
@@ -46,9 +45,9 @@ function successMessage(member: MemberRow, action: MemberAction): string {
     case "suspend":
       return `${who} has been suspended and signed out.`;
     case "ban":
-      return `${who} has been banned and signed out.`;
+      return `${who} is banned — they can no longer sign in, and any live session was ended.`;
     case "reactivate":
-      return `${who} has been reactivated.`;
+      return `${who} has been unbanned and can sign in again.`;
     case "forceLogout":
       return `${who} has been signed out of all sessions.`;
     case "grantFree":
@@ -271,25 +270,17 @@ function RowMenu({
         ) : (
           <>
             {member.status === "ACTIVE" ? (
-              <>
-                <MenuItem
-                  icon={<PauseIcon />}
-                  label="Suspend"
-                  disabled={busy}
-                  onClick={() => onAction(member, "suspend")}
-                />
-                <MenuItem
-                  icon={<BanIcon />}
-                  label="Ban"
-                  tone="danger"
-                  disabled={busy}
-                  onClick={() => onAction(member, "ban")}
-                />
-              </>
+              <MenuItem
+                icon={<BanIcon />}
+                label="Ban"
+                tone="danger"
+                disabled={busy}
+                onClick={() => onAction(member, "ban")}
+              />
             ) : (
               <MenuItem
                 icon={<CheckIcon />}
-                label="Reactivate"
+                label="Unban"
                 tone="success"
                 disabled={busy}
                 onClick={() => onAction(member, "reactivate")}

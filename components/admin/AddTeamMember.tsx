@@ -34,12 +34,15 @@ export function AddTeamMember() {
       });
       const data = (await res.json().catch(() => null)) as { error?: string } | null;
       if (!res.ok) {
-        setNotice({ type: "error", message: data?.error ?? "Couldn't update the member." });
+        setNotice({ type: "error", message: data?.error ?? "Couldn't send the invite." });
         return;
       }
       setNotice({
         type: "success",
-        message: `${email} is now ${role === "ADMIN" ? "an admin" : "a member"}.`,
+        message:
+          role === "ADMIN"
+            ? `Admin invite sent to ${email}. They can sign in at the admin page.`
+            : `Invite sent to ${email}. They've been asked to create their account.`,
       });
       setEmail("");
       setRole("");
@@ -52,7 +55,10 @@ export function AddTeamMember() {
   }
 
   return (
-    <AdminCard title="Add Team Member">
+    <AdminCard
+      title="Add Team Member"
+      subtitle="Invite by email — admins receive an admin sign-in link, members are asked to create an account."
+    >
       <form onSubmit={handleSubmit} className="flex flex-col gap-6">
         {notice && <Notice notice={notice} />}
 

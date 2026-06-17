@@ -64,9 +64,9 @@ export function AuthForm({
       const data = await res.json().catch(() => ({}));
 
       if (!res.ok) {
-        // Login blocked because the email isn't confirmed (403): let the user
-        // request a fresh verification link right from the error.
-        if (!isSignup && res.status === 403) setNeedsVerification(true);
+        // Only the unverified-email block offers a resend link; other 403s
+        // (e.g. a banned account) just show their message.
+        if (!isSignup && data.needsVerification) setNeedsVerification(true);
         setBanner({ type: "error", message: data.error ?? "Something went wrong. Please try again." });
         return;
       }

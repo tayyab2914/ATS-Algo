@@ -1,4 +1,4 @@
-import type { NextRequest } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { ok, fail, zodFail } from "@/lib/api";
 import { toPublicUser } from "@/lib/auth/account";
 import { verifyPassword } from "@/lib/auth/password";
@@ -20,18 +20,26 @@ export async function POST(request: NextRequest) {
     return fail("Invalid email or password", 401);
   }
 
-  // Account standing gate (set from Admin Management). A banned or suspended
-  // user can authenticate but is not allowed to start a session.
+  // Account standing gate (set from Admin Management). A banned user can
+  // authenticate but is never allowed to start a session.
   if (user.status === "BANNED") {
-    return fail("This account has been banned. Contact support if you believe this is a mistake.", 403);
+    return fail("This account has been banned and can no longer be used. Contact support if you believe this is a mistake.", 403);
   }
   if (user.status === "SUSPENDED") {
     return fail("This account is suspended. Contact support to restore access.", 403);
   }
 
-  // Block sign-in until the email address is confirmed.
+  // Block sign-in until the email address is confirmed. Flagged so the login
+  // form can offer a "resend verification" link for this case only (and not,
+  // say, for a ban — which is also a 403).
   if (user.emailVerified === null) {
-    return fail("Please verify your email before logging in. Check your inbox for the confirmation link.", 403);
+    return NextResponse.json(
+      {
+        error: "Please verify your email before logging in. Check your inbox for the confirmation link.",
+        needsVerification: true,
+      },
+      { status: 403 },
+    );
   }
 
   // Second factor: email a one-time code and hold a pending challenge instead
