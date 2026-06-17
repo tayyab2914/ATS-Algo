@@ -31,6 +31,12 @@ export async function POST(request: NextRequest) {
     return fail("Account not found. Please log in again.", 401);
   }
 
+  // Honour an account hold applied after the challenge was issued.
+  if (user.status !== "ACTIVE") {
+    await clearPendingTwoFactor();
+    return fail("This account is not allowed to sign in. Contact support.", 403);
+  }
+
   await createSession({
     sub: user.id,
     email: user.email,

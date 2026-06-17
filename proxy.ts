@@ -15,7 +15,7 @@ import { SESSION_COOKIE, verifyToken } from "@/lib/auth/jwt";
  * signed-in users (they carry a session). The Bot Library is otherwise public.
  * Authoritative checks still run in server components.
  */
-const ADMIN_ONLY = ["/admin/dashboard"];
+const ADMIN_ONLY = ["/admin/dashboard", "/admin/management"];
 const AUTH_PAGES = ["/login", "/signup"];
 const POLICY_PATH = "/policy";
 
@@ -23,7 +23,7 @@ const POLICY_PATH = "/policy";
  * In-app routes a signed-in user may not reach until they accept the mandatory
  * Rules & Policy. Guests (no session) still pass through to the locked preview.
  */
-const POLICY_GATED = ["/dashboard", "/portfolio", "/my-bots", "/account", "/bot-library"];
+const POLICY_GATED = ["/dashboard", "/portfolio", "/my-bots", "/account", "/billing", "/bot-library"];
 
 /** Only allow internal, non-protocol-relative redirect targets. */
 function safeNext(value: string | null): string {
@@ -73,6 +73,7 @@ export async function proxy(request: NextRequest) {
 export const config = {
   matcher: [
     "/admin/dashboard/:path*",
+    "/admin/management/:path*",
     "/login",
     "/signup",
     "/policy",
@@ -80,6 +81,7 @@ export const config = {
     "/portfolio/:path*",
     "/my-bots/:path*",
     "/account/:path*",
+    "/billing/:path*",
     "/bot-library/:path*",
   ],
 };

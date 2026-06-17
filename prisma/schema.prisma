@@ -21,6 +21,22 @@ model User {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
+  // Account standing, controlled from the Admin Management screen. SUSPENDED is
+  // a reversible hold; BANNED is a hard block. Both deny sign-in and invalidate
+  // any live session on the next request.
+  status AccountStatus @default(ACTIVE)
+
+  // Any session JWT issued before this instant is rejected, even if otherwise
+  // valid and unexpired. Bumping it to `now()` is how an admin force-logs-out a
+  // user without a server-side session store (the JWTs are stateless). Also
+  // bumped on sign-out, so it doubles as the "signed out at" marker.
+  sessionsValidFrom DateTime?
+
+  // When the user last started a session. Paired with `sessionsValidFrom` this
+  // is enough to tell, without a session store, whether a live session exists:
+  // a login newer than the last revocation and inside the 7-day token window.
+  lastLoginAt DateTime?
+
   // Account settings
   avatarUrl            String?
   tradingViewConnected Boolean @default(false)
@@ -35,12 +51,62 @@ model User {
   // cannot reach any in-app route.
   policyAcceptedAt DateTime?
 
+  // Stripe customer id, created lazily the first time the user starts checkout
+  // or opens the billing portal. One customer per user.
+  stripeCustomerId String? @unique
+
   verificationTokens  VerificationToken[]
   passwordResetTokens PasswordResetToken[]
   exchangeConnections ExchangeConnection[]
   twoFactorCodes      TwoFactorCode[]
+  subscription        Subscription?
 
   @@map("users")
+}
+
+/// A user's Stripe subscription, mirrored from Stripe via webhooks. Stripe is
+/// the source of truth; this row is a read-optimized cache the app gates on so
+/// it never has to call Stripe to check entitlement. One subscription per user.
+model Subscription {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Null for an admin-granted comp subscription that never touched Stripe.
+  stripeSubscriptionId String?            @unique
+  stripePriceId        String?
+  plan                 BillingPlan
+  status               SubscriptionStatus
+  /// End of the current paid period — also the renewal date, or the date access
+  /// ends when `cancelAtPeriodEnd` is set. Null on a perpetual comp grant.
+  currentPeriodEnd     DateTime?
+  cancelAtPeriodEnd    Boolean            @default(false)
+  /// True when an admin granted this access for free (no Stripe charge). Stripe
+  /// webhooks overwrite the row by user, so a later real purchase supersedes it.
+  isComp               Boolean            @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("subscriptions")
+}
+
+/// Billing cadence, derived from the Stripe price the customer subscribed to.
+enum BillingPlan {
+  MONTHLY
+  YEARLY
+}
+
+/// Mirror of Stripe's subscription `status` values.
+enum SubscriptionStatus {
+  INCOMPLETE
+  INCOMPLETE_EXPIRED
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  UNPAID
+  PAUSED
 }
 
 /// A user's connection to an exchange's API (key stored masked, never raw).
@@ -60,6 +126,13 @@ model ExchangeConnection {
 enum Role {
   USER
   ADMIN
+}
+
+/// A user's account standing, managed from the Admin Management screen.
+enum AccountStatus {
+  ACTIVE
+  SUSPENDED
+  BANNED
 }
 
 enum UploadStatus {

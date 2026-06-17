@@ -44,7 +44,7 @@ export default async function AdminDashboardPage() {
 
   return (
     <div className="flex min-h-screen w-full bg-background text-white">
-      <AdminSidebar />
+      <AdminSidebar active="dashboard" />
 
       <main className="flex min-w-0 flex-1 flex-col gap-6 p-6">
         <header className="flex items-start justify-between gap-4">

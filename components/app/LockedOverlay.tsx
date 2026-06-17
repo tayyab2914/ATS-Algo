@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { UnlockLoginButton } from "@/components/app/UnlockLoginButton";
 
 function LockIcon() {
   return (
@@ -30,12 +31,7 @@ export function LockedOverlay({ title, returnTo }: { title: string; returnTo?: s
             Sign in to unlock your {title.toLowerCase()}, deploy bots, and track live performance.
           </p>
         </div>
-        <Link
-          href={href}
-          className="mt-1 inline-flex h-11 w-full items-center justify-center rounded-2xl bg-accent px-5 text-sm font-semibold text-[#06141a] transition-transform hover:-translate-y-0.5"
-        >
-          Login to get full access
-        </Link>
+        <UnlockLoginButton href={href} />
         <p className="text-xs text-muted">
           New here?{" "}
           <Link href="/signup" className="font-medium text-accent hover:underline">

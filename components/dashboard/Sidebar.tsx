@@ -16,6 +16,7 @@ const NAV: { key: NavKey; label: string; href: string }[] = [
   { key: "portfolio", label: "Portfolio", href: "/portfolio" },
   { key: "myBots", label: "My Bots", href: "/my-bots" },
   { key: "settings", label: "Account Settings", href: "/account" },
+  { key: "billing", label: "Billing", href: "/billing" },
 ];
 
 export type SidebarUser = {

@@ -20,6 +20,15 @@ export async function POST(request: NextRequest) {
     return fail("Invalid email or password", 401);
   }
 
+  // Account standing gate (set from Admin Management). A banned or suspended
+  // user can authenticate but is not allowed to start a session.
+  if (user.status === "BANNED") {
+    return fail("This account has been banned. Contact support if you believe this is a mistake.", 403);
+  }
+  if (user.status === "SUSPENDED") {
+    return fail("This account is suspended. Contact support to restore access.", 403);
+  }
+
   // Block sign-in until the email address is confirmed.
   if (user.emailVerified === null) {
     return fail("Please verify your email before logging in. Check your inbox for the confirmation link.", 403);

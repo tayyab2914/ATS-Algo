@@ -72,6 +72,29 @@ export const exchangeRemoveSchema = z.object({
   exchange: z.enum(EXCHANGES),
 });
 
+// ── Billing ──────────────────────────────────────────────────────────────────
+
+/** Which plan a checkout request is for. Mirrors the `BillingPlan` enum. */
+export const checkoutSchema = z.object({
+  plan: z.enum(["MONTHLY", "YEARLY"]),
+});
+
+// ── Admin member management ───────────────────────────────────────────────────
+
+/** An action an admin takes on a member from the Admin Management screen. */
+export const adminMemberActionSchema = z.object({
+  memberId: z.string().min(1, "Missing member id"),
+  action: z.enum(["suspend", "ban", "reactivate", "forceLogout", "grantFree", "revokeFree"]),
+  /** Length of a granted comp subscription; `0` (or omitted) means perpetual. */
+  durationMonths: z.number().int().min(0).max(120).optional(),
+});
+
+/** Grant a role to an existing account by email ("Add Team Member" form). */
+export const adminSetRoleSchema = z.object({
+  email,
+  role: z.enum(["ADMIN", "USER"]),
+});
+
 export type LoginInput = z.infer<typeof loginSchema>;
 export type SignupInput = z.infer<typeof signupSchema>;
 export type ProfileInput = z.infer<typeof profileSchema>;
@@ -80,3 +103,6 @@ export type TwoFactorCodeInput = z.infer<typeof twoFactorCodeSchema>;
 export type TwoFactorToggleInput = z.infer<typeof twoFactorToggleSchema>;
 export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
 export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
+export type CheckoutInput = z.infer<typeof checkoutSchema>;
+export type AdminMemberActionInput = z.infer<typeof adminMemberActionSchema>;
+export type AdminSetRoleInput = z.infer<typeof adminSetRoleSchema>;

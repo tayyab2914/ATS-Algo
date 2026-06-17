@@ -19,6 +19,12 @@ export type SessionPayload = {
   emailVerified: boolean;
   /** Has the user accepted the mandatory Rules & Policy? Gates all in-app routes. */
   policyAccepted: boolean;
+  /**
+   * Issued-at, in seconds (JWT `iat`). Present on verified tokens; ignored when
+   * signing (set automatically). Lets the server reject tokens minted before a
+   * force-logout cutoff. See {@link getSession}.
+   */
+  iat?: number;
 };
 
 const ISSUER = "ats-algo";
@@ -57,6 +63,7 @@ export async function verifyToken(token: string): Promise<SessionPayload | null>
       role: payload.role === "ADMIN" ? "ADMIN" : "USER",
       emailVerified: payload.emailVerified === true,
       policyAccepted: payload.policyAccepted === true,
+      iat: typeof payload.iat === "number" ? payload.iat : undefined,
     };
   } catch {
     return null;
