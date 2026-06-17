@@ -3,17 +3,18 @@ import { hashPassword } from "../lib/auth/password";
 import { prisma } from "../lib/db";
 
 const BASE = "https://ats-algo.vercel.app";
+const ADMIN_EMAIL = (process.env.ADMIN_EMAIL ?? "").toLowerCase();
 const log = (label: string, ...rest: unknown[]) => console.log(`• ${label}`, ...rest);
 
 async function adminCookie(): Promise<string> {
   await prisma.adminLoginCode.deleteMany({});
   await prisma.adminLoginCode.create({
-    data: { codeHash: await hashPassword("4321"), expiresAt: new Date(Date.now() + 600000) },
+    data: { email: ADMIN_EMAIL, codeHash: await hashPassword("4321"), expiresAt: new Date(Date.now() + 600000) },
   });
   const res = await fetch(`${BASE}/api/admin/unlock`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ code: "4321" }),
+    body: JSON.stringify({ email: ADMIN_EMAIL, code: "4321" }),
   });
   return (res.headers.get("set-cookie") ?? "").split(";")[0];
 }

@@ -31,6 +31,21 @@ export function isAdminEmail(email: string): boolean {
 }
 
 /**
+ * Does this email belong to an admin who may use passwordless admin sign-in?
+ * True for the configured ADMIN_EMAIL, or any account explicitly granted the
+ * ADMIN role from Admin Management — provided that account is in good standing.
+ */
+export async function isAdmin(email: string): Promise<boolean> {
+  const normalized = email.trim().toLowerCase();
+  if (isAdminEmail(normalized)) return true;
+  const user = await prisma.user.findUnique({
+    where: { email: normalized },
+    select: { role: true, status: true },
+  });
+  return user?.role === "ADMIN" && user.status === "ACTIVE";
+}
+
+/**
  * Create a single-use verification token and email the confirmation link.
  * Email failures are surfaced to the caller so signup can report "account
  * created, but verification email failed" without rolling back the user.

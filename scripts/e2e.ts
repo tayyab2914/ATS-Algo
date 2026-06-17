@@ -39,20 +39,21 @@ async function main() {
   log("dashboard (with session):", r.status);
 
   // ── Admin OTP flow ─────────────────────────────────────────────────────────
-  // 6. Request a code (sends a real email).
-  r = await fetch(`${BASE}/api/admin/request-code`, { method: "POST" });
+  const adminEmail = (process.env.ADMIN_EMAIL ?? "").toLowerCase();
+  // 6. Request a code for the admin address (sends a real email).
+  r = await fetch(`${BASE}/api/admin/request-code`, { method: "POST", headers: json, body: JSON.stringify({ email: adminEmail }) });
   log("admin request-code:", r.status, await r.json());
 
   // Seed a known code so we can test verification without reading the inbox.
   await prisma.adminLoginCode.deleteMany({});
-  await prisma.adminLoginCode.create({ data: { codeHash: await hashPassword("4321"), expiresAt: new Date(Date.now() + 600000) } });
+  await prisma.adminLoginCode.create({ data: { email: adminEmail, codeHash: await hashPassword("4321"), expiresAt: new Date(Date.now() + 600000) } });
 
   // 7. Wrong code → 401.
-  r = await fetch(`${BASE}/api/admin/unlock`, { method: "POST", headers: json, body: JSON.stringify({ code: "0000" }) });
+  r = await fetch(`${BASE}/api/admin/unlock`, { method: "POST", headers: json, body: JSON.stringify({ email: adminEmail, code: "0000" }) });
   log("admin unlock (wrong code):", r.status, await r.json());
 
   // 8. Correct code → 200 + admin session.
-  r = await fetch(`${BASE}/api/admin/unlock`, { method: "POST", headers: json, body: JSON.stringify({ code: "4321" }) });
+  r = await fetch(`${BASE}/api/admin/unlock`, { method: "POST", headers: json, body: JSON.stringify({ email: adminEmail, code: "4321" }) });
   const adminCookie = (r.headers.get("set-cookie") ?? "").split(";")[0];
   log("admin unlock (correct code):", r.status, await r.json());
 

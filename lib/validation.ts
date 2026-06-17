@@ -21,7 +21,11 @@ export const signupSchema = z
     path: ["confirmPassword"],
   });
 
+/** "Get Code" — request a one-time admin code be emailed to this address. */
+export const adminRequestCodeSchema = z.object({ email });
+
 export const adminCodeSchema = z.object({
+  email,
   code: z.string().regex(/^\d{4}$/, "Enter the 4-digit code from your email"),
 });
 
@@ -98,6 +102,7 @@ export const adminSetRoleSchema = z.object({
 export type LoginInput = z.infer<typeof loginSchema>;
 export type SignupInput = z.infer<typeof signupSchema>;
 export type ProfileInput = z.infer<typeof profileSchema>;
+export type AdminRequestCodeInput = z.infer<typeof adminRequestCodeSchema>;
 export type AdminCodeInput = z.infer<typeof adminCodeSchema>;
 export type TwoFactorCodeInput = z.infer<typeof twoFactorCodeSchema>;
 export type TwoFactorToggleInput = z.infer<typeof twoFactorToggleSchema>;

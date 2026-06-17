@@ -5,7 +5,8 @@ import { Reveal } from "@/components/landing/Reveal";
  * Closing conversion panel: a glowing gradient slab with a rotating conic ring,
  * a panning grid and the primary sign-up CTA.
  */
-export function CtaSection({ loggedIn = false }: { loggedIn?: boolean }) {
+export function CtaSection({ loggedIn = false, isAdmin = false }: { loggedIn?: boolean; isAdmin?: boolean }) {
+  const dashboardHref = isAdmin ? "/admin/dashboard" : "/dashboard";
   return (
     <section className="px-5 py-20 sm:px-8 lg:py-28">
       <Reveal className="mx-auto max-w-5xl">
@@ -42,7 +43,7 @@ export function CtaSection({ loggedIn = false }: { loggedIn?: boolean }) {
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
               {loggedIn ? (
                 <Link
-                  href="/dashboard"
+                  href={dashboardHref}
                   className="group inline-flex h-12 items-center justify-center rounded-2xl bg-accent px-7 text-base font-semibold text-[#06141a] shadow-[0_0_44px_-8px_rgba(40,184,213,0.95)] transition-transform hover:-translate-y-0.5"
                 >
                   My Dashboard

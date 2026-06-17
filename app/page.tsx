@@ -23,20 +23,24 @@ export const metadata: Metadata = {
  * a "My Dashboard" shortcut instead of the sign-in / get-started CTAs.
  */
 export default async function Home() {
-  const loggedIn = (await getSession()) !== null;
+  const session = await getSession();
+  const loggedIn = session !== null;
+  // Admins carry an ADMIN session; their "My Dashboard" shortcut must point at
+  // the admin panel, not the end-user dashboard.
+  const isAdmin = session?.role === "ADMIN";
 
   return (
     <div className="relative flex min-h-screen flex-col bg-background">
-      <LandingNav loggedIn={loggedIn} />
+      <LandingNav loggedIn={loggedIn} isAdmin={isAdmin} />
       <main className="flex-1">
-        <Hero loggedIn={loggedIn} />
+        <Hero loggedIn={loggedIn} isAdmin={isAdmin} />
         <PriceTicker />
         <Features />
         <Platform />
         <HowItWorks />
         <ExchangeMarquee />
         <Testimonials />
-        <CtaSection loggedIn={loggedIn} />
+        <CtaSection loggedIn={loggedIn} isAdmin={isAdmin} />
       </main>
       <LandingFooter />
     </div>

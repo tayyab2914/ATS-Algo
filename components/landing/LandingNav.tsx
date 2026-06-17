@@ -12,13 +12,16 @@ import { cn } from "@/lib/cn";
  * blurred glass bar once the page is scrolled. Collapses to a slide-down sheet
  * on mobile.
  */
-export function LandingNav({ loggedIn = false }: { loggedIn?: boolean }) {
+export function LandingNav({ loggedIn = false, isAdmin = false }: { loggedIn?: boolean; isAdmin?: boolean }) {
   const router = useRouter();
   const [scrolled, setScrolled] = useState(false);
   const [open, setOpen] = useState(false);
   // Seed from the server render, then confirm against the live session so a
   // stale tab (loaded before sign-in) self-corrects without a manual reload.
   const [authed, setAuthed] = useState(loggedIn);
+  // Admins get sent to the admin panel, not the end-user dashboard.
+  const [admin, setAdmin] = useState(isAdmin);
+  const dashboardHref = admin ? "/admin/dashboard" : "/dashboard";
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 16);
@@ -30,18 +33,23 @@ export function LandingNav({ loggedIn = false }: { loggedIn?: boolean }) {
   useEffect(() => {
     let cancelled = false;
     fetch("/api/auth/me", { cache: "no-store" })
-      .then((res) => res.ok)
-      .catch(() => loggedIn)
-      .then((live) => {
-        if (cancelled || live === loggedIn) return;
-        setAuthed(live);
+      .then(async (res) =>
+        res.ok
+          ? { live: true, admin: (await res.json().catch(() => null))?.user?.role === "ADMIN" }
+          : { live: false, admin: false },
+      )
+      .catch(() => ({ live: loggedIn, admin: isAdmin }))
+      .then((next) => {
+        if (cancelled || (next.live === loggedIn && next.admin === isAdmin)) return;
+        setAuthed(next.live);
+        setAdmin(next.admin);
         // Re-render the server components (Hero / CTA) with the correct state.
         router.refresh();
       });
     return () => {
       cancelled = true;
     };
-  }, [loggedIn, router]);
+  }, [loggedIn, isAdmin, router]);
 
   return (
     <header
@@ -78,7 +86,7 @@ export function LandingNav({ loggedIn = false }: { loggedIn?: boolean }) {
           </Link>
           {authed ? (
             <Link
-              href="/dashboard"
+              href={dashboardHref}
               className="group relative inline-flex h-10 items-center justify-center rounded-full bg-accent px-5 text-sm font-semibold text-[#06141a] shadow-[0_0_24px_-6px_rgba(40,184,213,0.8)] transition-transform hover:-translate-y-0.5"
             >
               My Dashboard
@@ -166,7 +174,7 @@ export function LandingNav({ loggedIn = false }: { loggedIn?: boolean }) {
             <div className="mt-2 flex gap-2">
               {authed ? (
                 <Link
-                  href="/dashboard"
+                  href={dashboardHref}
                   onClick={() => setOpen(false)}
                   className="flex h-11 flex-1 items-center justify-center rounded-xl bg-accent text-sm font-semibold text-[#06141a]"
                 >

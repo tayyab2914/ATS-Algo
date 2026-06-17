@@ -151,14 +151,18 @@ model MetricUpload {
   @@map("metric_uploads")
 }
 
-/// One-time, expiring code emailed to the admin address for passwordless admin
-/// sign-in. The code is stored hashed; only one is active at a time.
+/// One-time, expiring code emailed to an admin address for passwordless admin
+/// sign-in. Scoped to the address it was sent to so each admin's code is
+/// independent. Stored hashed; only the latest code per address is valid.
 model AdminLoginCode {
-  id        String   @id @default(cuid())
+  id String @id @default(cuid())
+  /// The admin address this code was issued to (lowercased).
+  email     String
   codeHash  String
   expiresAt DateTime
   createdAt DateTime @default(now())
 
+  @@index([email])
   @@map("admin_login_codes")
 }
 

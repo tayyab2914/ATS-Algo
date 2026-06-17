@@ -5,28 +5,40 @@ import { useState, type FormEvent } from "react";
 import { PinInput } from "@/components/admin/PinInput";
 import { Button } from "@/components/ui/Button";
 import { Notice, type NoticeData } from "@/components/ui/Notice";
+import { TextField } from "@/components/ui/TextField";
 
 type Step = "request" | "verify";
 
 /**
  * Admin access via emailed one-time code.
  *
- * Step 1 ("request"): "Get Code" emails a 4-digit code to the admin address.
- * Step 2 ("verify"): the admin enters that code to sign in and is redirected
- * to the admin dashboard.
+ * Step 1 ("request"): the admin enters their email and presses "Get Code". The
+ * backend emails a 4-digit code only when that address belongs to an admin, but
+ * the response is the same either way so it can't reveal who the admins are.
+ * Step 2 ("verify"): the admin enters that code to sign in and is redirected to
+ * the admin dashboard.
  */
 export function AdminAccessCard() {
   const router = useRouter();
   const [step, setStep] = useState<Step>("request");
+  const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
   const [banner, setBanner] = useState<NoticeData | null>(null);
   const [pending, setPending] = useState(false);
 
   async function requestCode() {
     setBanner(null);
+    if (!email.trim()) {
+      setBanner({ type: "error", message: "Enter your admin email address." });
+      return;
+    }
     setPending(true);
     try {
-      const res = await fetch("/api/admin/request-code", { method: "POST" });
+      const res = await fetch("/api/admin/request-code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setBanner({ type: "error", message: data.error ?? "Could not send the code." });
@@ -34,12 +46,20 @@ export function AdminAccessCard() {
       }
       setStep("verify");
       setCode("");
-      setBanner({ type: "success", message: "A 4-digit code has been sent to the admin email. Check your inbox." });
+      setBanner({
+        type: "success",
+        message: "If that email belongs to an admin, a 4-digit code is on its way. Check your inbox.",
+      });
     } catch {
       setBanner({ type: "error", message: "Network error. Please try again." });
     } finally {
       setPending(false);
     }
+  }
+
+  async function submitRequest(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await requestCode();
   }
 
   async function verifyCode(event: FormEvent<HTMLFormElement>) {
@@ -54,7 +74,7 @@ export function AdminAccessCard() {
       const res = await fetch("/api/admin/unlock", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code }),
+        body: JSON.stringify({ email, code }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -76,7 +96,7 @@ export function AdminAccessCard() {
         <h1 className="text-2xl font-semibold leading-[31px] text-heading">Admin Access</h1>
         <p className="text-xs leading-[18px] text-muted">
           {step === "request"
-            ? "Request a one-time code to continue"
+            ? "Enter your admin email to get a one-time code"
             : "Enter the 4-digit code sent to your email"}
         </p>
       </header>
@@ -84,11 +104,22 @@ export function AdminAccessCard() {
       {banner && <Notice notice={banner} />}
 
       {step === "request" ? (
-        <div className="flex w-full flex-col gap-4">
-          <Button type="button" variant="primary" onClick={requestCode} disabled={pending}>
+        <form className="flex w-full flex-col gap-4" onSubmit={submitRequest} noValidate>
+          <TextField
+            id="admin-email"
+            label="Email Address"
+            type="email"
+            placeholder="Enter"
+            autoComplete="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+          />
+
+          <Button type="submit" variant="primary" disabled={pending}>
             {pending ? "Sending…" : "Get Code"}
           </Button>
-        </div>
+        </form>
       ) : (
         <form className="flex w-full flex-col gap-4" onSubmit={verifyCode}>
           <div className="flex w-full flex-col gap-2">
