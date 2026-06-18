@@ -30,6 +30,36 @@ export function hasActiveSubscription(status: SubscriptionStatus): boolean {
 }
 
 /**
+ * Authoritative "does this subscription grant access right now" check.
+ *
+ * Paid subscriptions follow their synced Stripe status. Comp grants have no
+ * webhook to expire them, so we additionally honour their end date — a grant
+ * past its `currentPeriodEnd` no longer counts even though its stored status is
+ * still ACTIVE.
+ */
+export function isSubscriptionActive(
+  sub: { status: SubscriptionStatus; isComp: boolean; currentPeriodEnd: Date | null } | null,
+): boolean {
+  if (!sub) return false;
+  if (sub.isComp) {
+    return (
+      sub.status === SubscriptionStatus.ACTIVE &&
+      (sub.currentPeriodEnd === null || sub.currentPeriodEnd > new Date())
+    );
+  }
+  return hasActiveSubscription(sub.status);
+}
+
+/** Load the user's subscription and report whether it currently grants access. */
+export async function userHasAccess(userId: string): Promise<boolean> {
+  const sub = await prisma.subscription.findUnique({
+    where: { userId },
+    select: { status: true, isComp: true, currentPeriodEnd: true },
+  });
+  return isSubscriptionActive(sub);
+}
+
+/**
  * Return the user's Stripe customer id, creating the customer on first use and
  * persisting it. The user id is stored in the customer's metadata so webhook
  * events can always be traced back to a user even if our local row is missing.

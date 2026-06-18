@@ -3,14 +3,14 @@ import Link from "next/link";
 import { AppShell } from "@/components/app/AppShell";
 import { GuestGate } from "@/components/app/GuestGate";
 import { TabPreviewSkeleton } from "@/components/app/TabPreviewSkeleton";
-import { getSession } from "@/lib/auth/session";
+import { requireSubscription } from "@/lib/auth/guards";
 
 export const metadata: Metadata = {
   title: "My Bots · ATS-ALGO",
 };
 
 export default async function MyBotsPage() {
-  const session = await getSession();
+  const session = await requireSubscription();
 
   return (
     <AppShell>

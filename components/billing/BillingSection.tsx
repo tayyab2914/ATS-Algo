@@ -13,6 +13,8 @@ export type SubscriptionView = {
   active: boolean;
   currentPeriodEnd: string | null;
   cancelAtPeriodEnd: boolean;
+  /** Admin-granted free access — there is no Stripe customer/portal to manage. */
+  isComp: boolean;
 };
 
 type PlanKey = "MONTHLY" | "YEARLY";
@@ -48,13 +50,16 @@ export function BillingSection({
 }) {
   const params = useSearchParams();
   const returnStatus = params.get("status");
+  const gated = params.get("gated");
 
   const [banner, setBanner] = useState<NoticeData | null>(
     returnStatus === "success"
       ? { type: "success", message: "Payment received. Your subscription will appear here within a few seconds." }
       : returnStatus === "cancelled"
         ? { type: "info", message: "Checkout cancelled — you haven't been charged." }
-        : null,
+        : gated
+          ? { type: "info", message: "Subscribe to unlock the dashboard, portfolio, and your bots." }
+          : null,
   );
   const [pending, setPending] = useState<"MONTHLY" | "YEARLY" | "portal" | null>(null);
 
@@ -98,27 +103,36 @@ export function BillingSection({
           <div className="flex flex-col gap-4 rounded-xl border border-line bg-background/40 p-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex flex-col gap-1.5">
               <div className="flex items-center gap-2.5">
-                <span className="text-base font-semibold text-white">{PLANS[subscription.plan].label} plan</span>
+                <span className="text-base font-semibold text-white">
+                  {subscription.isComp ? "Complimentary access" : `${PLANS[subscription.plan].label} plan`}
+                </span>
                 <span
                   className={cn(
                     "rounded-full px-2 py-0.5 text-[11px] font-medium",
                     active ? "bg-success/15 text-success" : "bg-red-500/15 text-red-400",
                   )}
                 >
-                  {STATUS_LABEL[subscription.status] ?? subscription.status}
+                  {subscription.isComp ? "Granted" : STATUS_LABEL[subscription.status] ?? subscription.status}
                 </span>
               </div>
               <span className="text-xs text-muted">
-                {subscription.cancelAtPeriodEnd
-                  ? `Access ends ${formatDate(subscription.currentPeriodEnd)}`
-                  : active
-                    ? `Renews ${formatDate(subscription.currentPeriodEnd)}`
-                    : "Update your payment method to restore access."}
+                {subscription.isComp
+                  ? subscription.currentPeriodEnd
+                    ? `Granted by your team · access until ${formatDate(subscription.currentPeriodEnd)}`
+                    : "Granted by your team · no expiry"
+                  : subscription.cancelAtPeriodEnd
+                    ? `Access ends ${formatDate(subscription.currentPeriodEnd)}`
+                    : active
+                      ? `Renews ${formatDate(subscription.currentPeriodEnd)}`
+                      : "Update your payment method to restore access."}
               </span>
             </div>
-            <PrimaryAction onClick={openPortal} disabled={pending !== null}>
-              {pending === "portal" ? "Opening…" : "Manage billing"}
-            </PrimaryAction>
+            {/* Comp access has no Stripe customer, so there's nothing to manage. */}
+            {!subscription.isComp && (
+              <PrimaryAction onClick={openPortal} disabled={pending !== null}>
+                {pending === "portal" ? "Opening…" : "Manage billing"}
+              </PrimaryAction>
+            )}
           </div>
         </SettingsCard>
       ) : (

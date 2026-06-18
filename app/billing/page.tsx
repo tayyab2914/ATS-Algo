@@ -4,7 +4,7 @@ import { AppShell } from "@/components/app/AppShell";
 import { GuestGate } from "@/components/app/GuestGate";
 import { TabPreviewSkeleton } from "@/components/app/TabPreviewSkeleton";
 import { BillingSection, type SubscriptionView } from "@/components/billing/BillingSection";
-import { hasActiveSubscription } from "@/lib/billing";
+import { isSubscriptionActive } from "@/lib/billing";
 import { getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
 
@@ -48,9 +48,10 @@ export default async function BillingPage() {
     ? {
         plan: sub.plan,
         status: sub.status,
-        active: hasActiveSubscription(sub.status),
+        active: isSubscriptionActive(sub),
         currentPeriodEnd: sub.currentPeriodEnd?.toISOString() ?? null,
         cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
+        isComp: sub.isComp,
       }
     : null;
 

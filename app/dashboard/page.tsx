@@ -6,14 +6,14 @@ import { PerformanceMetrics } from "@/components/dashboard/PerformanceMetrics";
 import { PortfolioAndHoldings } from "@/components/dashboard/PortfolioAndHoldings";
 import { TopActiveBots } from "@/components/dashboard/TopActiveBots";
 import { TopAssets } from "@/components/dashboard/TopAssets";
-import { getSession } from "@/lib/auth/session";
+import { requireSubscription } from "@/lib/auth/guards";
 
 export const metadata: Metadata = {
   title: "Dashboard · ATS-ALGO",
 };
 
 export default async function DashboardPage() {
-  const session = await getSession();
+  const session = await requireSubscription();
 
   const content = (
     <>
