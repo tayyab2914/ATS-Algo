@@ -140,6 +140,58 @@ enum UploadStatus {
   FAILED
 }
 
+/// Bot risk profile. Maps to the JSON config's safe/balanced/aggressive profiles.
+enum RiskClass {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+/// Whether a bot is visible to end users (toggled from "Enable/Disable Bots").
+enum BotStatus {
+  ACTIVE
+  DISABLED
+}
+
+/// A trading bot created from an uploaded JSON config + signal CSV, backtested
+/// on creation. Headline metrics are for the selected `riskClass`; `results`
+/// holds the full per-profile backtest output. The raw CSV is kept so the
+/// backtest can be re-run when the engine changes.
+model Bot {
+  id        String @id @default(cuid())
+  name      String
+  ticker    String?
+  category  String
+  assetType String? // from JSON `type` (e.g. Crypto)
+  exchange  String? // from JSON `exchange` (e.g. Bybit)
+  timeframe String
+  riskClass RiskClass @default(MEDIUM)
+  status    BotStatus @default(ACTIVE)
+
+  config      Json // the uploaded bot config JSON
+  csvFilename String?
+  csvData     String? // raw signal CSV (text)
+
+  // Headline backtest metrics for the selected risk profile.
+  trades       Int   @default(0)
+  winRate      Float @default(0)
+  profitFactor Float @default(0)
+  totalReturn  Float @default(0)
+  avgTrade     Float @default(0)
+  d30          Float @default(0)
+  d90          Float @default(0)
+  d180         Float @default(0)
+  d360         Float @default(0)
+
+  results Json? // full per-profile metrics from the backtest
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@map("bots")
+}
+
 /// A metrics file uploaded via the Admin Staging Dashboard.
 model MetricUpload {
   id        String       @id @default(cuid())

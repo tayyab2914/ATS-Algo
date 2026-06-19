@@ -154,3 +154,11 @@ export const UserIcon = (p: SVGProps<SVGSVGElement>) => (
     <path d="M5 21c0-3.5 3-6 7-6s7 2.5 7 6" />
   </Icon>
 );
+
+export const BotIcon = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <rect x="4" y="8" width="16" height="11" rx="2.5" />
+    <path d="M12 4v4M9 13h.01M15 13h.01M9 16h6" />
+    <path d="M2 12v3M22 12v3" />
+  </Icon>
+);

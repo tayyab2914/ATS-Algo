@@ -3,16 +3,17 @@
 import Link from "next/link";
 import type { SVGProps } from "react";
 import { useEffect, useState } from "react";
-import { GearIcon, ShieldUsersIcon, UserIcon } from "@/components/admin/admin-icons";
+import { BotIcon, GearIcon, ShieldUsersIcon, UserIcon } from "@/components/admin/admin-icons";
 import { Logo } from "@/components/brand/Logo";
 import { ProfileMenu, type SidebarUser } from "@/components/dashboard/ProfileMenu";
 import { cn } from "@/lib/cn";
 
-export type AdminTab = "dashboard" | "management" | "account";
+export type AdminTab = "dashboard" | "management" | "bots" | "account";
 
 const NAV = [
   { key: "dashboard", label: "Admin Dashboard", Icon: GearIcon, href: "/admin/dashboard" },
   { key: "management", label: "Members Management", Icon: ShieldUsersIcon, href: "/admin/management" },
+  { key: "bots", label: "Bot Management", Icon: BotIcon, href: "/admin/bots" },
   { key: "account", label: "Account Management", Icon: UserIcon, href: "/admin/account" },
 ] as const;
 
