@@ -25,9 +25,21 @@ export function toPublicUser(user: UserModel): PublicUser {
   };
 }
 
-/** Is this the configured admin address? */
+/** Is this the configured superadmin address? */
+export function isSuperAdminEmail(email: string): boolean {
+  const configured = (process.env.SUPERADMIN_EMAIL ?? "").trim().toLowerCase();
+  return configured.length > 0 && email.trim().toLowerCase() === configured;
+}
+
+/**
+ * Is this a configured admin address? True for ADMIN_EMAIL and for the
+ * SUPERADMIN_EMAIL — the superadmin signs in through the same passwordless admin
+ * flow, so it must be recognised as an admin address here too.
+ */
 export function isAdminEmail(email: string): boolean {
-  return email.toLowerCase() === (process.env.ADMIN_EMAIL ?? "").toLowerCase();
+  const normalized = email.trim().toLowerCase();
+  const adminEmail = (process.env.ADMIN_EMAIL ?? "").trim().toLowerCase();
+  return (adminEmail.length > 0 && normalized === adminEmail) || isSuperAdminEmail(normalized);
 }
 
 /**

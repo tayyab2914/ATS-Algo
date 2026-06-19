@@ -31,7 +31,7 @@ export async function sendAdminCodeEmail(to: string, code: string): Promise<void
     html: `
       <div style="font-family:Inter,Arial,sans-serif;background:#0a0a0a;color:#fff;padding:32px;border-radius:16px;max-width:480px">
         <h1 style="font-size:20px;margin:0 0 8px">Admin access code</h1>
-        <p style="color:#b5b5b5;font-size:14px;line-height:21px">Use this one-time code to unlock the admin dashboard:</p>
+        <p style="color:#b5b5b5;font-size:14px;line-height:21px">Use this one-time code to verify your admin sign-in:</p>
         <p style="font-size:36px;font-weight:700;letter-spacing:8px;color:#28b8d5;margin:16px 0">${code}</p>
         <p style="color:#6b7280;font-size:12px">This code expires in 10 minutes. If you didn't request it, ignore this email.</p>
       </div>

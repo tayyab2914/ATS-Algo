@@ -3,15 +3,14 @@ import { redirect } from "next/navigation";
 import { AddTeamMember } from "@/components/admin/AddTeamMember";
 import { AdminSidebar } from "@/components/admin/AdminSidebar";
 import { MembersTable, type MemberRow, type MemberSubscription } from "@/components/admin/MembersTable";
-import { PermissionsControl } from "@/components/admin/PermissionsControl";
-import { LogoutButton } from "@/components/auth/LogoutButton";
+import { isSuperAdminEmail } from "@/lib/auth/account";
 import { getSession, hasLiveSession } from "@/lib/auth/session";
 import { hasActiveSubscription } from "@/lib/billing";
 import { prisma } from "@/lib/db";
 import type { SubscriptionModel } from "@/lib/generated/prisma/models";
 
 export const metadata: Metadata = {
-  title: "Admin Management · ATS-ALGO",
+  title: "Members Management · ATS-ALGO",
 };
 
 function formatDate(date: Date): string {
@@ -39,6 +38,8 @@ export default async function AdminManagementPage() {
   if (!session) redirect("/admin");
   if (session.role !== "ADMIN") redirect("/dashboard");
 
+  const isSuperAdmin = isSuperAdminEmail(session.email);
+
   const users = await prisma.user.findMany({
     orderBy: { createdAt: "asc" },
     include: { subscription: true },
@@ -56,23 +57,19 @@ export default async function AdminManagementPage() {
   }));
 
   return (
-    <div className="flex min-h-screen w-full bg-background text-white">
+    <div className="flex min-h-screen w-full flex-col bg-background text-white lg:flex-row">
       <AdminSidebar active="management" />
 
       <main className="flex min-w-0 flex-1 flex-col gap-6 p-6">
-        <header className="flex items-start justify-between gap-4">
-          <div className="flex flex-col gap-1">
-            <h1 className="text-2xl font-semibold leading-[31px] text-white">Admin Management</h1>
-            <p className="text-sm leading-[21px] text-muted">
-              Manage team members, roles, and access permissions.
-            </p>
-          </div>
-          <LogoutButton redirectTo="/admin" />
+        <header className="flex flex-col gap-1">
+          <h1 className="text-2xl font-semibold leading-[31px] text-white">Members Management</h1>
+          <p className="text-sm leading-[21px] text-muted">
+            Manage team members, roles, and access permissions.
+          </p>
         </header>
 
-        <MembersTable members={members} />
         <AddTeamMember />
-        <PermissionsControl />
+        <MembersTable members={members} isSuperAdmin={isSuperAdmin} />
       </main>
     </div>
   );

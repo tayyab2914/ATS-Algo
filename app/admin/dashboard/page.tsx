@@ -6,7 +6,6 @@ import { ContentControl } from "@/components/admin/ContentControl";
 import { DateStatusPanel } from "@/components/admin/DateStatusPanel";
 import { UploadHistoryTable } from "@/components/admin/UploadHistoryTable";
 import { UploadMetricsCard } from "@/components/admin/UploadMetricsCard";
-import { LogoutButton } from "@/components/auth/LogoutButton";
 import { getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
 
@@ -43,16 +42,13 @@ export default async function AdminDashboardPage() {
   }));
 
   return (
-    <div className="flex min-h-screen w-full bg-background text-white">
+    <div className="flex min-h-screen w-full flex-col bg-background text-white lg:flex-row">
       <AdminSidebar active="dashboard" />
 
       <main className="flex min-w-0 flex-1 flex-col gap-6 p-6">
-        <header className="flex items-start justify-between gap-4">
-          <div className="flex flex-col gap-1">
-            <h1 className="text-2xl font-semibold leading-[31px] text-white">Admin Staging Dashboard</h1>
-            <p className="text-sm leading-[21px] text-muted">Manage platform data and update trading metrics.</p>
-          </div>
-          <LogoutButton redirectTo="/admin" />
+        <header className="flex flex-col gap-1">
+          <h1 className="text-2xl font-semibold leading-[31px] text-white">Admin Staging Dashboard</h1>
+          <p className="text-sm leading-[21px] text-muted">Manage platform data and update trading metrics.</p>
         </header>
 
         <UploadMetricsCard />

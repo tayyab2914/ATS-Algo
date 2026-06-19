@@ -18,10 +18,10 @@ type Step = "request" | "verify";
  * Step 2 ("verify"): the admin enters that code to sign in and is redirected to
  * the admin dashboard.
  */
-export function AdminAccessCard() {
+export function AdminAccessCard({ initialEmail = "" }: { initialEmail?: string }) {
   const router = useRouter();
   const [step, setStep] = useState<Step>("request");
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(initialEmail);
   const [code, setCode] = useState("");
   const [banner, setBanner] = useState<NoticeData | null>(null);
   const [pending, setPending] = useState(false);
@@ -78,7 +78,7 @@ export function AdminAccessCard() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setBanner({ type: "error", message: data.error ?? "Unlock failed." });
+        setBanner({ type: "error", message: data.error ?? "Verification failed." });
         return;
       }
       router.push("/admin/dashboard");
@@ -128,7 +128,7 @@ export function AdminAccessCard() {
           </div>
 
           <Button type="submit" variant="primary" disabled={pending}>
-            {pending ? "Verifying…" : "Unlock"}
+            {pending ? "Verifying…" : "Verify"}
           </Button>
 
           <button

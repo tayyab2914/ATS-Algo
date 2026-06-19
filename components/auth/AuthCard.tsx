@@ -13,10 +13,16 @@ export function AuthCard({
   mode,
   notice,
   next,
+  initialEmail,
+  lockEmail,
 }: {
   mode: AuthMode;
   notice?: NoticeData;
   next?: string;
+  /** Pre-fill the email field (e.g. from an invite link). */
+  initialEmail?: string;
+  /** Prevent editing the email (invited members sign up as-is). */
+  lockEmail?: boolean;
 }) {
   const copy = AUTH_COPY[mode];
 
@@ -29,7 +35,7 @@ export function AuthCard({
         <p className="text-xs leading-[18px] text-muted">{copy.subtitle}</p>
       </header>
 
-      <AuthForm mode={mode} notice={notice} next={next} />
+      <AuthForm mode={mode} notice={notice} next={next} initialEmail={initialEmail} lockEmail={lockEmail} />
     </div>
   );
 }

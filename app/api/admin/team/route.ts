@@ -39,6 +39,10 @@ export async function POST(request: NextRequest) {
 
   if (role === "ADMIN") {
     if (existing) {
+      // Don't "re-add" someone who is already an active admin.
+      if (existing.role === "ADMIN" && existing.status === "ACTIVE") {
+        return fail("That person is already an admin.", 409);
+      }
       // Only force a re-login when the role/standing actually changes, so a
       // simple re-invite doesn't sign an active admin out for nothing.
       const changed = existing.role !== "ADMIN" || existing.status !== "ACTIVE";
@@ -59,17 +63,17 @@ export async function POST(request: NextRequest) {
         },
       });
     }
-  } else if (existing && existing.role !== "USER") {
-    // Demote a prior admin. New members register themselves via /signup, so a
-    // not-yet-registered invitee needs no row created here.
-    await prisma.user.update({
-      where: { id: existing.id },
-      data: { role: "USER", sessionsValidFrom: new Date() },
-    });
+  } else if (existing) {
+    // Member invite: the address already has an account, so there's nothing to
+    // "add". (Admins are promoted above; here we only see USER-role invites.)
+    return fail("An account with this email already exists.", 409);
   }
 
+  // Carry the invited address into the destination so the recipient lands on a
+  // form with their email pre-filled (and, on signup, locked).
   const base = appBaseUrl();
-  const link = role === "ADMIN" ? `${base}/admin` : `${base}/signup`;
+  const path = role === "ADMIN" ? "/admin" : "/signup";
+  const link = `${base}${path}?email=${encodeURIComponent(email)}`;
   try {
     await sendTeamInviteEmail(email, role, link);
   } catch (error) {

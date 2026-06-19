@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { PrimaryAction, SettingsCard } from "@/components/account/SettingsCard";
 import { Notice, type NoticeData } from "@/components/ui/Notice";
+import { PasswordField } from "@/components/ui/PasswordField";
 import { TextField } from "@/components/ui/TextField";
 
 type Initial = { username: string; email: string; avatarUrl: string | null };
@@ -95,7 +96,7 @@ export function ProfileSection({ initial }: { initial: Initial }) {
             <p className="text-[11px] leading-[16px] text-muted/70">Your email address can&apos;t be changed.</p>
           </div>
 
-          <TextField id="password" label="New Password" type="password" placeholder="Enter" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} />
+          <PasswordField id="password" label="New Password" placeholder="Enter" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} />
 
           <div className="flex flex-col gap-2">
             <span className="text-xs leading-[18px] text-muted">Avatar</span>

@@ -6,6 +6,7 @@ import { useState, type FormEvent } from "react";
 import { PinInput } from "@/components/admin/PinInput";
 import { Button } from "@/components/ui/Button";
 import { Notice, type NoticeData } from "@/components/ui/Notice";
+import { PasswordField } from "@/components/ui/PasswordField";
 import { TextField } from "@/components/ui/TextField";
 import type { AuthMode } from "@/lib/auth-config";
 
@@ -25,17 +26,23 @@ export function AuthForm({
   mode,
   notice,
   next,
+  initialEmail = "",
+  lockEmail = false,
 }: {
   mode: AuthMode;
   notice?: NoticeData;
   /** Where to land after a successful login (defaults to the dashboard). */
   next?: string;
+  /** Pre-fill the email field (e.g. from an invite link). */
+  initialEmail?: string;
+  /** Prevent the user from editing the email (invited members sign up as-is). */
+  lockEmail?: boolean;
 }) {
   const isSignup = mode === "signup";
   const router = useRouter();
   const destination = next ?? "/dashboard";
 
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(initialEmail);
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [banner, setBanner] = useState<NoticeData | null>(notice ?? null);
@@ -204,11 +211,14 @@ export function AuthForm({
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           required
+          readOnly={lockEmail}
+          aria-readonly={lockEmail || undefined}
+          title={lockEmail ? "This invite is tied to your email address" : undefined}
+          className={lockEmail ? "cursor-not-allowed opacity-70" : undefined}
         />
-        <TextField
+        <PasswordField
           id="password"
           label="Password"
-          type="password"
           placeholder="Enter"
           autoComplete={isSignup ? "new-password" : "current-password"}
           value={password}
@@ -216,10 +226,9 @@ export function AuthForm({
           required
         />
         {isSignup && (
-          <TextField
+          <PasswordField
             id="confirm-password"
             label="Confirm Password"
-            type="password"
             placeholder="Enter"
             autoComplete="new-password"
             value={confirmPassword}

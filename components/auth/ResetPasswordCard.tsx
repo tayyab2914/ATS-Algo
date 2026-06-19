@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/Button";
 import { Notice, type NoticeData } from "@/components/ui/Notice";
-import { TextField } from "@/components/ui/TextField";
+import { PasswordField } from "@/components/ui/PasswordField";
 
 /** Set a new password using the token from the emailed reset link. */
 export function ResetPasswordCard({ token }: { token?: string }) {
@@ -51,10 +51,9 @@ export function ResetPasswordCard({ token }: { token?: string }) {
       <form className="flex w-full flex-col gap-4" onSubmit={handleSubmit} noValidate>
         {banner && <Notice notice={banner} />}
 
-        <TextField
+        <PasswordField
           id="password"
           label="New Password"
-          type="password"
           placeholder="Enter"
           autoComplete="new-password"
           value={password}
@@ -62,10 +61,9 @@ export function ResetPasswordCard({ token }: { token?: string }) {
           required
           disabled={!token}
         />
-        <TextField
+        <PasswordField
           id="confirm-password"
           label="Confirm Password"
-          type="password"
           placeholder="Enter"
           autoComplete="new-password"
           value={confirmPassword}

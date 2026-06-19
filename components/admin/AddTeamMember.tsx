@@ -1,15 +1,121 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { AdminCard } from "@/components/admin/AdminCard";
-import { ChevronDownIcon } from "@/components/admin/admin-icons";
+import { CheckIcon, ChevronDownIcon } from "@/components/admin/admin-icons";
 import { Notice, type NoticeData } from "@/components/ui/Notice";
+import { cn } from "@/lib/cn";
+
+type Role = "" | "ADMIN" | "USER";
+
+const ROLE_OPTIONS: { value: "ADMIN" | "USER"; label: string }[] = [
+  { value: "ADMIN", label: "Admin" },
+  { value: "USER", label: "Member" },
+];
 
 /**
- * Promote an existing account to Admin (or back to Member) by email — the design's
- * "Add Team Member" card. There's no email invite: the person must already have
- * an account, which keeps this honest about what the backend can do.
+ * Themed role picker. A native `<select>` can't be styled to match the dark
+ * theme and its popup would be clipped by the card's `overflow-hidden`, so this
+ * renders a custom menu positioned `fixed` to the trigger (escaping the clip).
+ */
+function RoleDropdown({ value, onChange }: { value: Role; onChange: (role: "ADMIN" | "USER") => void }) {
+  const [open, setOpen] = useState(false);
+  const [anchor, setAnchor] = useState<{ top: number; left: number; width: number } | null>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+
+  // Close on Escape, and on scroll/resize (a fixed menu would otherwise detach).
+  useEffect(() => {
+    if (!open) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    function reposition() {
+      setOpen(false);
+    }
+    document.addEventListener("keydown", onKey);
+    window.addEventListener("scroll", reposition, true);
+    window.addEventListener("resize", reposition);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", reposition, true);
+      window.removeEventListener("resize", reposition);
+    };
+  }, [open]);
+
+  function toggle() {
+    if (open) {
+      setOpen(false);
+      return;
+    }
+    const rect = triggerRef.current?.getBoundingClientRect();
+    if (rect) setAnchor({ top: rect.bottom + 6, left: rect.left, width: rect.width });
+    setOpen(true);
+  }
+
+  const selected = ROLE_OPTIONS.find((o) => o.value === value);
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        onClick={toggle}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        className="flex h-[42px] w-full items-center justify-between rounded-lg border border-line bg-background px-3 text-sm text-white transition-colors focus:border-accent/60 focus:outline-none"
+      >
+        <span className={selected ? "text-white" : "text-muted"}>{selected?.label ?? "Select"}</span>
+        <ChevronDownIcon className={cn("size-5 shrink-0 text-muted transition-transform", open && "rotate-180")} />
+      </button>
+
+      {open && anchor && (
+        <>
+          <button
+            type="button"
+            aria-hidden
+            tabIndex={-1}
+            onClick={() => setOpen(false)}
+            className="fixed inset-0 z-40 cursor-default"
+          />
+          <div
+            role="listbox"
+            style={{ position: "fixed", top: anchor.top, left: anchor.left, width: anchor.width }}
+            className="z-50 overflow-hidden rounded-lg border border-line bg-surface p-1 shadow-[0_24px_60px_-24px_rgba(0,0,0,0.8)]"
+          >
+            {ROLE_OPTIONS.map((opt) => {
+              const active = value === opt.value;
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  role="option"
+                  aria-selected={active}
+                  onClick={() => {
+                    onChange(opt.value);
+                    setOpen(false);
+                  }}
+                  className={cn(
+                    "flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-sm text-white transition-colors hover:bg-white/5",
+                    active && "bg-white/5",
+                  )}
+                >
+                  {opt.label}
+                  {active && <CheckIcon className="size-4 text-accent" />}
+                </button>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+
+/**
+ * "Add Team Member" card. Invite someone by email: admins are emailed an admin
+ * sign-in link, members an account-creation link — both pre-filled with their
+ * address. The backend rejects an email that already has an account.
  */
 export function AddTeamMember() {
   const router = useRouter();
@@ -75,24 +181,10 @@ export function AddTeamMember() {
             />
           </label>
 
-          <label className="flex flex-1 flex-col gap-2">
+          <div className="flex flex-1 flex-col gap-2">
             <span className="text-xs leading-[18px] text-muted">Role Selection</span>
-            <div className="relative">
-              <select
-                required
-                value={role}
-                onChange={(e) => setRole(e.target.value as "ADMIN" | "USER")}
-                className="h-[42px] w-full appearance-none rounded-lg border border-line bg-background px-3 pr-10 text-sm text-white focus:border-accent/60 focus:outline-none"
-              >
-                <option value="" disabled>
-                  Select
-                </option>
-                <option value="ADMIN">Admin</option>
-                <option value="USER">Member</option>
-              </select>
-              <ChevronDownIcon className="pointer-events-none absolute right-3 top-1/2 size-5 -translate-y-1/2 text-muted" />
-            </div>
-          </label>
+            <RoleDropdown value={role} onChange={setRole} />
+          </div>
         </div>
 
         <button

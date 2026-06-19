@@ -1,31 +1,20 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
 import type { SVGProps } from "react";
 import { useEffect, useState } from "react";
+import { GearIcon, ShieldUsersIcon, UserIcon } from "@/components/admin/admin-icons";
 import { Logo } from "@/components/brand/Logo";
-import { NAV_ICONS } from "@/components/dashboard/icons";
 import { ProfileMenu, type SidebarUser } from "@/components/dashboard/ProfileMenu";
 import { cn } from "@/lib/cn";
 
-export type { SidebarUser };
+export type AdminTab = "dashboard" | "management" | "account";
 
-type NavKey = keyof typeof NAV_ICONS;
-
-const NAV: { key: NavKey; label: string; href: string }[] = [
-  { key: "dashboard", label: "Dashboard", href: "/dashboard" },
-  { key: "botLibrary", label: "Bot Library", href: "/bot-library" },
-  { key: "portfolio", label: "Portfolio", href: "/portfolio" },
-  { key: "myBots", label: "My Bots", href: "/my-bots" },
-  { key: "settings", label: "Account Settings", href: "/account" },
-  { key: "billing", label: "Billing", href: "/billing" },
-];
-
-/** True when `pathname` is within (or equal to) `href`'s route segment. */
-function isActive(pathname: string, href: string): boolean {
-  return pathname === href || pathname.startsWith(`${href}/`);
-}
+const NAV = [
+  { key: "dashboard", label: "Admin Dashboard", Icon: GearIcon, href: "/admin/dashboard" },
+  { key: "management", label: "Members Management", Icon: ShieldUsersIcon, href: "/admin/management" },
+  { key: "account", label: "Account Management", Icon: UserIcon, href: "/admin/account" },
+] as const;
 
 function MenuIcon(props: SVGProps<SVGSVGElement>) {
   return (
@@ -43,19 +32,14 @@ function CloseIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/**
- * Logo, nav links and the profile footer — shared by the desktop rail and the
- * mobile drawer so both stay in sync.
- *
- * @param onNavigate - Called when a link is tapped; the drawer passes a closer.
- */
-function SidebarContent({
-  pathname,
+/** Logo, nav links and the profile footer — shared by the rail and the drawer. */
+function NavContent({
+  active,
   user,
   onNavigate,
 }: {
-  pathname: string;
-  user?: SidebarUser | null;
+  active: AdminTab;
+  user: SidebarUser | null;
   onNavigate?: () => void;
 }) {
   return (
@@ -65,27 +49,26 @@ function SidebarContent({
       </div>
 
       <nav className="flex flex-1 flex-col gap-1.5 p-4">
-        {NAV.map((item) => {
-          const IconCmp = NAV_ICONS[item.key];
-          const active = isActive(pathname, item.href);
+        {NAV.map(({ key, label, Icon, href }) => {
+          const isActive = key === active;
           return (
             <Link
-              key={item.key}
-              href={item.href}
+              key={key}
+              href={href}
               onClick={onNavigate}
-              aria-current={active ? "page" : undefined}
+              aria-current={isActive ? "page" : undefined}
               className={cn(
                 "relative flex h-10 items-center gap-2 rounded-r-2xl px-4 text-sm transition-colors",
-                active
+                isActive
                   ? "bg-[linear-gradient(111deg,#020344_0%,#28B8D5_100%)] font-semibold text-white"
                   : "font-normal text-white/90 hover:bg-white/5",
               )}
             >
-              {active && (
+              {isActive && (
                 <span className="absolute left-0 top-1/2 h-6 w-[3px] -translate-y-1/2 rounded-r-full bg-white shadow-[0_0_8px_rgba(40,184,213,0.6)]" />
               )}
-              <IconCmp className="shrink-0" />
-              <span>{item.label}</span>
+              <Icon className="shrink-0" />
+              <span>{label}</span>
             </Link>
           );
         })}
@@ -93,7 +76,13 @@ function SidebarContent({
 
       {user && (
         <div className="border-t border-line p-4">
-          <ProfileMenu user={user} onNavigate={onNavigate} />
+          {/* Admins sign out back to the admin login. */}
+          <ProfileMenu
+            user={user}
+            redirectTo="/admin"
+            accountHref="/admin/account"
+            onNavigate={onNavigate}
+          />
         </div>
       )}
     </>
@@ -101,15 +90,11 @@ function SidebarContent({
 }
 
 /**
- * Dashboard navigation. On `lg`+ it's a fixed rail; below that the rail is
- * replaced by a top bar with a hamburger that opens an off-canvas drawer, so
- * the same links stay reachable on phones. Every item links to its route; the
- * active tab is derived from the current pathname so a nested route (e.g. a bot
- * detail page) keeps its parent tab highlighted. Guests can browse the Bot
- * Library freely — the other routes render a locked overlay until they sign in.
+ * Admin navigation. On `lg`+ it's a fixed rail; below that the rail is replaced
+ * by a top bar with a hamburger that opens an off-canvas drawer, so the admin
+ * nav and sign-out stay reachable on phones.
  */
-export function Sidebar({ user }: { user?: SidebarUser | null }) {
-  const pathname = usePathname() ?? "";
+export function AdminNav({ active = "dashboard", user }: { active?: AdminTab; user: SidebarUser | null }) {
   const [open, setOpen] = useState(false);
 
   // Lock body scroll while the drawer is open so the page behind stays put.
@@ -126,7 +111,7 @@ export function Sidebar({ user }: { user?: SidebarUser | null }) {
     <>
       {/* Desktop rail */}
       <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col bg-surface lg:flex">
-        <SidebarContent pathname={pathname} user={user} />
+        <NavContent active={active} user={user} />
       </aside>
 
       {/* Mobile top bar */}
@@ -169,7 +154,7 @@ export function Sidebar({ user }: { user?: SidebarUser | null }) {
           >
             <CloseIcon />
           </button>
-          <SidebarContent pathname={pathname} user={user} onNavigate={() => setOpen(false)} />
+          <NavContent active={active} user={user} onNavigate={() => setOpen(false)} />
         </aside>
       </div>
     </>

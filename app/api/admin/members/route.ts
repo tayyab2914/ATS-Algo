@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 import { ok, fail, zodFail } from "@/lib/api";
+import { isSuperAdminEmail } from "@/lib/auth/account";
 import { getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
 import { BillingPlan, SubscriptionStatus } from "@/lib/generated/prisma/enums";
@@ -14,9 +15,11 @@ import { adminMemberActionSchema } from "@/lib/validation";
  * - forceLogout     — invalidate existing sessions without changing standing
  * - grantFree       — give the member a free (comp) subscription, no Stripe
  * - revokeFree      — remove a previously granted comp subscription
+ * - delete          — permanently remove the account (superadmin only)
  *
- * Admin accounts are off-limits so an admin can't lock themselves (or a peer)
- * out from here.
+ * Admin accounts are off-limits to the standing/subscription actions so an admin
+ * can't lock themselves (or a peer) out from here. The one exception is `delete`,
+ * which the superadmin may use on members *and* admins.
  */
 export async function POST(request: NextRequest) {
   const session = await getSession();
@@ -28,9 +31,26 @@ export async function POST(request: NextRequest) {
 
   const member = await prisma.user.findUnique({
     where: { id: memberId },
-    select: { id: true, role: true, subscription: { select: { isComp: true } } },
+    select: { id: true, email: true, role: true, subscription: { select: { isComp: true } } },
   });
   if (!member) return fail("Member not found", 404);
+
+  // Permanent deletion is reserved for the superadmin and is the only action
+  // allowed to target an admin account.
+  if (action === "delete") {
+    if (!isSuperAdminEmail(session.email)) {
+      return fail("Only the superadmin can delete accounts", 403);
+    }
+    if (member.id === session.sub) {
+      return fail("You can't delete your own account", 409);
+    }
+    // Relations (subscription, tokens, connections) cascade on user delete;
+    // admin sign-in codes are keyed by email, not a relation, so clear them too.
+    await prisma.adminLoginCode.deleteMany({ where: { email: member.email } });
+    await prisma.user.delete({ where: { id: member.id } });
+    return ok({ ok: true });
+  }
+
   if (member.role === "ADMIN") return fail("Admin accounts can't be managed here", 403);
 
   switch (action) {

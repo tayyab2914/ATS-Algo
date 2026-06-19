@@ -10,6 +10,7 @@ import {
   GiftIcon,
   LogoutIcon,
   RotateIcon,
+  TrashIcon,
 } from "@/components/admin/admin-icons";
 import { Notice, type NoticeData } from "@/components/ui/Notice";
 import { cn } from "@/lib/cn";
@@ -37,7 +38,14 @@ export type MemberRow = {
   subscription: MemberSubscription;
 };
 
-type MemberAction = "suspend" | "ban" | "reactivate" | "forceLogout" | "grantFree" | "revokeFree";
+type MemberAction =
+  | "suspend"
+  | "ban"
+  | "reactivate"
+  | "forceLogout"
+  | "grantFree"
+  | "revokeFree"
+  | "delete";
 
 function successMessage(member: MemberRow, action: MemberAction): string {
   const who = member.name || member.email;
@@ -54,6 +62,8 @@ function successMessage(member: MemberRow, action: MemberAction): string {
       return `Free access granted to ${who}.`;
     case "revokeFree":
       return `Free access revoked from ${who}.`;
+    case "delete":
+      return `${who} has been permanently deleted.`;
   }
 }
 
@@ -77,16 +87,47 @@ const GRANT_OPTIONS: { label: string; months: number }[] = [
   { label: "Lifetime", months: 0 },
 ];
 
-export function MembersTable({ members }: { members: MemberRow[] }) {
+type MenuView = "main" | "grant" | "confirmDelete";
+
+/** Viewport-fixed coordinates for an open row menu (escapes the table's overflow clip). */
+type MenuAnchor = { top: number; bottom: number; right: number; openUp: boolean };
+
+/** Worst-case menu height used to decide whether to drop the menu up or down. */
+const MENU_MAX_HEIGHT = 280;
+
+export function MembersTable({
+  members,
+  isSuperAdmin = false,
+}: {
+  members: MemberRow[];
+  /** Whether the current admin is the superadmin (only they may delete). */
+  isSuperAdmin?: boolean;
+}) {
   const router = useRouter();
   const [openId, setOpenId] = useState<string | null>(null);
-  const [view, setView] = useState<"main" | "grant">("main");
+  const [view, setView] = useState<MenuView>("main");
+  const [anchor, setAnchor] = useState<MenuAnchor | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<NoticeData | null>(null);
+
+  function openMenu(id: string, button: HTMLElement) {
+    const rect = button.getBoundingClientRect();
+    // Position relative to the viewport so the menu isn't clipped by the table's
+    // horizontal-scroll container. Drop upward when there's little room below.
+    setAnchor({
+      top: rect.bottom + 8,
+      bottom: window.innerHeight - rect.top + 8,
+      right: window.innerWidth - rect.right,
+      openUp: window.innerHeight - rect.bottom < MENU_MAX_HEIGHT,
+    });
+    setView("main");
+    setOpenId(id);
+  }
 
   function closeMenu() {
     setOpenId(null);
     setView("main");
+    setAnchor(null);
   }
 
   async function run(member: MemberRow, action: MemberAction, durationMonths?: number) {
@@ -117,9 +158,9 @@ export function MembersTable({ members }: { members: MemberRow[] }) {
     <AdminCard title="Members" subtitle="Every account, its plan, and standing. Manage access per member.">
       {notice && <Notice notice={notice} />}
 
-      <div className="overflow-x-auto">
+      <div className="max-h-[480px] overflow-auto">
         <table className="w-full min-w-[960px] text-left">
-          <thead>
+          <thead className="sticky top-0 z-10 bg-surface">
             <tr className="border-b border-line text-xs font-semibold text-muted">
               <th className="px-4 py-3 font-semibold">Name</th>
               <th className="px-4 py-3 text-center font-semibold">Email</th>
@@ -141,6 +182,9 @@ export function MembersTable({ members }: { members: MemberRow[] }) {
             ) : (
               members.map((member) => {
                 const isAdmin = member.role === "ADMIN";
+                // Members always have a menu; admin rows only get one for the
+                // superadmin, whose sole admin-row action is Delete.
+                const hasMenu = !isAdmin || isSuperAdmin;
                 const menuOpen = openId === member.id;
                 return (
                   <tr key={member.id} className="border-b border-line/60 last:border-0">
@@ -176,7 +220,7 @@ export function MembersTable({ members }: { members: MemberRow[] }) {
                       <Pill className={STATUS_PILL[member.status]}>{STATUS_LABEL[member.status]}</Pill>
                     </td>
                     <td className="px-4 py-4 text-right">
-                      {isAdmin ? (
+                      {!hasMenu ? (
                         <span className="text-xs text-muted">—</span>
                       ) : (
                         <div className="relative inline-block text-left">
@@ -185,20 +229,21 @@ export function MembersTable({ members }: { members: MemberRow[] }) {
                             aria-haspopup="menu"
                             aria-expanded={menuOpen}
                             aria-label={`Actions for ${member.name}`}
-                            onClick={() => {
-                              setView("main");
-                              setOpenId(menuOpen ? null : member.id);
-                            }}
+                            onClick={(e) =>
+                              menuOpen ? closeMenu() : openMenu(member.id, e.currentTarget)
+                            }
                             className="flex size-8 items-center justify-center rounded-lg border border-line text-muted transition-colors hover:border-accent/40 hover:text-white"
                           >
                             <DotsIcon />
                           </button>
 
-                          {menuOpen && (
+                          {menuOpen && anchor && (
                             <RowMenu
                               member={member}
                               view={view}
                               busy={busy}
+                              isSuperAdmin={isSuperAdmin}
+                              anchor={anchor}
                               onClose={closeMenu}
                               onView={setView}
                               onAction={run}
@@ -230,19 +275,30 @@ function RowMenu({
   member,
   view,
   busy,
+  isSuperAdmin,
+  anchor,
   onClose,
   onView,
   onAction,
 }: {
   member: MemberRow;
-  view: "main" | "grant";
+  view: MenuView;
   busy: boolean;
+  isSuperAdmin: boolean;
+  anchor: MenuAnchor;
   onClose: () => void;
-  onView: (view: "main" | "grant") => void;
+  onView: (view: MenuView) => void;
   onAction: (member: MemberRow, action: MemberAction, durationMonths?: number) => void;
 }) {
+  const isAdmin = member.role === "ADMIN";
   const hasComp = member.subscription.isComp;
   const canGrant = !member.subscription.active || hasComp;
+
+  // Fixed to the viewport, anchored under (or above) the trigger so the table's
+  // horizontal-scroll container can't clip it.
+  const position = anchor.openUp
+    ? { bottom: anchor.bottom, right: anchor.right }
+    : { top: anchor.top, right: anchor.right };
 
   return (
     <>
@@ -250,9 +306,25 @@ function RowMenu({
       <button type="button" aria-hidden tabIndex={-1} onClick={onClose} className="fixed inset-0 z-40 cursor-default" />
       <div
         role="menu"
-        className="absolute right-0 z-50 mt-2 w-56 overflow-hidden rounded-xl border border-line bg-surface p-1 shadow-[0_24px_60px_-24px_rgba(0,0,0,0.8)]"
+        style={position}
+        className="fixed z-50 w-56 overflow-hidden rounded-xl border border-line bg-surface p-1 shadow-[0_24px_60px_-24px_rgba(0,0,0,0.8)]"
       >
-        {view === "grant" ? (
+        {view === "confirmDelete" ? (
+          <>
+            <p className="px-3 py-2 text-xs font-semibold text-muted">
+              Permanently delete this {isAdmin ? "admin" : "member"}? This can&apos;t be undone.
+            </p>
+            <MenuItem
+              icon={<TrashIcon />}
+              label="Yes, delete"
+              tone="danger"
+              disabled={busy}
+              onClick={() => onAction(member, "delete")}
+            />
+            <div className="my-1 h-px bg-line" />
+            <MenuItem icon={<RotateIcon />} label="Cancel" disabled={busy} onClick={() => onView("main")} />
+          </>
+        ) : view === "grant" ? (
           <>
             <p className="px-3 py-2 text-xs font-semibold text-muted">Grant free access for…</p>
             {GRANT_OPTIONS.map((opt) => (
@@ -267,6 +339,15 @@ function RowMenu({
             <div className="my-1 h-px bg-line" />
             <MenuItem icon={<RotateIcon />} label="Back" disabled={busy} onClick={() => onView("main")} />
           </>
+        ) : isAdmin ? (
+          // The only action available on an admin row (superadmin only).
+          <MenuItem
+            icon={<TrashIcon />}
+            label="Delete admin"
+            tone="danger"
+            disabled={busy}
+            onClick={() => onView("confirmDelete")}
+          />
         ) : (
           <>
             {member.status === "ACTIVE" ? (
@@ -312,6 +393,19 @@ function RowMenu({
                 disabled={busy || !canGrant}
                 onClick={() => onView("grant")}
               />
+            )}
+
+            {isSuperAdmin && (
+              <>
+                <div className="my-1 h-px bg-line" />
+                <MenuItem
+                  icon={<TrashIcon />}
+                  label="Delete member"
+                  tone="danger"
+                  disabled={busy}
+                  onClick={() => onView("confirmDelete")}
+                />
+              </>
             )}
           </>
         )}

@@ -7,7 +7,6 @@ import { ExchangeSection } from "@/components/account/ExchangeSection";
 import { ProfileSection } from "@/components/account/ProfileSection";
 import { TradingViewSection } from "@/components/account/TradingViewSection";
 import { TwoFactorSection } from "@/components/account/TwoFactorSection";
-import { LogoutButton } from "@/components/auth/LogoutButton";
 import type { ExchangeName } from "@/lib/account";
 import { getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
@@ -48,14 +47,11 @@ export default async function AccountPage() {
 
   return (
     <AppShell>
-      <header className="flex items-start justify-between gap-4">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-2xl font-semibold leading-[31px] text-white">Account Settings</h1>
-          <p className="text-sm leading-[21px] text-muted">
-            Manage your profile, connections, and exchange APIs.
-          </p>
-        </div>
-        <LogoutButton />
+      <header className="flex flex-col gap-1">
+        <h1 className="text-2xl font-semibold leading-[31px] text-white">Account Settings</h1>
+        <p className="text-sm leading-[21px] text-muted">
+          Manage your profile, connections, and exchange APIs.
+        </p>
       </header>
 
       <ProfileSection

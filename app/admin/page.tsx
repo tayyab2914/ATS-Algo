@@ -8,10 +8,15 @@ export const metadata: Metadata = {
   description: "Enter your PIN to access the admin dashboard.",
 };
 
-export default function AdminPage() {
+export default async function AdminPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ email?: string }>;
+}) {
+  const { email } = await searchParams;
   return (
     <SplitScreen brand={<AdminBrand />}>
-      <AdminAccessCard />
+      <AdminAccessCard initialEmail={email ?? ""} />
     </SplitScreen>
   );
 }

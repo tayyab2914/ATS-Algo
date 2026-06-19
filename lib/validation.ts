@@ -88,7 +88,7 @@ export const checkoutSchema = z.object({
 /** An action an admin takes on a member from the Admin Management screen. */
 export const adminMemberActionSchema = z.object({
   memberId: z.string().min(1, "Missing member id"),
-  action: z.enum(["suspend", "ban", "reactivate", "forceLogout", "grantFree", "revokeFree"]),
+  action: z.enum(["suspend", "ban", "reactivate", "forceLogout", "grantFree", "revokeFree", "delete"]),
   /** Length of a granted comp subscription; `0` (or omitted) means perpetual. */
   durationMonths: z.number().int().min(0).max(120).optional(),
 });
