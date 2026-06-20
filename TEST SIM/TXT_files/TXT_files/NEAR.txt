@@ -1,0 +1,23 @@
+py run_all.py `
+  --csv data_exports/NEAR.csv `
+  --selection_window 90 `
+  --sl_list "[1,2,3,4,5]" `
+  --be_list "[null,1,2,3]" `
+  --maker_fee_pct 0.02 `
+  --taker_fee_pct 0.035 `
+  --ticker NEAR `
+  --exchange Bitget `
+  --timeframe 190 `
+  --name "NEAR" `
+  --type crypto `
+  --input_baseline "EMA 15" `
+  --input_sensitivity 7 `
+  --stoploss_type ATR `
+  --stoploss_value 3.5
+
+
+
+After export, rename the file to :
+{TICKER}_{TIMEFRAME}_{YYYY-MM-DD}.csv
+IPUSDT_168_2026-02-16.csv
+

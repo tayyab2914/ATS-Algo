@@ -1,0 +1,96 @@
+🚀 QUICK START – Strategy Pipeline
+1️⃣ Export From TradingView
+
+Rename file to:
+
+TICKER_TIMEFRAME_YYYY-MM-DD.csv
+
+
+Example:
+
+IPUSDT_168_2026-02-17.csv
+
+
+Place it in:
+
+data_exports/
+
+2️⃣ Run The System
+
+From project folder:
+
+py run_all.py `
+  --csv data_exports/IPUSDT_168_2026-02-17.csv `
+  --selection_window 180 `
+  --sl_list "[2,3,4,5,6]" `
+  --be_list "[null,1,2,3]" `
+  --maker_fee_pct 0.02 `
+  --taker_fee_pct 0.035 `
+  --ticker IPUSDT.P `
+  --exchange ByBit `
+  --timeframe 168 `
+  --name "IP 168" `
+  --type crypto `
+  --input_baseline "VWMA 15" `
+  --input_sensitivity 5
+
+3️⃣ What Happens Automatically
+
+For safe / balanced / aggressive:
+
+Builds trades
+
+Generates TP + weights
+
+Runs backtest
+
+Picks Top6 winner (based on selected window)
+
+Extracts SL / BE / Leverage
+
+Builds final strategy JSON
+
+Updates active version if changed
+
+Archives old version
+
+No manual edits required.
+
+4️⃣ Where To Find Output
+runs/
+  TOKEN/
+    YYYY-MM-DD/
+      run_config.json
+      StrategyName.json
+
+
+Active version used by bot:
+
+runs/TOKEN/active/StrategyName.json
+
+5️⃣ Change Selection Window
+
+Use:
+
+--selection_window 30
+--selection_window 90
+--selection_window 180
+
+
+Only affects final SL/BE/Leverage selection.
+
+⚠️ If Excel Fails
+
+Close all scenario_table_*.xlsx files before running.
+
+🧠 Weekly Routine
+
+Export CSV
+
+Rename properly
+
+Run command
+
+Upload active JSON
+
+Done.

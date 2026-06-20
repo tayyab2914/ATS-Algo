@@ -1,0 +1,29 @@
+{
+  "csv": "G:\\Adrian Trading System - ATS\\TEST SIM\\data_exports\\BTC.csv",
+  "selection_window": "180",
+  "sl_list": [
+    2,
+    3,
+    4,
+    5,
+    6
+  ],
+  "be_list": [
+    null,
+    1,
+    2,
+    3
+  ],
+  "maker_fee_pct": 0.02,
+  "taker_fee_pct": 0.035,
+  "ticker": "BTC",
+  "exchange": "Bybit",
+  "timeframe": "150",
+  "name": "BTC",
+  "type": "Crypto",
+  "input_baseline": "EMA 20",
+  "input_sensitivity": "2",
+  "stoploss_type": "ATR",
+  "stoploss_value": 3.0,
+  "generated_utc": "2026-06-04T16:01:04.528133+00:00"
+}

@@ -1,0 +1,84 @@
+{
+  "name": "BTC",
+  "ticker": "BTC",
+  "optimized_period": 180,
+  "exchange": "Bybit",
+  "timeframe": "150",
+  "baseline": "EMA",
+  "baseline_value": 20.0,
+  "signal_setting": 2.0,
+  "stoploss_type": "ATR",
+  "stoploss_value": 3.0,
+  "type": "Crypto",
+  "fees": {
+    "maker_fee_pct": 0.02,
+    "taker_fee_pct": 0.035
+  },
+  "engine_version": "v1.0.0",
+  "generated_utc": "2026-06-04 16:01:04 UTC",
+  "profiles": {
+    "safe": {
+      "tp": [
+        0.3,
+        0.35,
+        0.57,
+        0.86,
+        1.28,
+        2.17
+      ],
+      "w": [
+        0.1,
+        0.1,
+        0.15,
+        0.2,
+        0.22,
+        0.23
+      ],
+      "sl": 4.0,
+      "be": 1,
+      "lev": 4
+    },
+    "balanced": {
+      "tp": [
+        0.4,
+        0.41,
+        0.64,
+        0.98,
+        1.48,
+        2.44
+      ],
+      "w": [
+        0.09,
+        0.08,
+        0.38,
+        0.08,
+        0.27,
+        0.1
+      ],
+      "sl": 4.0,
+      "be": 2,
+      "lev": 7
+    },
+    "aggressive": {
+      "tp": [
+        0.5,
+        0.45,
+        0.7,
+        1.02,
+        1.52,
+        2.57
+      ],
+      "w": [
+        0.08,
+        0.08,
+        0.08,
+        0.5,
+        0.17,
+        0.09
+      ],
+      "sl": 4.0,
+      "be": 1,
+      "lev": 10
+    }
+  }
+}

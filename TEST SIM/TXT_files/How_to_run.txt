@@ -1,0 +1,142 @@
+SYSTEMATIC STRATEGY PIPELINE
+How To Use
+________________________________________
+📁 1. Folder Structure
+Your project should look like this:
+New_Engine/
+│
+├── run_all.py                (Production runner – hardened)
+├── strategy_engine.py
+├── backtest_simulator.py
+├── build_trades_from_signals.py
+│
+├── data_exports/             (TradingView CSV files go here)
+│
+└── runs/                     (Auto-created)
+Do not place exports directly in root.
+Always use data_exports/.
+________________________________________
+📄 2. Rename TradingView Export
+When exporting from TradingView, rename the file to:
+TICKER_TIMEFRAME_YYYY-MM-DD.csv
+Example:
+IPUSDT_168_2026-02-17.csv
+Avoid:
+•	Commas
+•	Spaces
+•	Special characters
+________________________________________
+▶️ 3. Run The Pipeline
+From inside the project folder load terminal and run:
+py run_all.py `
+  --csv data_exports/IPUSDT_168_2026-02-17.csv `
+  --selection_window 180 `      If 180 not good, try 90
+  --sl_list "[2,3,4,5,6]" `
+  --be_list "[null,1,2,3]" `
+  --maker_fee_pct 0.02 `
+  --taker_fee_pct 0.035 `
+  --ticker IPUSDT.P `
+  --exchange ByBit `
+  --timeframe 168 `
+  --name "IP 168" `
+  --type crypto `
+  --input_baseline "VWMA 15" `
+  --input_sensitivity 5
+________________________________________
+⚙️ What Happens Automatically
+For each profile:
+•	safe
+•	balanced
+•	aggressive
+The system will:
+1.	Build trades from signals
+2.	Run strategy engine (generate TP + weights)
+3.	Run backtester
+4.	Select Top6 #1 based on chosen window
+5.	Extract SL / BE / Leverage
+6.	Build final combined strategy JSON
+7.	Update active strategy if changed
+8.	Archive previous version
+No manual steps required.
+________________________________________
+📊 Selection Window
+You can choose which window determines final SL/BE/Leverage:
+--selection_window 30
+--selection_window 90
+--selection_window 180
+All three sheets are still generated.
+Only selection logic changes.
+________________________________________
+📂 Output Structure
+After running:
+runs/
+  IPUSDT/
+    2026-02-17/
+      run_config.json
+      IP_168.json
+      safe/
+      balanced/
+      aggressive/
+
+    active/
+      IP_168.json
+
+    archive/
+      IP_168_2026-02-10.json
+________________________________________
+📌 Important Files
+run_config.json
+Contains full configuration used for that run.
+Ensures reproducibility.
+IP_168.json
+Final strategy export (for bot/webpage).
+active/IP_168.json
+Currently deployed strategy.
+archive/
+Previous versions when structure changes.
+________________________________________
+🔁 When Strategy Updates
+If TP, weights, SL, BE, or leverage change:
+•	Active version is replaced
+•	Old version is archived
+•	Folder for run date remains intact
+If nothing changed:
+•	Active remains untouched
+________________________________________
+🧠 Design Principles
+•	Engine isolated from backtester
+•	No circular imports
+•	Deterministic outputs
+•	Strict DD filtering only
+•	Monotonic leverage selection
+•	No funding logic
+•	No manual edits between steps
+________________________________________
+⚠️ If Excel Fails To Write
+Make sure:
+•	scenario_table_*.xlsx is NOT open in Excel
+Windows locks open Excel files.
+________________________________________
+🛠 Troubleshooting
+If something breaks:
+1.	Check that CSV exists
+2.	Check correct folder name
+3.	Verify sheet name:
+4.	Top6 ProfitFactor (180D)
+5.	Ensure Excel file is closed
+6.	Confirm you're running the correct run_all.py
+________________________________________
+🔒 Production File
+Only use:
+run_all.py
+Legacy file is for reference only.
+________________________________________
+🚀 Weekly Workflow
+1.	Export from TradingView
+2.	Rename file
+3.	Run command
+4.	Upload active JSON to bot/webpage
+5.	Commit changes
+Done.
+
+

@@ -1,0 +1,18 @@
+{
+  "action": "buy",
+  "symbol": "BTCUSDT",
+  "bot_id": "{BOT_ID}",
+  "entry": "{ENTRY}",
+  "stop_loss_pct": 4.0,
+  "stop_loss_atr": "{ATR_SL}",
+  "tp1": 0.4,
+  "tp2": 0.41,
+  "tp3": 0.64,
+  "tp4": 0.98,
+  "tp5": 1.48,
+  "tp6": 2.44,
+  "tp7": null,
+  "tp8": null,
+  "tp9": null,
+  "tp10": null
+}

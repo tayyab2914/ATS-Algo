@@ -1,0 +1,22 @@
+py run_all.py `
+  --csv data_exports/BGBUSDT.csv `
+  --selection_window 180 `
+  --sl_list "[2,3,4,5,6]" `
+  --be_list "[null,1,2,3]" `
+  --maker_fee_pct 0.02 `
+  --taker_fee_pct 0.035 `
+  --ticker BGBUSDT `
+  --exchange BITGET `
+  --timeframe 180 `
+  --name "BGB 180" `
+  --type crypto `
+  --input_baseline "TMA 25" `
+  --input_sensitivity 5 `
+  --stoploss_type ATR `
+  --stoploss_value 5
+
+
+After export, rename the file to :
+{TICKER}_{TIMEFRAME}_{YYYY-MM-DD}.csv
+IPUSDT_168_2026-02-16.csv
+

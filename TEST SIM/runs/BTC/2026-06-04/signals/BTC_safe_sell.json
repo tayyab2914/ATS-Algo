@@ -1,0 +1,18 @@
+{
+  "action": "sell",
+  "symbol": "BTCUSDT",
+  "bot_id": "{BOT_ID}",
+  "entry": "{ENTRY}",
+  "stop_loss_pct": 4.0,
+  "stop_loss_atr": "{ATR_SL}",
+  "tp1": 0.3,
+  "tp2": 0.35,
+  "tp3": 0.57,
+  "tp4": 0.86,
+  "tp5": 1.28,
+  "tp6": 2.17,
+  "tp7": null,
+  "tp8": null,
+  "tp9": null,
+  "tp10": null
+}

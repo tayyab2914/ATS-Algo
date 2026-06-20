@@ -1,0 +1,156 @@
+
+<style>
+body {
+    background:#0f1116;
+    color:#e5e7eb;
+    font-family: Inter, Arial, sans-serif;
+    margin: 0;
+    padding: 24px;
+}
+
+.container {
+    max-width: 1100px;
+    margin: auto;
+}
+
+h1 {
+    margin-bottom: 32px;
+}
+
+h2 {
+    margin-top: 48px;
+    margin-bottom: 8px;
+}
+
+h3 {
+    margin-top: 24px;
+    margin-bottom: 8px;
+    color: #cbd5f5;
+}
+
+.card {
+    background: #111827;
+    border: 1px solid #1f2937;
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 24px;
+}
+
+table {
+    border-collapse: collapse;
+    width: 100%;
+    margin-bottom: 16px;
+}
+
+th, td {
+    border: 1px solid #1f2937;
+    padding: 6px 8px;
+    text-align: right;
+    font-size: 13px;
+}
+
+th {
+    background: #1f2937;
+    text-align: center;
+    font-weight: 600;
+}
+
+td.label {
+    text-align: left;
+    font-weight: 500;
+}
+
+.badge {
+    font-size: 11px;
+    padding: 2px 6px;
+    border-radius: 6px;
+    margin-left: 6px;
+}
+
+.safe .badge.best { background: #14532d; }
+.balanced .badge.best { background: #1e3a8a; }
+.aggressive .badge.best { background: #7f1d1d; }
+
+
+.badge.pref {
+    background: #1e3a8a;
+    color: #60a5fa;
+}
+/* Ladder color themes */
+.safe {
+    border-left: 4px solid #22c55e;   /* green */
+}
+
+.balanced {
+    border-left: 4px solid #3b82f6;   /* blue */
+}
+
+.aggressive {
+    border-left: 4px solid #ef4444;   /* red */
+}
+
+.safe h2, .safe h3 {
+    color: #86efac;
+}
+
+.balanced h2, .balanced h3 {
+    color: #93c5fd;
+}
+
+.aggressive h2, .aggressive h3 {
+    color: #fca5a5;
+}
+
+</style>
+
+<div class='container'>
+<div style='background:#111827;border:1px solid #1f2937;border-radius:10px;
+padding:16px;margin-bottom:24px;border-left:4px solid #22c55e'>
+<h2 style='color:#22c55e;margin-top:0;margin-bottom:8px;font-size:16px'>
+⚡ Stability Gate: UPDATED</h2>
+<p style='font-size:13px;color:#e5e7eb;margin:4px 0'>
+<b>Reason:</b> No active strategy — first run</p>
+<p style='font-size:12px;color:#9ca3af;margin:4px 0'>
+<b>Previous strategy generated:</b> N/A — first run</p>
+<p style='font-size:12px;color:#9ca3af;margin:4px 0'>
+<b>Thresholds:</b> TP levels &gt;10% relative move &nbsp;|&nbsp;
+Weights &gt;4pp absolute &nbsp;|&nbsp; Any SL / BE / LEV change</p>
+</div>
+<h1>Strategy Engine Report (180 D)</h1>
+<p><b>Stoploss:</b> -3.0%</p>
+<div class='card balanced'>
+<h2>BALANCED Ladder</h2>
+<h3>TP Levels</h3>
+<table>
+<tr><th>TP</th><th>Target (%)</th></tr>
+<tr><td class='label'>TP1</td><td>0.40%</td></tr>
+<tr><td class='label'>TP2</td><td>0.41%</td></tr>
+<tr><td class='label'>TP3</td><td>0.64%</td></tr>
+<tr><td class='label'>TP4</td><td>0.98%</td></tr>
+<tr><td class='label'>TP5</td><td>1.48%</td></tr>
+<tr><td class='label'>TP6</td><td>2.44%</td></tr>
+</table>
+<table>
+<h3>TP Continuation Rates</h3>
+<table>
+<tr><th>From → To</th><th>Probability</th></tr>
+<tr><td class='label'>TP1→TP2</td><td>81.3%</td></tr>
+<tr><td class='label'>TP2→TP3</td><td>77.0%</td></tr>
+<tr><td class='label'>TP3→TP4</td><td>70.1%</td></tr>
+<tr><td class='label'>TP4→TP5</td><td>57.3%</td></tr>
+<tr><td class='label'>TP5→TP6</td><td>40.1%</td></tr>
+<tr><td class='label'>TP6→END</td><td>100.0%</td></tr>
+</table>
+<h3>Optimized Weights</h3>
+<table>
+<tr><th>TP</th><th>Weight (%)</th></tr>
+<tr><td class='label'>TP1</td><td>9.00%</td></tr>
+<tr><td class='label'>TP2</td><td>8.00%</td></tr>
+<tr><td class='label'>TP3</td><td>38.00%</td></tr>
+<tr><td class='label'>TP4</td><td>8.00%</td></tr>
+<tr><td class='label'>TP5</td><td>27.00%</td></tr>
+<tr><td class='label'>TP6</td><td>10.00%</td></tr>
+</table>
+</div>
+</div>
+</body></html>

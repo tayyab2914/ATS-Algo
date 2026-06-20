@@ -1,0 +1,9 @@
+py backtest_simulator.py \
+  --csv trades.csv \
+  --from_blueprint strategy.json \
+  --profile safe
+
+py backtest_simulator.py `
+  --csv data_exports\HOOD_130.csv" `
+  --from_blueprint "runs\HOOD\2026-02-26\HOOD_130.json" `
+  --profile safe
