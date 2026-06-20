@@ -2,20 +2,29 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { AdminSidebar } from "@/components/admin/AdminSidebar";
-import { BotWizard } from "@/components/admin/BotWizard";
-import { getCategoryNames } from "@/lib/categories";
+import { CategoryManager, type CategoryRow } from "@/components/admin/CategoryManager";
 import { getSession } from "@/lib/auth/session";
+import { prisma } from "@/lib/db";
 
 export const metadata: Metadata = {
-  title: "Add New Bot · ATS-ALGO",
+  title: "Categories · ATS-ALGO",
 };
 
-export default async function NewBotPage() {
+export default async function CategoriesPage() {
   const session = await getSession();
   if (!session) redirect("/admin");
   if (session.role !== "ADMIN") redirect("/dashboard");
 
-  const categories = await getCategoryNames();
+  const [categories, counts] = await Promise.all([
+    prisma.category.findMany({ orderBy: { name: "asc" } }),
+    prisma.bot.groupBy({ by: ["category"], _count: { _all: true } }),
+  ]);
+  const countMap = new Map(counts.map((c) => [c.category, c._count._all]));
+  const rows: CategoryRow[] = categories.map((c) => ({
+    id: c.id,
+    name: c.name,
+    botCount: countMap.get(c.name) ?? 0,
+  }));
 
   return (
     <div className="flex min-h-screen w-full flex-col bg-background text-white lg:flex-row">
@@ -26,11 +35,11 @@ export default async function NewBotPage() {
           <Link href="/admin/bots" className="text-xs text-muted transition-colors hover:text-accent">
             ← Back to Bot Management
           </Link>
-          <h1 className="text-2xl font-semibold leading-[31px] text-white">Add New Bot</h1>
-          <p className="text-sm leading-[21px] text-muted">Upload a config and signals, backtest, then save.</p>
+          <h1 className="text-2xl font-semibold leading-[31px] text-white">Update Categories</h1>
+          <p className="text-sm leading-[21px] text-muted">Manage the categories bots can be filed under.</p>
         </header>
 
-        <BotWizard categories={categories} />
+        <CategoryManager categories={rows} />
       </main>
     </div>
   );

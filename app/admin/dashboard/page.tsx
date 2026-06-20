@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { AdminSidebar } from "@/components/admin/AdminSidebar";
 import { BotCycleTable } from "@/components/admin/BotCycleTable";
-import { ContentControl } from "@/components/admin/ContentControl";
+import { BotMenu } from "@/components/admin/BotMenu";
 import { DateStatusPanel } from "@/components/admin/DateStatusPanel";
 import { UploadHistoryTable } from "@/components/admin/UploadHistoryTable";
 import { UploadMetricsCard } from "@/components/admin/UploadMetricsCard";
@@ -53,7 +53,7 @@ export default async function AdminDashboardPage() {
 
         <UploadMetricsCard />
         <BotCycleTable />
-        <ContentControl />
+        <BotMenu />
         <DateStatusPanel stats={stats} />
         <UploadHistoryTable rows={history} />
       </main>

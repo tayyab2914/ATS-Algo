@@ -1,9 +1,12 @@
 import { AdminCard } from "@/components/admin/AdminCard";
+import { BotRowActions } from "@/components/admin/BotRowActions";
 import { cn } from "@/lib/cn";
 
 export type BotTableRow = {
   id: string;
   name: string;
+  category: string;
+  ticker: string | null;
   timeframe: string;
   riskClass: "LOW" | "MEDIUM" | "HIGH";
   status: "ACTIVE" | "DISABLED";
@@ -28,7 +31,13 @@ function Perf({ value }: { value: number }) {
   );
 }
 
-export function BotsTable({ bots }: { bots: BotTableRow[] }) {
+export function BotsTable({
+  bots,
+  emptyLabel = "No bots yet. Use “Add New Bot” to create one.",
+}: {
+  bots: BotTableRow[];
+  emptyLabel?: string;
+}) {
   return (
     <AdminCard title="Bots" subtitle="Every bot you've created, with its latest backtest metrics.">
       <div className="max-h-[520px] overflow-auto">
@@ -46,13 +55,14 @@ export function BotsTable({ bots }: { bots: BotTableRow[] }) {
               <th className="px-4 py-3 text-center">360 Days</th>
               <th className="px-4 py-3 text-center">Avg. Trade</th>
               <th className="px-4 py-3 text-center">Status</th>
+              <th className="px-4 py-3 text-center">Action</th>
             </tr>
           </thead>
           <tbody>
             {bots.length === 0 ? (
               <tr>
-                <td colSpan={11} className="px-4 py-8 text-center text-sm text-muted">
-                  No bots yet. Use “Add New Bot” to create one.
+                <td colSpan={12} className="px-4 py-8 text-center text-sm text-muted">
+                  {emptyLabel}
                 </td>
               </tr>
             ) : (
@@ -81,6 +91,9 @@ export function BotsTable({ bots }: { bots: BotTableRow[] }) {
                     >
                       {b.status === "ACTIVE" ? "Active" : "Disabled"}
                     </span>
+                  </td>
+                  <td className="px-4 py-4">
+                    <BotRowActions botId={b.id} botName={b.name} />
                   </td>
                 </tr>
               ))

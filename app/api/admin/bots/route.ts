@@ -2,7 +2,8 @@ import type { NextRequest } from "next/server";
 import { z } from "zod";
 import { ok, fail, zodFail } from "@/lib/api";
 import { getSession } from "@/lib/auth/session";
-import { RISK_TO_PROFILE, roundMetrics, runBacktest, type BotConfig } from "@/lib/backtest/engine";
+import { type BotConfig } from "@/lib/backtest/engine";
+import { backtestBotColumns } from "@/lib/backtest/bot-record";
 import { prisma } from "@/lib/db";
 
 /**
@@ -34,18 +35,13 @@ export async function POST(request: NextRequest) {
     return fail("Config JSON is missing trading profiles (safe / balanced / aggressive).", 422);
   }
 
-  let result;
+  let metrics;
   try {
-    result = runBacktest(cfg, csvText);
+    metrics = backtestBotColumns(cfg, csvText, riskClass);
   } catch (error) {
     console.error("Backtest failed:", error);
     return fail("Backtest failed — check that the CSV matches the expected signal format.", 422);
   }
-
-  const headline = roundMetrics(result.profiles[RISK_TO_PROFILE[riskClass]]);
-  const profiles = Object.fromEntries(
-    Object.entries(result.profiles).map(([k, v]) => [k, roundMetrics(v)]),
-  );
 
   const bot = await prisma.bot.create({
     data: {
@@ -59,16 +55,8 @@ export async function POST(request: NextRequest) {
       config,
       csvFilename: csvFilename ?? null,
       csvData: csvText,
-      trades: headline.trades,
-      winRate: headline.winRate,
-      profitFactor: Number.isFinite(headline.profitFactor) ? headline.profitFactor : 0,
-      totalReturn: headline.totalReturn,
-      avgTrade: headline.avgTrade,
-      d30: headline.d30,
-      d90: headline.d90,
-      d180: headline.d180,
-      d360: headline.d360,
-      results: { windowDays: result.windowDays, candleCount: result.candleCount, profiles },
+      ...metrics,
+      revisions: { create: { message: "Bot created" } },
     },
     select: { id: true, name: true },
   });

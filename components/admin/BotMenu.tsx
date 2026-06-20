@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { AdminCard } from "@/components/admin/AdminCard";
-import { FolderIcon, PencilIcon, PlusIcon, ToggleIcon } from "@/components/admin/admin-icons";
+import { FolderIcon, PlusIcon } from "@/components/admin/admin-icons";
 import { cn } from "@/lib/cn";
 
 type Action = {
@@ -13,9 +13,7 @@ type Action = {
 
 const ACTIONS: Action[] = [
   { title: "Add New Bot", subtitle: "Create a new bot entry", Icon: PlusIcon, href: "/admin/bots/new" },
-  { title: "Edit Bot Metrics", subtitle: "Update existing bot data", Icon: PencilIcon },
-  { title: "Update Categories", subtitle: "Manage bot categories", Icon: FolderIcon },
-  { title: "Enable/Disable Bots", subtitle: "Toggle bot visibility", Icon: ToggleIcon },
+  { title: "Update Categories", subtitle: "Manage bot categories", Icon: FolderIcon, href: "/admin/bots/categories" },
 ];
 
 const cardCls =

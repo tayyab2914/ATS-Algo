@@ -185,11 +185,41 @@ model Bot {
 
   results Json? // full per-profile metrics from the backtest
 
+  revisions BotRevision[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([status])
   @@map("bots")
+}
+
+/// An entry in a bot's change log. Created on every update (and on creation)
+/// with an admin-written message describing what changed — surfaced later as
+/// the bot's history.
+model BotRevision {
+  id      String @id @default(cuid())
+  botId   String
+  bot     Bot    @relation(fields: [botId], references: [id], onDelete: Cascade)
+  message String
+
+  createdAt DateTime @default(now())
+
+  @@index([botId])
+  @@map("bot_revisions")
+}
+
+/// A bot category, managed from the "Update Categories" admin screen. Bots
+/// reference a category by its `name` (free string), so a rename cascades to the
+/// bots that use it. Seeded with the defaults (Crypto / Forex / Commodities /
+/// Stocks) plus any categories already present on existing bots.
+model Category {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("categories")
 }
 
 /// A metrics file uploaded via the Admin Staging Dashboard.

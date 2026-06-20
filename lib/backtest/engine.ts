@@ -491,6 +491,28 @@ export function runBacktest(config: BotConfig, csvText: string, opts: BacktestOp
   return { candleCount: total, windowDays: spanDays, profiles };
 }
 
+/**
+ * Cumulative equity curve for one profile — a running, leverage-applied,
+ * compounded net-return multiplier (starts at 1) stamped at each trade's exit
+ * time. Used by the bot detail view to draw the equity chart.
+ */
+export function profileEquityCurve(
+  config: BotConfig,
+  csvText: string,
+  key: RiskKey,
+): { time: number; equity: number }[] {
+  const profile = config.profiles?.[key];
+  if (!profile) return [];
+  const candles = parseCandles(csvText);
+  const trades = runProfile(candles, buildTrades(candles), profile, config.fees);
+  const lev = profile.lev ?? 1;
+  let equity = 1;
+  return trades.map((t) => {
+    equity *= 1 + Math.max(t.net * lev, -100) / 100;
+    return { time: t.exitTime.getTime(), equity };
+  });
+}
+
 /** Round a metrics object to display precision for storage/UI. */
 export function roundMetrics(m: ProfileMetrics): ProfileMetrics {
   const r2 = (x: number) => (Number.isFinite(x) ? Math.round(x * 100) / 100 : 0);
