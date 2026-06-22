@@ -1,19 +1,20 @@
 import type { Metadata } from "next";
 import { AppShell } from "@/components/app/AppShell";
 import { GuestGate } from "@/components/app/GuestGate";
+import { SubscriptionGate } from "@/components/app/SubscriptionGate";
 import { MyBotsPerformance } from "@/components/dashboard/MyBotsPerformance";
 import { PerformanceMetrics } from "@/components/dashboard/PerformanceMetrics";
 import { PortfolioAndHoldings } from "@/components/dashboard/PortfolioAndHoldings";
 import { TopActiveBots } from "@/components/dashboard/TopActiveBots";
 import { TopAssets } from "@/components/dashboard/TopAssets";
-import { requireSubscription } from "@/lib/auth/guards";
+import { getPageAccess } from "@/lib/auth/guards";
 
 export const metadata: Metadata = {
   title: "Dashboard · ATS-ALGO",
 };
 
 export default async function DashboardPage() {
-  const session = await requireSubscription();
+  const { session, entitled } = await getPageAccess();
 
   const content = (
     <>
@@ -34,12 +35,14 @@ export default async function DashboardPage() {
         </p>
       </header>
 
-      {session ? (
-        content
-      ) : (
+      {!session ? (
         <GuestGate title="Dashboard" returnTo="/dashboard">
           {content}
         </GuestGate>
+      ) : entitled ? (
+        content
+      ) : (
+        <SubscriptionGate title="Dashboard">{content}</SubscriptionGate>
       )}
     </AppShell>
   );

@@ -2,15 +2,16 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { AppShell } from "@/components/app/AppShell";
 import { GuestGate } from "@/components/app/GuestGate";
+import { SubscriptionGate } from "@/components/app/SubscriptionGate";
 import { TabPreviewSkeleton } from "@/components/app/TabPreviewSkeleton";
-import { requireSubscription } from "@/lib/auth/guards";
+import { getPageAccess } from "@/lib/auth/guards";
 
 export const metadata: Metadata = {
   title: "My Bots · ATS-ALGO",
 };
 
 export default async function MyBotsPage() {
-  const session = await requireSubscription();
+  const { session, entitled } = await getPageAccess();
 
   return (
     <AppShell>
@@ -21,7 +22,11 @@ export default async function MyBotsPage() {
         </p>
       </header>
 
-      {session ? (
+      {!session ? (
+        <GuestGate title="My Bots" returnTo="/my-bots">
+          <TabPreviewSkeleton />
+        </GuestGate>
+      ) : entitled ? (
         <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-line bg-surface px-6 py-20 text-center">
           <h2 className="text-lg font-semibold text-white">No bots yet</h2>
           <p className="max-w-sm text-sm leading-[21px] text-muted">
@@ -35,9 +40,9 @@ export default async function MyBotsPage() {
           </Link>
         </div>
       ) : (
-        <GuestGate title="My Bots" returnTo="/my-bots">
+        <SubscriptionGate title="My Bots">
           <TabPreviewSkeleton />
-        </GuestGate>
+        </SubscriptionGate>
       )}
     </AppShell>
   );

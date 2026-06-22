@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/Button";
 
 /**
@@ -8,6 +9,13 @@ import { Button } from "@/components/ui/Button";
  * out). Renders nothing when closed. Clicking the backdrop or pressing Escape
  * cancels, unless an action is in flight (`pending`). Body scroll is locked
  * while open so the page behind can't move under the dialog.
+ *
+ * Rendered through a portal into `document.body`. This is essential: callers
+ * mount it deep in the tree (e.g. the ProfileMenu inside the sidebar, which is
+ * `position: sticky` on desktop and `transform`-animated on mobile). Both create
+ * a stacking context / fixed-positioning containing block, which would trap a
+ * plain `fixed` overlay *behind* the main content no matter how high its
+ * z-index. The portal lifts it to the document root so it always sits on top.
  */
 export function ConfirmDialog({
   open,
@@ -43,9 +51,11 @@ export function ConfirmDialog({
     };
   }, [open, pending, onCancel]);
 
-  if (!open) return null;
+  // `open` only flips true from a client interaction, so `document` is present;
+  // the guard keeps any server render a safe no-op.
+  if (!open || typeof document === "undefined") return null;
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" role="dialog" aria-modal="true">
       <button
         type="button"
@@ -66,6 +76,7 @@ export function ConfirmDialog({
           </Button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

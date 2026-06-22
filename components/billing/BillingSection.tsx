@@ -44,9 +44,12 @@ function formatDate(iso: string | null): string {
 export function BillingSection({
   subscription,
   hasCustomer,
+  authenticated,
 }: {
   subscription: SubscriptionView | null;
   hasCustomer: boolean;
+  /** False for a signed-out visitor browsing plans; gates the checkout action. */
+  authenticated: boolean;
 }) {
   const params = useSearchParams();
   const returnStatus = params.get("status");
@@ -86,7 +89,15 @@ export function BillingSection({
     }
   }
 
-  const subscribe = (plan: PlanKey) => redirectTo("/api/billing/checkout", { plan }, plan);
+  const subscribe = (plan: PlanKey) => {
+    // Guests can browse plans, but checkout needs an account — send them to sign
+    // in first and return here afterwards.
+    if (!authenticated) {
+      window.location.assign(`/login?next=${encodeURIComponent("/billing")}`);
+      return;
+    }
+    redirectTo("/api/billing/checkout", { plan }, plan);
+  };
   const openPortal = () => redirectTo("/api/billing/portal", undefined, "portal");
 
   const active = subscription?.active ?? false;
@@ -158,7 +169,11 @@ export function BillingSection({
                     <span className="text-xs text-muted">{plan.blurb}</span>
                   </div>
                   <PrimaryAction onClick={() => subscribe(key)} disabled={pending !== null}>
-                    {isPending ? "Redirecting…" : `Subscribe ${plan.label.toLowerCase()}`}
+                    {isPending
+                      ? "Redirecting…"
+                      : authenticated
+                        ? `Subscribe ${plan.label.toLowerCase()}`
+                        : "Sign in to subscribe"}
                   </PrimaryAction>
                 </div>
               );

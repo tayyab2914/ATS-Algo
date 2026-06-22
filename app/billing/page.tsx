@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 import { AppShell } from "@/components/app/AppShell";
-import { GuestGate } from "@/components/app/GuestGate";
 import { TabPreviewSkeleton } from "@/components/app/TabPreviewSkeleton";
 import { BillingSection, type SubscriptionView } from "@/components/billing/BillingSection";
 import { isSubscriptionActive } from "@/lib/billing";
@@ -26,14 +25,14 @@ function Header() {
 export default async function BillingPage() {
   const session = await getSession();
 
-  // Guests see the locked preview, consistent with the other in-app tabs.
+  // Guests can browse the plans (picking one sends them to sign in first).
   if (!session) {
     return (
       <AppShell>
         <Header />
-        <GuestGate title="Billing" returnTo="/billing">
-          <TabPreviewSkeleton rows={3} />
-        </GuestGate>
+        <Suspense fallback={<TabPreviewSkeleton rows={3} />}>
+          <BillingSection subscription={null} hasCustomer={false} authenticated={false} />
+        </Suspense>
       </AppShell>
     );
   }
@@ -59,7 +58,11 @@ export default async function BillingPage() {
     <AppShell>
       <Header />
       <Suspense fallback={<TabPreviewSkeleton rows={3} />}>
-        <BillingSection subscription={subscription} hasCustomer={Boolean(user?.stripeCustomerId)} />
+        <BillingSection
+          subscription={subscription}
+          hasCustomer={Boolean(user?.stripeCustomerId)}
+          authenticated
+        />
       </Suspense>
     </AppShell>
   );
