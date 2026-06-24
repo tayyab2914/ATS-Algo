@@ -1,20 +1,22 @@
 import type { Metadata } from "next";
 import { AppShell } from "@/components/app/AppShell";
 import { GuestGate } from "@/components/app/GuestGate";
-import { SubscriptionGate } from "@/components/app/SubscriptionGate";
 import { MyBotsPerformance } from "@/components/dashboard/MyBotsPerformance";
 import { PerformanceMetrics } from "@/components/dashboard/PerformanceMetrics";
 import { PortfolioAndHoldings } from "@/components/dashboard/PortfolioAndHoldings";
 import { TopActiveBots } from "@/components/dashboard/TopActiveBots";
 import { TopAssets } from "@/components/dashboard/TopAssets";
-import { getPageAccess } from "@/lib/auth/guards";
+import { blockExpiredGuest, getPageAccess } from "@/lib/auth/guards";
 
 export const metadata: Metadata = {
   title: "Dashboard · ATS-ALGO",
 };
 
 export default async function DashboardPage() {
-  const { session, entitled } = await getPageAccess();
+  const { session, tier } = await getPageAccess();
+  // Expired guests are walled to Billing; visitors see the locked preview;
+  // active guests and members alike see the (read-only) dashboard content.
+  blockExpiredGuest(tier);
 
   const content = (
     <>
@@ -39,10 +41,8 @@ export default async function DashboardPage() {
         <GuestGate title="Dashboard" returnTo="/dashboard">
           {content}
         </GuestGate>
-      ) : entitled ? (
-        content
       ) : (
-        <SubscriptionGate title="Dashboard">{content}</SubscriptionGate>
+        content
       )}
     </AppShell>
   );

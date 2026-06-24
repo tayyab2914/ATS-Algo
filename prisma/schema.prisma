@@ -51,6 +51,17 @@ model User {
   // cannot reach any in-app route.
   policyAcceptedAt DateTime?
 
+  // Guest Mode trial deadline. A signed-in, non-admin user with NO active
+  // subscription is a "guest": they may explore the dashboard, bot library and
+  // bot profiles read-only until this instant, after which they are hard-walled
+  // to the Billing tab until they pay. Set on first login (now + 3 days) and
+  // left untouched thereafter — an active subscription supersedes it, and a
+  // lapsed subscription falls back to this (past) date, so a former member is
+  // immediately paywalled again. Null means the trial clock hasn't started yet.
+  // Accounts are NOT auto-deleted on expiry; the email is retained for later
+  // marketing simply by keeping the row.
+  guestExpiresAt DateTime?
+
   // Stripe customer id, created lazily the first time the user starts checkout
   // or opens the billing portal. One customer per user.
   stripeCustomerId String? @unique

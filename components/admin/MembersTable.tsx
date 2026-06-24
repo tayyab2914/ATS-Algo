@@ -26,6 +26,14 @@ export type MemberSubscription = {
   isComp: boolean;
 };
 
+/** Guest Mode trial standing, present only for non-paying, non-admin accounts. */
+export type MemberGuest = {
+  /** "notStarted" before first login, "active" mid-trial, "expired" after. */
+  state: "notStarted" | "active" | "expired";
+  /** Whole days remaining in the trial (0 once expired). */
+  daysLeft: number;
+};
+
 export type MemberRow = {
   id: string;
   name: string;
@@ -36,6 +44,8 @@ export type MemberRow = {
   loggedIn: boolean;
   joined: string;
   subscription: MemberSubscription;
+  /** Trial standing for a Guest account; null for paying members and admins. */
+  guest: MemberGuest | null;
 };
 
 type MemberAction =
@@ -78,6 +88,13 @@ const STATUS_LABEL: Record<MemberStatus, string> = {
   SUSPENDED: "Suspended",
   BANNED: "Banned",
 };
+
+/** Sub-label under the "Guest" pill describing trial standing. */
+function guestTrialText(guest: MemberGuest): string {
+  if (guest.state === "expired") return "Trial expired";
+  if (guest.state === "notStarted") return "Not started";
+  return guest.daysLeft === 1 ? "1 day left" : `${guest.daysLeft} days left`;
+}
 
 /** Free-subscription grant lengths offered in the row menu. `0` = perpetual. */
 const GRANT_OPTIONS: { label: string; months: number }[] = [
@@ -165,7 +182,7 @@ export function MembersTable({
               <th className="px-4 py-3 font-semibold">Name</th>
               <th className="px-4 py-3 text-center font-semibold">Email</th>
               <th className="px-4 py-3 text-center font-semibold">Role</th>
-              <th className="px-4 py-3 text-center font-semibold">Subscription</th>
+              <th className="px-4 py-3 text-center font-semibold">Plan</th>
               <th className="px-4 py-3 text-center font-semibold">Joined</th>
               <th className="px-4 py-3 text-center font-semibold">Session</th>
               <th className="px-4 py-3 text-center font-semibold">Status</th>
@@ -191,18 +208,33 @@ export function MembersTable({
                     <td className="px-4 py-4 text-sm font-semibold text-white">{member.name}</td>
                     <td className="px-4 py-4 text-center text-sm text-muted">{member.email}</td>
                     <td className="px-4 py-4 text-center">
-                      <Pill className="bg-accent/10 text-accent">{isAdmin ? "Admin" : "Member"}</Pill>
+                      <Pill className="bg-accent/10 text-accent">{isAdmin ? "Admin" : "User"}</Pill>
                     </td>
                     <td className="px-4 py-4 text-center">
-                      <Pill
-                        className={
-                          member.subscription.active
-                            ? "bg-accent/10 text-accent"
-                            : "bg-muted/10 text-muted"
-                        }
-                      >
-                        {member.subscription.label}
-                      </Pill>
+                      {member.guest ? (
+                        <div className="flex flex-col items-center gap-1">
+                          <Pill
+                            className={
+                              member.guest.state === "expired"
+                                ? "bg-[#D2031E]/10 text-[#D2031E]"
+                                : "bg-[#F4A825]/10 text-[#F4A825]"
+                            }
+                          >
+                            Guest
+                          </Pill>
+                          <span className="text-xs text-muted">{guestTrialText(member.guest)}</span>
+                        </div>
+                      ) : (
+                        <Pill
+                          className={
+                            member.subscription.active
+                              ? "bg-accent/10 text-accent"
+                              : "bg-muted/10 text-muted"
+                          }
+                        >
+                          {member.subscription.label}
+                        </Pill>
+                      )}
                     </td>
                     <td className="px-4 py-4 text-center text-sm text-muted">{member.joined}</td>
                     <td className="px-4 py-4">

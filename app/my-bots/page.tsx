@@ -4,14 +4,17 @@ import { AppShell } from "@/components/app/AppShell";
 import { GuestGate } from "@/components/app/GuestGate";
 import { SubscriptionGate } from "@/components/app/SubscriptionGate";
 import { TabPreviewSkeleton } from "@/components/app/TabPreviewSkeleton";
-import { getPageAccess } from "@/lib/auth/guards";
+import { blockExpiredGuest, getPageAccess } from "@/lib/auth/guards";
 
 export const metadata: Metadata = {
   title: "My Bots · ATS-ALGO",
 };
 
 export default async function MyBotsPage() {
-  const { session, entitled } = await getPageAccess();
+  const { session, tier, entitled } = await getPageAccess();
+  // Guests can't reach My Bots — expired ones go to Billing, active ones see the
+  // members-only lock below.
+  blockExpiredGuest(tier);
 
   return (
     <AppShell>

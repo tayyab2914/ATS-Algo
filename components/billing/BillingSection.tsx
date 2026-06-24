@@ -54,15 +54,22 @@ export function BillingSection({
   const params = useSearchParams();
   const returnStatus = params.get("status");
   const gated = params.get("gated");
+  const expired = params.get("expired");
 
   const [banner, setBanner] = useState<NoticeData | null>(
     returnStatus === "success"
       ? { type: "success", message: "Payment received. Your subscription will appear here within a few seconds." }
       : returnStatus === "cancelled"
         ? { type: "info", message: "Checkout cancelled — you haven't been charged." }
-        : gated
-          ? { type: "info", message: "Subscribe to unlock the dashboard, portfolio, and your bots." }
-          : null,
+        : expired
+          ? {
+              type: "error",
+              message:
+                "Your free guest trial has ended. Subscribe to a plan to regain access to the dashboard and your bots.",
+            }
+          : gated
+            ? { type: "info", message: "Subscribe to unlock the dashboard, portfolio, and your bots." }
+            : null,
   );
   const [pending, setPending] = useState<"MONTHLY" | "YEARLY" | "portal" | null>(null);
 

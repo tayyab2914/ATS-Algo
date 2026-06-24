@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
 import { ok, fail, zodFail } from "@/lib/api";
-import { toPublicUser } from "@/lib/auth/account";
+import { startGuestTrialIfNeeded, toPublicUser } from "@/lib/auth/account";
 import { createSession } from "@/lib/auth/session";
 import {
   clearPendingTwoFactor,
@@ -36,6 +36,9 @@ export async function POST(request: NextRequest) {
     await clearPendingTwoFactor();
     return fail("This account is not allowed to sign in. Contact support.", 403);
   }
+
+  // First sign-in for a non-admin starts the 3-day Guest Mode trial clock.
+  await startGuestTrialIfNeeded(user);
 
   await createSession({
     sub: user.id,

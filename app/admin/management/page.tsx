@@ -8,6 +8,7 @@ import { getSession, hasLiveSession } from "@/lib/auth/session";
 import { hasActiveSubscription } from "@/lib/billing";
 import { prisma } from "@/lib/db";
 import type { SubscriptionModel } from "@/lib/generated/prisma/models";
+import { guestTrialFrom } from "@/lib/guest";
 
 export const metadata: Metadata = {
   title: "Members Management · ATS-ALGO",
@@ -45,16 +46,24 @@ export default async function AdminManagementPage() {
     include: { subscription: true },
   });
 
-  const members: MemberRow[] = users.map((user) => ({
-    id: user.id,
-    name: user.name?.trim() || user.email.split("@")[0],
-    email: user.email,
-    role: user.role === "ADMIN" ? "ADMIN" : "USER",
-    status: user.status,
-    loggedIn: hasLiveSession(user),
-    joined: formatDate(user.createdAt),
-    subscription: toSubscriptionView(user.subscription),
-  }));
+  const members: MemberRow[] = users.map((user) => {
+    const subscription = toSubscriptionView(user.subscription);
+    // A non-admin without active access is a Guest. Surface their trial state so
+    // admins can tell explorers from paying members at a glance.
+    const isPaying = user.role === "ADMIN" || subscription.active;
+    const trial = guestTrialFrom(user.guestExpiresAt ?? null);
+    return {
+      id: user.id,
+      name: user.name?.trim() || user.email.split("@")[0],
+      email: user.email,
+      role: user.role === "ADMIN" ? "ADMIN" : "USER",
+      status: user.status,
+      loggedIn: hasLiveSession(user),
+      joined: formatDate(user.createdAt),
+      subscription,
+      guest: isPaying ? null : { state: trial.state, daysLeft: trial.daysLeft },
+    };
+  });
 
   return (
     <div className="flex min-h-screen w-full flex-col bg-background text-white lg:flex-row">

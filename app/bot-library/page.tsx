@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { AppShell } from "@/components/app/AppShell";
 import { BotLibraryBrowser } from "@/components/bot-library/BotLibraryBrowser";
+import { blockExpiredGuest, getPageAccess } from "@/lib/auth/guards";
 import { BOTS_BY_CATEGORY } from "@/lib/bot-library";
 
 export const metadata: Metadata = {
@@ -8,11 +9,15 @@ export const metadata: Metadata = {
 };
 
 /**
- * Public Bot Library. Open to everyone (signed in or not) — it's the landing
- * destination for the "Check out Bot Library" CTA. The other dashboard tabs
- * gate guests behind a locked overlay; this one never does.
+ * Bot Library. Open to visitors and active guests (read-only browsing) as well
+ * as members — it's the landing destination for the "Check out Bot Library" CTA,
+ * and one of the three surfaces a Guest Mode trial may explore. Expired guests
+ * are walled to Billing like every other tab.
  */
-export default function BotLibraryPage() {
+export default async function BotLibraryPage() {
+  const { tier } = await getPageAccess();
+  blockExpiredGuest(tier);
+
   return (
     <AppShell>
       <header className="flex flex-col gap-1">

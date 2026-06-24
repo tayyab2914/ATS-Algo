@@ -3,6 +3,7 @@ import { appBaseUrl } from "@/lib/app-url";
 import { prisma } from "@/lib/db";
 import { sendVerificationEmail } from "@/lib/email";
 import type { UserModel } from "@/lib/generated/prisma/models";
+import { GUEST_TRIAL_MS } from "@/lib/guest";
 
 const VERIFICATION_TTL_MS = 1000 * 60 * 60 * 24; // 24 hours
 
@@ -72,4 +73,27 @@ export async function issueVerificationEmail(userId: string, email: string): Pro
   });
   const base = appBaseUrl();
   await sendVerificationEmail(email, `${base}/api/auth/verify?token=${token}`);
+}
+
+/**
+ * Start the Guest Mode trial clock the first time a non-admin signs in.
+ *
+ * Called from the login paths once the session is about to be created. The clock
+ * starts on first login (not at signup) so a verification email sitting unopened
+ * doesn't eat into the free days. Idempotent: only sets `guestExpiresAt` when it
+ * is still null, so a returning guest keeps their original deadline and a member
+ * is unaffected (an active subscription supersedes the trial regardless).
+ *
+ * Admins never get a trial. `updateMany` guards against a since-deleted row.
+ */
+export async function startGuestTrialIfNeeded(user: {
+  id: string;
+  role: UserModel["role"];
+  guestExpiresAt: Date | null;
+}): Promise<void> {
+  if (user.role === "ADMIN" || user.guestExpiresAt !== null) return;
+  await prisma.user.updateMany({
+    where: { id: user.id, guestExpiresAt: null },
+    data: { guestExpiresAt: new Date(Date.now() + GUEST_TRIAL_MS) },
+  });
 }

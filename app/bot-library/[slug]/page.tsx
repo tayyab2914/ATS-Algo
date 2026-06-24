@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { AppShell } from "@/components/app/AppShell";
 import { AddToMyBotsButton } from "@/components/bot-library/AddToMyBotsButton";
 import { EquityChart } from "@/components/bot-library/EquityChart";
-import { getSession } from "@/lib/auth/session";
+import { blockExpiredGuest, getPageAccess } from "@/lib/auth/guards";
 import { getBotDetail, type StatTone } from "@/lib/bot-library";
 import { cn } from "@/lib/cn";
 
@@ -42,7 +42,8 @@ export default async function BotDetailPage({ params }: PageProps<"/bot-library/
   const detail = getBotDetail(slug);
   if (!detail) notFound();
 
-  const session = await getSession();
+  const { session, tier, entitled } = await getPageAccess();
+  blockExpiredGuest(tier);
 
   return (
     <AppShell>
@@ -55,7 +56,7 @@ export default async function BotDetailPage({ params }: PageProps<"/bot-library/
           <BackArrow />
           Back to Library
         </Link>
-        <AddToMyBotsButton slug={detail.row.slug} authed={!!session} />
+        <AddToMyBotsButton slug={detail.row.slug} authed={!!session} canDeploy={entitled} />
       </div>
 
       {/* title */}
