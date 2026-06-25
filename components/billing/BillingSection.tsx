@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { SettingsCard, PrimaryAction } from "@/components/account/SettingsCard";
+import { AuthRequiredDialog } from "@/components/billing/AuthRequiredDialog";
 import { Notice, type NoticeData } from "@/components/ui/Notice";
 import { cn } from "@/lib/cn";
 
@@ -72,6 +73,9 @@ export function BillingSection({
             : null,
   );
   const [pending, setPending] = useState<"MONTHLY" | "YEARLY" | "portal" | null>(null);
+  // A signed-out visitor who clicked a plan: which plan, so the prompt can name
+  // it. Null when the prompt is closed.
+  const [authPromptPlan, setAuthPromptPlan] = useState<PlanKey | null>(null);
 
   /** POST to an endpoint that returns `{ url }` and redirect the browser there. */
   async function redirectTo(endpoint: string, body?: object, key?: typeof pending) {
@@ -97,10 +101,11 @@ export function BillingSection({
   }
 
   const subscribe = (plan: PlanKey) => {
-    // Guests can browse plans, but checkout needs an account — send them to sign
-    // in first and return here afterwards.
+    // Guests can browse plans, but checkout needs an account. Rather than bounce
+    // them straight to login (which feels like the click was ignored), surface a
+    // prompt that explains why and offers both log in and sign up.
     if (!authenticated) {
-      window.location.assign(`/login?next=${encodeURIComponent("/billing")}`);
+      setAuthPromptPlan(plan);
       return;
     }
     redirectTo("/api/billing/checkout", { plan }, plan);
@@ -111,6 +116,14 @@ export function BillingSection({
 
   return (
     <>
+      <AuthRequiredDialog
+        open={authPromptPlan !== null}
+        onClose={() => setAuthPromptPlan(null)}
+        loginHref={`/login?next=${encodeURIComponent("/billing")}`}
+        signupHref="/signup"
+        planLabel={authPromptPlan ? PLANS[authPromptPlan].label : undefined}
+      />
+
       {banner && <Notice notice={banner} />}
 
       {subscription && (active || subscription.status === "PAST_DUE" || subscription.status === "UNPAID") ? (

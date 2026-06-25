@@ -264,6 +264,22 @@ function hash01(seed: string): number {
   return ((h >>> 0) % 1000) / 1000;
 }
 
+/**
+ * Maximum drawdown (%) of an equity series given as y-positions (0 = top/best,
+ * 1 = bottom). Converts to an equity fraction, tracks the running peak, and
+ * returns the largest peak-to-trough decline — matching the chart's strip.
+ */
+function maxDrawdownPct(curveY: number[]): number {
+  let peak = -Infinity;
+  let maxDD = 0;
+  for (const v of curveY) {
+    const e = 1 - v;
+    peak = Math.max(peak, e);
+    if (peak > 0) maxDD = Math.max(maxDD, (peak - e) / peak);
+  }
+  return maxDD * 100;
+}
+
 /** Gently rising, lightly wavy equity series in 0..1 (1 = top of chart). */
 function buildEquityCurve(seed: string, smooth: boolean): number[] {
   const base = hash01(seed);
@@ -299,6 +315,8 @@ export function getBotDetail(slug: string): BotDetail | null {
     { label: "Profit Factor", value: profitFactor.toFixed(2) },
   ];
 
+  const equityCurve = buildEquityCurve(row.slug, false);
+
   const metrics: TradingMetric[] = [
     { label: "Stop Loss", value: `${stopLoss}%`, tone: "danger" },
     { label: "SL to BE", value: slToBe },
@@ -306,13 +324,14 @@ export function getBotDetail(slug: string): BotDetail | null {
     { label: "Trade Count", value: formatUsers(tradeCount) },
     { label: "Winrate", value: plainPct(winrate), tone: "success" },
     { label: "Net Profit", value: signedPct(netProfit), tone: netProfit >= 0 ? "success" : "danger" },
+    { label: "Maximum Drawdown", value: `-${maxDrawdownPct(equityCurve).toFixed(1)}%`, tone: "danger" },
   ];
 
   return {
     row,
     subtitle: `${row.pair} · ${row.strategy} · ${TITLE[row.category]}`,
     statCards,
-    equityCurve: buildEquityCurve(row.slug, false),
+    equityCurve,
     equitySafe: buildEquityCurve(`${row.slug}-safe`, true),
     equityMonths: EQUITY_MONTHS,
     tradeProfile: DEFAULT_TRADE_PROFILE,

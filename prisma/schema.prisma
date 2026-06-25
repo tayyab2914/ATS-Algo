@@ -70,9 +70,49 @@ model User {
   passwordResetTokens PasswordResetToken[]
   exchangeConnections ExchangeConnection[]
   twoFactorCodes      TwoFactorCode[]
+  paymentMethods      PaymentMethod[]
   subscription        Subscription?
+  emailChangeRequest  EmailChangeRequest?
 
   @@map("users")
+}
+
+/// A user's saved personal payment card, shown under Account Settings → Payment
+/// Methods. Like ExchangeConnection masks API keys, only NON-sensitive details
+/// are persisted: the full card number (PAN) is received over HTTPS, used to
+/// derive the brand and last four, then discarded — it is NEVER stored, and the
+/// CVV is never even transmitted. This is a convenience wallet for the user's
+/// own reference; actual subscription charges still run through Stripe.
+model PaymentMethod {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Detected from the card's leading digits: Visa, Mastercard, Amex, Discover,
+  /// or "Card" when the network can't be identified.
+  brand      String
+  /// The last four digits of the card number — the only part of the PAN kept.
+  last4      String
+  /// Expiry month (1–12) and four-digit year. A card is "expired" once the last
+  /// day of expYear-expMonth has passed.
+  expMonth   Int
+  expYear    Int
+  /// Name printed on the card.
+  holderName String
+  /// Optional user-chosen nickname, e.g. "Personal Visa".
+  label      String?
+  /// Exactly one of a user's cards is the default. Maintained in a transaction so
+  /// setting a new default clears the previous one.
+  isDefault  Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // The same physical card (same brand + last four + expiry) can't be saved
+  // twice by one user. Two different cards sharing all four is vanishingly rare.
+  @@unique([userId, brand, last4, expMonth, expYear])
+  @@index([userId])
+  @@map("payment_methods")
 }
 
 /// A user's Stripe subscription, mirrored from Stripe via webhooks. Stripe is
@@ -202,6 +242,9 @@ model Bot {
   updatedAt DateTime @updatedAt
 
   @@index([status])
+  // Category is a free string the admin filters/renames by (category rename
+  // updateMany + in-use count both key on it); index it to avoid a full scan.
+  @@index([category])
   @@map("bots")
 }
 
@@ -298,4 +341,35 @@ model TwoFactorCode {
 
   @@index([userId])
   @@map("two_factor_codes")
+}
+
+/// A pending, two-step email-change request. Changing the account email requires
+/// proving control of BOTH mailboxes: first a code emailed to the CURRENT address
+/// (proves the session holder owns the account), then a code emailed to the NEW
+/// address (proves they own the destination). The change is staged here and only
+/// written to `users.email` once both codes pass — so a failed or abandoned flow
+/// never touches the live address. Codes are stored hashed; at most one request
+/// per user (userId is unique), and the whole flow expires.
+model EmailChangeRequest {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// The requested new address (trimmed + lowercased). Re-checked for uniqueness
+  /// at every step, since another account could claim it mid-flow.
+  newEmail        String
+  /// Code emailed to the CURRENT address (stage 1). Stored as a bcrypt hash.
+  currentCodeHash String
+  /// Code emailed to the NEW address (stage 2). Null until stage 1 is confirmed.
+  newCodeHash     String?
+  /// True once the stage-1 (current address) code has been confirmed.
+  currentVerified Boolean  @default(false)
+  /// Wrong-code attempts on the active stage; the request self-destructs past a cap.
+  attempts        Int      @default(0)
+  /// The whole flow must complete before this instant. Reset on each code send.
+  expiresAt       DateTime
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@map("email_change_requests")
 }

@@ -1,12 +1,16 @@
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { NextResponse } from "next/server";
 import { cache } from "react";
 import { fail } from "@/lib/api";
-import type { SessionPayload } from "@/lib/auth/jwt";
-import { getSession } from "@/lib/auth/session";
+import { SESSION_COOKIE, verifyToken, type SessionPayload } from "@/lib/auth/jwt";
 import { isSubscriptionActive } from "@/lib/billing";
 import { prisma } from "@/lib/db";
+import type { SubscriptionStatus } from "@/lib/generated/prisma/enums";
 import { guestTrialFrom, type GuestTrial } from "@/lib/guest";
+
+/** The subscription columns the entitlement check needs. */
+type ViewerSubscription = { status: SubscriptionStatus; isComp: boolean; currentPeriodEnd: Date | null };
 
 /**
  * Who is viewing a gated surface.
@@ -22,6 +26,9 @@ import { guestTrialFrom, type GuestTrial } from "@/lib/guest";
  */
 export type ViewerTier = "visitor" | "guestActive" | "guestExpired" | "member" | "admin";
 
+/** The signed-in user's display fields for the sidebar profile footer. */
+export type ViewerProfile = { name: string | null; email: string; avatarUrl: string | null };
+
 export type PageAccess = {
   /** The signed-in session, or `null` for a visitor. */
   session: SessionPayload | null;
@@ -35,7 +42,69 @@ export type PageAccess = {
   entitled: boolean;
   /** Trial details when the viewer is a guest (`guestActive`/`guestExpired`); else null. */
   guest: GuestTrial | null;
+  /** Profile fields for the signed-in user (null for a visitor) — saves AppShell a query. */
+  profile: ViewerProfile | null;
 };
+
+/**
+ * Single per-request load of the viewer's row.
+ *
+ * One DB round-trip fetches everything the gated render needs — liveness
+ * (`status`/`sessionsValidFrom`), entitlement (`subscription`), the guest trial
+ * clock (`guestExpiresAt`) and the sidebar profile fields — instead of the three
+ * separate `user.findUnique` calls this used to make per navigation (getSession
+ * liveness + getPageAccess subscription + AppShell profile). Wrapped in React
+ * `cache` so the page and {@link AppShell} share the one query.
+ *
+ * Returns `null` for a visitor OR a revoked session (deleted, suspended/banned,
+ * or force-logged-out), replicating {@link getSession}'s liveness gate exactly.
+ */
+const loadViewer = cache(
+  async (): Promise<{
+    session: SessionPayload;
+    subscription: ViewerSubscription | null;
+    guestExpiresAt: Date | null;
+    profile: ViewerProfile;
+  } | null> => {
+    const store = await cookies();
+    const token = store.get(SESSION_COOKIE)?.value;
+    if (!token) return null;
+
+    const session = await verifyToken(token);
+    if (!session) return null;
+
+    const user = await prisma.user.findUnique({
+      where: { id: session.sub },
+      select: {
+        status: true,
+        sessionsValidFrom: true,
+        guestExpiresAt: true,
+        name: true,
+        email: true,
+        avatarUrl: true,
+        subscription: { select: { status: true, isComp: true, currentPeriodEnd: true } },
+      },
+    });
+    if (!user) return null;
+
+    // Authoritative liveness gate — identical to lib/auth/session.ts isSessionLive.
+    if (user.status !== "ACTIVE") return null;
+    if (
+      user.sessionsValidFrom &&
+      session.iat != null &&
+      session.iat * 1000 < user.sessionsValidFrom.getTime()
+    ) {
+      return null;
+    }
+
+    return {
+      session,
+      subscription: user.subscription,
+      guestExpiresAt: user.guestExpiresAt,
+      profile: { name: user.name, email: user.email, avatarUrl: user.avatarUrl },
+    };
+  },
+);
 
 /**
  * Resolve a viewer's access for a subscription-gated page WITHOUT redirecting.
@@ -50,32 +119,31 @@ export type PageAccess = {
  * access reflects webhook updates immediately rather than a stale JWT claim.
  *
  * Wrapped in React `cache` so the page and the surrounding {@link AppShell} (and
- * any other caller) share a single evaluation per request.
+ * any other caller) share a single evaluation — and a single DB query — per request.
  */
 export const getPageAccess = cache(async (): Promise<PageAccess> => {
-  const session = await getSession();
-  if (!session) return { session: null, tier: "visitor", entitled: false, guest: null };
-  if (session.role === "ADMIN") return { session, tier: "admin", entitled: true, guest: null };
-
-  const user = await prisma.user.findUnique({
-    where: { id: session.sub },
-    select: {
-      guestExpiresAt: true,
-      subscription: { select: { status: true, isComp: true, currentPeriodEnd: true } },
-    },
-  });
-
-  // A live paid plan or comp grant outranks the trial clock entirely.
-  if (isSubscriptionActive(user?.subscription ?? null)) {
-    return { session, tier: "member", entitled: true, guest: null };
+  const viewer = await loadViewer();
+  if (!viewer) {
+    return { session: null, tier: "visitor", entitled: false, guest: null, profile: null };
   }
 
-  const guest = guestTrialFrom(user?.guestExpiresAt ?? null);
+  const { session, subscription, guestExpiresAt, profile } = viewer;
+  if (session.role === "ADMIN") {
+    return { session, tier: "admin", entitled: true, guest: null, profile };
+  }
+
+  // A live paid plan or comp grant outranks the trial clock entirely.
+  if (isSubscriptionActive(subscription)) {
+    return { session, tier: "member", entitled: true, guest: null, profile };
+  }
+
+  const guest = guestTrialFrom(guestExpiresAt ?? null);
   return {
     session,
     tier: guest.expired ? "guestExpired" : "guestActive",
     entitled: false,
     guest,
+    profile,
   };
 });
 

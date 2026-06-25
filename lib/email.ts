@@ -111,6 +111,41 @@ export async function sendTeamInviteEmail(
   });
 }
 
+/**
+ * Email a one-time code for the two-step email-change flow.
+ *  - "current" goes to the EXISTING address: prove you own the account.
+ *  - "new"     goes to the DESTINATION address: prove you own where it's headed.
+ */
+export async function sendEmailChangeCode(
+  to: string,
+  code: string,
+  purpose: "current" | "new",
+): Promise<void> {
+  const heading = purpose === "current" ? "Confirm your email change" : "Verify your new email";
+  const lead =
+    purpose === "current"
+      ? "Someone (hopefully you) asked to change the email on your ATS-ALGO account. Enter this code to confirm it's you:"
+      : "Enter this code to confirm this is the new email address for your ATS-ALGO account:";
+  const footer =
+    purpose === "current"
+      ? "If you didn't request this, ignore this email and your address stays unchanged."
+      : "If you didn't request this, you can safely ignore this email.";
+  await getTransporter().sendMail({
+    from: process.env.SMTP_FROM ?? process.env.SMTP_USER,
+    to,
+    subject: `Your email change code: ${code}`,
+    text: `${lead}\n\n${code}\n\nThis code expires in 15 minutes. ${footer}`,
+    html: `
+      <div style="font-family:Inter,Arial,sans-serif;background:#0a0a0a;color:#fff;padding:32px;border-radius:16px;max-width:480px">
+        <h1 style="font-size:20px;margin:0 0 8px">${heading}</h1>
+        <p style="color:#b5b5b5;font-size:14px;line-height:21px">${lead}</p>
+        <p style="font-size:36px;font-weight:700;letter-spacing:8px;color:#28b8d5;margin:16px 0">${code}</p>
+        <p style="color:#6b7280;font-size:12px">This code expires in 15 minutes. ${footer}</p>
+      </div>
+    `,
+  });
+}
+
 /** Send the account verification email containing a confirmation link. */
 export async function sendVerificationEmail(to: string, verifyUrl: string): Promise<void> {
   await getTransporter().sendMail({

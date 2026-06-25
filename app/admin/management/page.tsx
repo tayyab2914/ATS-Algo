@@ -18,8 +18,11 @@ function formatDate(date: Date): string {
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
+/** The subscription columns the members pill is derived from. */
+type SubscriptionView = Pick<SubscriptionModel, "plan" | "status" | "currentPeriodEnd" | "isComp">;
+
 /** Collapse a subscription row into the pill the members table shows. */
-function toSubscriptionView(sub: SubscriptionModel | null): MemberSubscription {
+function toSubscriptionView(sub: SubscriptionView | null): MemberSubscription {
   if (!sub) return { label: "Free", active: false, isComp: false };
 
   // Comp grants have no Stripe webhook to flip their status, so honour the
@@ -41,9 +44,24 @@ export default async function AdminManagementPage() {
 
   const isSuperAdmin = isSuperAdminEmail(session.email);
 
+  // Select only what the row mapping needs, instead of whole user rows (which
+  // would pull passwordHash, stripeCustomerId, etc. for every member).
   const users = await prisma.user.findMany({
     orderBy: { createdAt: "asc" },
-    include: { subscription: true },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      role: true,
+      status: true,
+      lastLoginAt: true,
+      sessionsValidFrom: true,
+      createdAt: true,
+      guestExpiresAt: true,
+      subscription: {
+        select: { plan: true, status: true, currentPeriodEnd: true, isComp: true },
+      },
+    },
   });
 
   const members: MemberRow[] = users.map((user) => {
@@ -62,6 +80,9 @@ export default async function AdminManagementPage() {
       joined: formatDate(user.createdAt),
       subscription,
       guest: isPaying ? null : { state: trial.state, daysLeft: trial.daysLeft },
+      // The acting admin's own row (no self-targeting) and the protected superadmin.
+      isSelf: user.id === session.sub,
+      isProtected: isSuperAdminEmail(user.email),
     };
   });
 

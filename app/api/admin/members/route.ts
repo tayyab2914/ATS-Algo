@@ -16,10 +16,11 @@ import { adminMemberActionSchema } from "@/lib/validation";
  * - grantFree       — give the member a free (comp) subscription, no Stripe
  * - revokeFree      — remove a previously granted comp subscription
  * - delete          — permanently remove the account (superadmin only)
+ * - demote          — strip ADMIN back to USER (any admin, except self / superadmin)
  *
  * Admin accounts are off-limits to the standing/subscription actions so an admin
- * can't lock themselves (or a peer) out from here. The one exception is `delete`,
- * which the superadmin may use on members *and* admins.
+ * can't lock themselves (or a peer) out from here. The exceptions are `delete`
+ * (superadmin only) and `demote` (any admin), both of which may target an admin.
  */
 export async function POST(request: NextRequest) {
   const session = await getSession();
@@ -48,6 +49,21 @@ export async function POST(request: NextRequest) {
     // admin sign-in codes are keyed by email, not a relation, so clear them too.
     await prisma.adminLoginCode.deleteMany({ where: { email: member.email } });
     await prisma.user.delete({ where: { id: member.id } });
+    return ok({ ok: true });
+  }
+
+  // Strip admin rights back to a regular member. Any admin may do this to a
+  // peer, but never to themselves or to the superadmin. Bumping
+  // `sessionsValidFrom` ends their live admin session so the demotion takes
+  // effect on their next request rather than at token expiry.
+  if (action === "demote") {
+    if (member.role !== "ADMIN") return fail("This account is not an admin.", 409);
+    if (member.id === session.sub) return fail("You can't remove your own admin access.", 409);
+    if (isSuperAdminEmail(member.email)) return fail("The superadmin's access can't be removed.", 403);
+    await prisma.user.update({
+      where: { id: member.id },
+      data: { role: "USER", sessionsValidFrom: new Date() },
+    });
     return ok({ ok: true });
   }
 

@@ -6,9 +6,13 @@ export function Donut({ size = 200, thickness = 26 }: { size?: number; thickness
   const circumference = 2 * Math.PI * radius;
   const gap = 6;
 
-  // Pre-compute each arc length and its cumulative start offset (no mutation).
+  // Pre-compute each arc length and its cumulative start offset in one pass.
   const lengths = HOLDINGS.map((holding) => (circumference * holding.segment) / 100);
-  const offsets = lengths.map((_, index) => lengths.slice(0, index).reduce((sum, value) => sum + value, 0));
+  const offsets: number[] = [];
+  lengths.reduce((acc, len) => {
+    offsets.push(acc);
+    return acc + len;
+  }, 0);
 
   return (
     <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden>

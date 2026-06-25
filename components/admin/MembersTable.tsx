@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 import { AdminCard } from "@/components/admin/AdminCard";
 import {
   BanIcon,
@@ -46,7 +46,33 @@ export type MemberRow = {
   subscription: MemberSubscription;
   /** Trial standing for a Guest account; null for paying members and admins. */
   guest: MemberGuest | null;
+  /** This row is the acting admin's own account (no self-targeting). */
+  isSelf: boolean;
+  /** This row is the superadmin (can't be demoted/deleted by others). */
+  isProtected: boolean;
 };
+
+/** The viewer-facing kind of an account, used for the coloured type pill + filter. */
+type MemberType = "ADMIN" | "MEMBER" | "GUEST";
+
+/** Admins are red, paying members keep the accent colour, guests are grey. */
+const TYPE_PILL: Record<MemberType, string> = {
+  ADMIN: "bg-[#D2031E]/10 text-[#D2031E]",
+  MEMBER: "bg-accent/10 text-accent",
+  GUEST: "bg-muted/15 text-muted",
+};
+
+const TYPE_LABEL: Record<MemberType, string> = {
+  ADMIN: "Admin",
+  MEMBER: "Member",
+  GUEST: "Guest",
+};
+
+/** Admin → ADMIN; a non-admin with active access → MEMBER; otherwise → GUEST. */
+function memberType(m: MemberRow): MemberType {
+  if (m.role === "ADMIN") return "ADMIN";
+  return m.guest ? "GUEST" : "MEMBER";
+}
 
 type MemberAction =
   | "suspend"
@@ -55,7 +81,8 @@ type MemberAction =
   | "forceLogout"
   | "grantFree"
   | "revokeFree"
-  | "delete";
+  | "delete"
+  | "demote";
 
 function successMessage(member: MemberRow, action: MemberAction): string {
   const who = member.name || member.email;
@@ -74,6 +101,8 @@ function successMessage(member: MemberRow, action: MemberAction): string {
       return `Free access revoked from ${who}.`;
     case "delete":
       return `${who} has been permanently deleted.`;
+    case "demote":
+      return `${who} is no longer an admin and has been signed out.`;
   }
 }
 
@@ -88,6 +117,15 @@ const STATUS_LABEL: Record<MemberStatus, string> = {
   SUSPENDED: "Suspended",
   BANNED: "Banned",
 };
+
+function DownloadIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <path d="M8 2v8m0 0L5 7m3 3 3-3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M3 12.5h10" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </svg>
+  );
+}
 
 /** Sub-label under the "Guest" pill describing trial standing. */
 function guestTrialText(guest: MemberGuest): string {
@@ -126,6 +164,50 @@ export function MembersTable({
   const [anchor, setAnchor] = useState<MenuAnchor | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<NoticeData | null>(null);
+  const [search, setSearch] = useState("");
+  const [typeFilter, setTypeFilter] = useState<"ALL" | MemberType>("ALL");
+
+  const q = search.trim().toLowerCase();
+  // Memoised so unrelated state changes (opening a row menu, an in-flight
+  // action, a notice) don't re-scan the whole member list.
+  const filtered = useMemo(
+    () =>
+      members.filter((m) => {
+        if (typeFilter !== "ALL" && memberType(m) !== typeFilter) return false;
+        if (!q) return true;
+        return m.name.toLowerCase().includes(q) || m.email.toLowerCase().includes(q);
+      }),
+    [members, q, typeFilter],
+  );
+
+  /** Download the currently-filtered members as a CSV (emails for marketing etc.). */
+  function exportCsv() {
+    const cell = (v: string) => `"${String(v).replace(/"/g, '""')}"`;
+    const header = ["Name", "Email", "Type", "Plan", "Trial days left", "Status", "Session", "Joined"];
+    const rows = filtered.map((m) => {
+      const type = memberType(m);
+      const plan = type === "MEMBER" ? m.subscription.label : "";
+      const trial = m.guest
+        ? m.guest.state === "expired"
+          ? "expired"
+          : m.guest.state === "notStarted"
+            ? "not started"
+            : String(m.guest.daysLeft)
+        : "";
+      return [m.name, m.email, TYPE_LABEL[type], plan, trial, STATUS_LABEL[m.status], m.loggedIn ? "Signed in" : "Signed out", m.joined];
+    });
+    const csv = [header, ...rows].map((r) => r.map(cell).join(",")).join("\r\n");
+    // Prepend a BOM so Excel reads UTF-8 emails/names correctly.
+    const blob = new Blob([`﻿${csv}`], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `members-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
 
   function openMenu(id: string, button: HTMLElement) {
     const rect = button.getBoundingClientRect();
@@ -175,6 +257,43 @@ export function MembersTable({
     <AdminCard title="Members" subtitle="Every account, its plan, and standing. Manage access per member.">
       {notice && <Notice notice={notice} />}
 
+      {/* Search + type filter + CSV export */}
+      <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search name or email"
+            className="h-9 w-full rounded-lg border border-line bg-background px-3 text-sm text-white placeholder:text-muted focus:border-accent/60 focus:outline-none sm:w-64"
+          />
+          <div className="flex gap-1 rounded-lg border border-line bg-surface p-1">
+            {(["ALL", "ADMIN", "MEMBER", "GUEST"] as const).map((t) => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => setTypeFilter(t)}
+                className={cn(
+                  "rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors",
+                  typeFilter === t ? "bg-accent text-[#121212]" : "text-muted hover:text-white",
+                )}
+              >
+                {t === "ALL" ? "All" : t === "ADMIN" ? "Admins" : t === "MEMBER" ? "Members" : "Guests"}
+              </button>
+            ))}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={exportCsv}
+          disabled={filtered.length === 0}
+          className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border border-line px-3 text-sm font-semibold text-muted transition-colors hover:border-accent/40 hover:text-white disabled:opacity-40"
+        >
+          <DownloadIcon />
+          Export CSV{typeFilter !== "ALL" || q ? ` (${filtered.length})` : ""}
+        </button>
+      </div>
+
       <div className="max-h-[480px] overflow-auto">
         <table className="w-full min-w-[960px] text-left">
           <thead className="sticky top-0 z-10 bg-surface">
@@ -190,50 +309,35 @@ export function MembersTable({
             </tr>
           </thead>
           <tbody>
-            {members.length === 0 ? (
+            {filtered.length === 0 ? (
               <tr>
                 <td colSpan={8} className="px-4 py-8 text-center text-sm text-muted">
-                  No members yet.
+                  {members.length === 0 ? "No members yet." : "No members match your filters."}
                 </td>
               </tr>
             ) : (
-              members.map((member) => {
+              filtered.map((member) => {
                 const isAdmin = member.role === "ADMIN";
-                // Members always have a menu; admin rows only get one for the
-                // superadmin, whose sole admin-row action is Delete.
-                const hasMenu = !isAdmin || isSuperAdmin;
+                const type = memberType(member);
+                // Members/guests always have a menu. Admin rows get one only for
+                // a peer (never your own row, never the protected superadmin
+                // unless you are them — which is your own row, so still excluded).
+                const hasMenu = !isAdmin || (!member.isSelf && (isSuperAdmin || !member.isProtected));
                 const menuOpen = openId === member.id;
                 return (
                   <tr key={member.id} className="border-b border-line/60 last:border-0">
                     <td className="px-4 py-4 text-sm font-semibold text-white">{member.name}</td>
                     <td className="px-4 py-4 text-center text-sm text-muted">{member.email}</td>
                     <td className="px-4 py-4 text-center">
-                      <Pill className="bg-accent/10 text-accent">{isAdmin ? "Admin" : "User"}</Pill>
+                      <Pill className={TYPE_PILL[type]}>{TYPE_LABEL[type]}</Pill>
                     </td>
                     <td className="px-4 py-4 text-center">
-                      {member.guest ? (
-                        <div className="flex flex-col items-center gap-1">
-                          <Pill
-                            className={
-                              member.guest.state === "expired"
-                                ? "bg-[#D2031E]/10 text-[#D2031E]"
-                                : "bg-[#F4A825]/10 text-[#F4A825]"
-                            }
-                          >
-                            Guest
-                          </Pill>
-                          <span className="text-xs text-muted">{guestTrialText(member.guest)}</span>
-                        </div>
+                      {type === "GUEST" ? (
+                        <span className="text-xs text-muted">{member.guest ? guestTrialText(member.guest) : "—"}</span>
+                      ) : type === "ADMIN" ? (
+                        <span className="text-sm text-muted">—</span>
                       ) : (
-                        <Pill
-                          className={
-                            member.subscription.active
-                              ? "bg-accent/10 text-accent"
-                              : "bg-muted/10 text-muted"
-                          }
-                        >
-                          {member.subscription.label}
-                        </Pill>
+                        <Pill className="bg-accent/10 text-accent">{member.subscription.label}</Pill>
                       )}
                     </td>
                     <td className="px-4 py-4 text-center text-sm text-muted">{member.joined}</td>
@@ -372,14 +476,32 @@ function RowMenu({
             <MenuItem icon={<RotateIcon />} label="Back" disabled={busy} onClick={() => onView("main")} />
           </>
         ) : isAdmin ? (
-          // The only action available on an admin row (superadmin only).
-          <MenuItem
-            icon={<TrashIcon />}
-            label="Delete admin"
-            tone="danger"
-            disabled={busy}
-            onClick={() => onView("confirmDelete")}
-          />
+          // Peer-admin actions: any admin may remove another's admin rights;
+          // only the superadmin may also delete. (Own row / superadmin row never
+          // reach here — they get no menu.)
+          <>
+            {!member.isProtected && (
+              <MenuItem
+                icon={<BanIcon />}
+                label="Remove admin access"
+                tone="danger"
+                disabled={busy}
+                onClick={() => onAction(member, "demote")}
+              />
+            )}
+            {isSuperAdmin && (
+              <>
+                {!member.isProtected && <div className="my-1 h-px bg-line" />}
+                <MenuItem
+                  icon={<TrashIcon />}
+                  label="Delete admin"
+                  tone="danger"
+                  disabled={busy}
+                  onClick={() => onView("confirmDelete")}
+                />
+              </>
+            )}
+          </>
         ) : (
           <>
             {member.status === "ACTIVE" ? (

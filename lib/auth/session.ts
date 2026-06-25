@@ -1,4 +1,5 @@
 import { cookies } from "next/headers";
+import { cache } from "react";
 import { createToken, verifyToken, SESSION_COOKIE, type SessionPayload } from "@/lib/auth/jwt";
 import { prisma } from "@/lib/db";
 
@@ -52,15 +53,19 @@ export async function createSession(payload: SessionPayload): Promise<void> {
 /**
  * Read and verify the current session, or `null` when signed out — or when the
  * account has since been suspended, banned, or force-logged-out by an admin.
+ *
+ * Wrapped in React `cache` so repeated calls within a single request (e.g. an
+ * API guard plus a helper) share one liveness query. Gated pages take the faster
+ * combined path in {@link getPageAccess}; this stays for standalone route handlers.
  */
-export async function getSession(): Promise<SessionPayload | null> {
+export const getSession = cache(async (): Promise<SessionPayload | null> => {
   const store = await cookies();
   const token = store.get(SESSION_COOKIE)?.value;
   if (!token) return null;
   const session = await verifyToken(token);
   if (!session) return null;
   return (await isSessionLive(session)) ? session : null;
-}
+});
 
 /** Clear the session cookie. */
 export async function destroySession(): Promise<void> {

@@ -6,6 +6,9 @@ import { cn } from "@/lib/cn";
 
 const RISK_LABEL = { LOW: "Low", MEDIUM: "Medium", HIGH: "High" } as const;
 
+export type SignupType = "member" | "guest";
+export type ChurnKind = "canceled" | "pastDue" | "notRenewing";
+
 export type AdminOverviewData = {
   activeBots: number;
   totalBots: number;
@@ -16,7 +19,19 @@ export type AdminOverviewData = {
   byRisk: { risk: "LOW" | "MEDIUM" | "HIGH"; count: number }[];
   topBots: { id: string; name: string; category: string; winRate: number; profitFactor: number; d30: number }[];
   revisions: { id: string; botId: string; botName: string; message: string; date: string }[];
-  signups: { id: string; name: string; date: string }[];
+  signups: { id: string; name: string; date: string; type: SignupType }[];
+  churn: {
+    canceled: number;
+    pastDue: number;
+    notRenewing: number;
+    recent: { id: string; name: string; email: string; status: ChurnKind; date: string }[];
+  };
+};
+
+const CHURN_BADGE: Record<ChurnKind, { label: string; className: string }> = {
+  canceled: { label: "Cancelled", className: "bg-[#D2031E]/10 text-[#D2031E]" },
+  pastDue: { label: "Past due", className: "bg-[#F4A825]/10 text-[#F4A825]" },
+  notRenewing: { label: "Not renewing", className: "bg-[#F4A825]/10 text-[#F4A825]" },
 };
 
 const pct = (x: number) => `${x >= 0 ? "+" : ""}${x.toFixed(2)}%`;
@@ -124,7 +139,17 @@ export function AdminOverview({ data }: { data: AdminOverviewData }) {
                 <ul className="flex flex-col gap-3">
                   {data.signups.map((s) => (
                     <li key={s.id} className="flex items-center justify-between gap-3">
-                      <span className="truncate text-sm text-white">{s.name}</span>
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span className="truncate text-sm text-white">{s.name}</span>
+                        <span
+                          className={cn(
+                            "shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold",
+                            s.type === "member" ? "bg-accent/10 text-accent" : "bg-muted/15 text-muted",
+                          )}
+                        >
+                          {s.type === "member" ? "Member" : "Guest"}
+                        </span>
+                      </span>
                       <span className="shrink-0 text-xs text-muted">{s.date}</span>
                     </li>
                   ))}
@@ -134,6 +159,44 @@ export function AdminOverview({ data }: { data: AdminOverviewData }) {
           </div>
         </AdminCard>
       </div>
+
+      {/* Cancellations & non-renewals */}
+      <AdminCard
+        title="Cancellations & non-renewals"
+        subtitle="Subscriptions that ended, are failing to renew, or are set to lapse — prime re-engagement targets."
+      >
+        <div className="flex flex-col gap-5">
+          <div className="grid grid-cols-3 gap-3">
+            <MiniStat label="Cancelled" value={data.churn.canceled} tone="danger" Icon={GiftIcon} />
+            <MiniStat label="Past due" value={data.churn.pastDue} tone="warning" Icon={ClockIcon} />
+            <MiniStat label="Set to cancel" value={data.churn.notRenewing} tone="warning" Icon={ToggleIcon} />
+          </div>
+
+          {data.churn.recent.length === 0 ? (
+            <p className="text-sm text-muted">No cancellations or lapses — nice.</p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              <p className="text-xs font-semibold text-muted">Most recent</p>
+              <ul className="flex flex-col gap-3">
+                {data.churn.recent.map((c) => (
+                  <li key={c.id} className="flex items-center justify-between gap-3">
+                    <span className="flex min-w-0 flex-col">
+                      <span className="truncate text-sm font-semibold text-white">{c.name}</span>
+                      <span className="truncate text-xs text-muted">{c.email}</span>
+                    </span>
+                    <span className="flex shrink-0 items-center gap-2">
+                      <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-semibold", CHURN_BADGE[c.status].className)}>
+                        {CHURN_BADGE[c.status].label}
+                      </span>
+                      <span className="text-xs text-muted">{c.date}</span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      </AdminCard>
     </div>
   );
 }
@@ -163,6 +226,13 @@ function KpiTile({
   );
 }
 
+const MINISTAT_TONE = {
+  success: "bg-success/10 text-success",
+  muted: "bg-muted/10 text-muted",
+  danger: "bg-[#D2031E]/10 text-[#D2031E]",
+  warning: "bg-[#F4A825]/10 text-[#F4A825]",
+} as const;
+
 function MiniStat({
   label,
   value,
@@ -171,17 +241,12 @@ function MiniStat({
 }: {
   label: string;
   value: number;
-  tone: "success" | "muted";
+  tone: keyof typeof MINISTAT_TONE;
   Icon: (p: { className?: string }) => ReactNode;
 }) {
   return (
     <div className="flex items-center gap-3 rounded-xl border border-line bg-background p-3">
-      <span
-        className={cn(
-          "flex size-9 shrink-0 items-center justify-center rounded-lg",
-          tone === "success" ? "bg-success/10 text-success" : "bg-muted/10 text-muted",
-        )}
-      >
+      <span className={cn("flex size-9 shrink-0 items-center justify-center rounded-lg", MINISTAT_TONE[tone])}>
         <Icon className="size-5" />
       </span>
       <div className="flex flex-col">

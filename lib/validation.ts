@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { EXCHANGES } from "@/lib/account";
+import { isCardExpired, luhnValid, normalizeCardNumber } from "@/lib/payment";
 
 /** Shared field rules. */
 const email = z.string().trim().toLowerCase().email("Enter a valid email address");
@@ -54,11 +55,20 @@ export const resetPasswordSchema = z
 
 const optionalText = z.string().trim().optional().or(z.literal(""));
 
+// Email is intentionally NOT here: it changes through the dedicated two-step
+// verification flow (see lib/auth/email-change.ts), never this bulk update.
 export const profileSchema = z.object({
   username: z.string().trim().max(60, "Username is too long").optional().or(z.literal("")),
-  email: z.string().trim().toLowerCase().email("Enter a valid email address").optional().or(z.literal("")),
   password: z.string().min(8, "Password must be at least 8 characters").optional().or(z.literal("")),
   avatarUrl: optionalText,
+});
+
+/** Start an email change — the requested new address. */
+export const emailChangeStartSchema = z.object({ email });
+
+/** A 6-digit code for either step of the email-change flow. */
+export const emailChangeCodeSchema = z.object({
+  code: z.string().regex(/^\d{6}$/, "Enter the 6-digit code from your email"),
 });
 
 export const connectionToggleSchema = z.object({
@@ -76,6 +86,35 @@ export const exchangeRemoveSchema = z.object({
   exchange: z.enum(EXCHANGES),
 });
 
+// ── Payment methods ───────────────────────────────────────────────────────────
+
+/**
+ * Add a saved card. The raw `number` is normalized + Luhn-checked here but only
+ * its brand and last four are ever persisted (see the payment-methods route).
+ * The CVV is intentionally absent from the schema — the client never sends it.
+ */
+export const paymentMethodAddSchema = z
+  .object({
+    number: z
+      .string()
+      .trim()
+      .transform(normalizeCardNumber)
+      .refine((v) => luhnValid(v), "Enter a valid card number"),
+    expMonth: z.coerce.number().int().min(1, "Invalid expiry month").max(12, "Invalid expiry month"),
+    expYear: z.coerce.number().int().min(2000, "Invalid expiry year").max(2099, "Invalid expiry year"),
+    holderName: z.string().trim().min(2, "Enter the name on the card").max(100, "Name is too long"),
+    label: z.string().trim().max(60, "Label is too long").optional().or(z.literal("")),
+  })
+  .refine((d) => !isCardExpired(d.expMonth, d.expYear), {
+    message: "That card has already expired",
+    path: ["expMonth"],
+  });
+
+/** Identify a saved card by id (remove / set-default). */
+export const paymentMethodIdSchema = z.object({
+  id: z.string().min(1, "Missing payment method id"),
+});
+
 // ── Billing ──────────────────────────────────────────────────────────────────
 
 /** Which plan a checkout request is for. Mirrors the `BillingPlan` enum. */
@@ -88,7 +127,7 @@ export const checkoutSchema = z.object({
 /** An action an admin takes on a member from the Admin Management screen. */
 export const adminMemberActionSchema = z.object({
   memberId: z.string().min(1, "Missing member id"),
-  action: z.enum(["suspend", "ban", "reactivate", "forceLogout", "grantFree", "revokeFree", "delete"]),
+  action: z.enum(["suspend", "ban", "reactivate", "forceLogout", "grantFree", "revokeFree", "delete", "demote"]),
   /** Length of a granted comp subscription; `0` (or omitted) means perpetual. */
   durationMonths: z.number().int().min(0).max(120).optional(),
 });
@@ -102,12 +141,16 @@ export const adminSetRoleSchema = z.object({
 export type LoginInput = z.infer<typeof loginSchema>;
 export type SignupInput = z.infer<typeof signupSchema>;
 export type ProfileInput = z.infer<typeof profileSchema>;
+export type EmailChangeStartInput = z.infer<typeof emailChangeStartSchema>;
+export type EmailChangeCodeInput = z.infer<typeof emailChangeCodeSchema>;
 export type AdminRequestCodeInput = z.infer<typeof adminRequestCodeSchema>;
 export type AdminCodeInput = z.infer<typeof adminCodeSchema>;
 export type TwoFactorCodeInput = z.infer<typeof twoFactorCodeSchema>;
 export type TwoFactorToggleInput = z.infer<typeof twoFactorToggleSchema>;
 export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
 export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
+export type PaymentMethodAddInput = z.infer<typeof paymentMethodAddSchema>;
+export type PaymentMethodIdInput = z.infer<typeof paymentMethodIdSchema>;
 export type CheckoutInput = z.infer<typeof checkoutSchema>;
 export type AdminMemberActionInput = z.infer<typeof adminMemberActionSchema>;
 export type AdminSetRoleInput = z.infer<typeof adminSetRoleSchema>;

@@ -491,26 +491,52 @@ export function runBacktest(config: BotConfig, csvText: string, opts: BacktestOp
   return { candleCount: total, windowDays: spanDays, profiles };
 }
 
-/**
- * Cumulative equity curve for one profile — a running, leverage-applied,
- * compounded net-return multiplier (starts at 1) stamped at each trade's exit
- * time. Used by the bot detail view to draw the equity chart.
- */
-export function profileEquityCurve(
-  config: BotConfig,
-  csvText: string,
-  key: RiskKey,
-): { time: number; equity: number }[] {
-  const profile = config.profiles?.[key];
-  if (!profile) return [];
-  const candles = parseCandles(csvText);
-  const trades = runProfile(candles, buildTrades(candles), profile, config.fees);
-  const lev = profile.lev ?? 1;
+export type EquityPoint = { time: number; equity: number };
+
+/** Roll a profile's trades into a running, leveraged, compounded equity curve. */
+function equityFromTrades(trades: Trade[], lev: number): EquityPoint[] {
   let equity = 1;
   return trades.map((t) => {
     equity *= 1 + Math.max(t.net * lev, -100) / 100;
     return { time: t.exitTime.getTime(), equity };
   });
+}
+
+/**
+ * Equity curves for several profiles at once. Parses the CSV and builds the
+ * (profile-independent) trade list ONCE, then runs each requested profile over
+ * it — so charting two profiles costs one parse, not two. Missing profiles map
+ * to an empty curve. See {@link profileEquityCurve} for the per-trade meaning.
+ */
+export function profileEquityCurves(
+  config: BotConfig,
+  csvText: string,
+  keys: RiskKey[],
+): Record<RiskKey, EquityPoint[]> {
+  const candles = parseCandles(csvText);
+  const raw = buildTrades(candles);
+  const out = {} as Record<RiskKey, EquityPoint[]>;
+  for (const key of keys) {
+    const profile = config.profiles?.[key];
+    out[key] = profile
+      ? equityFromTrades(runProfile(candles, raw, profile, config.fees), profile.lev ?? 1)
+      : [];
+  }
+  return out;
+}
+
+/**
+ * Cumulative equity curve for one profile — a running, leverage-applied,
+ * compounded net-return multiplier (starts at 1) stamped at each trade's exit
+ * time. Used by the bot detail view to draw the equity chart. For two or more
+ * profiles off the same CSV, prefer {@link profileEquityCurves} (one parse).
+ */
+export function profileEquityCurve(
+  config: BotConfig,
+  csvText: string,
+  key: RiskKey,
+): EquityPoint[] {
+  return profileEquityCurves(config, csvText, [key])[key];
 }
 
 /** Round a metrics object to display precision for storage/UI. */

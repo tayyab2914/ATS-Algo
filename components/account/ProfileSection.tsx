@@ -7,13 +7,14 @@ import { Notice, type NoticeData } from "@/components/ui/Notice";
 import { PasswordField } from "@/components/ui/PasswordField";
 import { TextField } from "@/components/ui/TextField";
 
-type Initial = { username: string; email: string; avatarUrl: string | null };
+type Initial = { username: string; avatarUrl: string | null };
 
 const MAX_AVATAR_BYTES = 1.5 * 1024 * 1024;
 
 /**
- * Profile Information section. Users can change their name, avatar and password.
- * The email address is shown but locked — it can't be edited here.
+ * Profile Information section. Users can change their name, avatar and password
+ * here. The email address has its own section ({@link EmailChangeSection}) because
+ * changing it runs through a two-step verification flow.
  */
 export function ProfileSection({ initial }: { initial: Initial }) {
   const router = useRouter();
@@ -40,7 +41,6 @@ export function ProfileSection({ initial }: { initial: Initial }) {
     event.preventDefault();
     setBanner(null);
 
-    // Email is intentionally omitted — it can't be changed here.
     const body: Record<string, string> = {};
     if (username !== initial.username) body.username = username;
     if (password) body.password = password;
@@ -81,20 +81,6 @@ export function ProfileSection({ initial }: { initial: Initial }) {
 
         <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
           <TextField id="username" label="Username" placeholder="Enter" value={username} onChange={(e) => setUsername(e.target.value)} />
-
-          <div className="flex w-full flex-col gap-1">
-            <TextField
-              id="email"
-              label="Email Address"
-              type="email"
-              value={initial.email}
-              readOnly
-              tabIndex={-1}
-              aria-disabled="true"
-              className="cursor-not-allowed select-none border-line/60 bg-background/40 text-muted focus:border-line/60"
-            />
-            <p className="text-[11px] leading-[16px] text-muted/70">Your email address can&apos;t be changed.</p>
-          </div>
 
           <PasswordField id="password" label="New Password" placeholder="Enter" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} />
 

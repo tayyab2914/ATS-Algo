@@ -4,7 +4,7 @@ import { AppShell } from "@/components/app/AppShell";
 import { TabPreviewSkeleton } from "@/components/app/TabPreviewSkeleton";
 import { BillingSection, type SubscriptionView } from "@/components/billing/BillingSection";
 import { isSubscriptionActive } from "@/lib/billing";
-import { getSession } from "@/lib/auth/session";
+import { getPageAccess } from "@/lib/auth/guards";
 import { prisma } from "@/lib/db";
 
 export const metadata: Metadata = {
@@ -23,7 +23,10 @@ function Header() {
 }
 
 export default async function BillingPage() {
-  const session = await getSession();
+  // getPageAccess is React-cached and also called by AppShell, so reusing it
+  // here (rather than getSession) means the billing load shares one liveness
+  // query instead of running its own on top of the shell's.
+  const { session } = await getPageAccess();
 
   // Guests can browse the plans (picking one sends them to sign in first).
   if (!session) {

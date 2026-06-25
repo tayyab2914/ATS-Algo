@@ -4,6 +4,7 @@ import { AdminOverview, type AdminOverviewData } from "@/components/admin/AdminO
 import { AdminSidebar } from "@/components/admin/AdminSidebar";
 import { BotMenu } from "@/components/admin/BotMenu";
 import { getSession } from "@/lib/auth/session";
+import { isSubscriptionActive } from "@/lib/billing";
 import { prisma } from "@/lib/db";
 
 export const metadata: Metadata = {
@@ -24,32 +25,74 @@ export default async function AdminDashboardPage() {
 
   const thirtyDaysAgo = cutoffDaysAgo(30);
 
-  const [totalBots, activeBots, users, subscribers, newSignups, byCategoryRaw, byRiskRaw, topBotsRaw, revisionsRaw, signupsRaw] =
-    await Promise.all([
-      prisma.bot.count(),
-      prisma.bot.count({ where: { status: "ACTIVE" } }),
-      prisma.user.count({ where: { role: "USER" } }),
-      prisma.subscription.count({ where: { status: "ACTIVE" } }),
-      prisma.user.count({ where: { role: "USER", createdAt: { gte: thirtyDaysAgo } } }),
-      prisma.bot.groupBy({ by: ["category"], _count: { _all: true } }),
-      prisma.bot.groupBy({ by: ["riskClass"], _count: { _all: true } }),
-      prisma.bot.findMany({
-        orderBy: [{ profitFactor: "desc" }, { winRate: "desc" }],
-        take: 5,
-        select: { id: true, name: true, category: true, winRate: true, profitFactor: true, d30: true },
-      }),
-      prisma.botRevision.findMany({
-        orderBy: { createdAt: "desc" },
-        take: 6,
-        include: { bot: { select: { id: true, name: true } } },
-      }),
-      prisma.user.findMany({
-        where: { role: "USER" },
-        orderBy: { createdAt: "desc" },
-        take: 5,
-        select: { id: true, name: true, email: true, createdAt: true },
-      }),
-    ]);
+  const [
+    totalBots,
+    activeBots,
+    users,
+    subscribers,
+    newSignups,
+    byCategoryRaw,
+    byRiskRaw,
+    topBotsRaw,
+    revisionsRaw,
+    signupsRaw,
+    canceledCount,
+    pastDueCount,
+    notRenewingCount,
+    churnRaw,
+  ] = await Promise.all([
+    prisma.bot.count(),
+    prisma.bot.count({ where: { status: "ACTIVE" } }),
+    prisma.user.count({ where: { role: "USER" } }),
+    prisma.subscription.count({ where: { status: "ACTIVE" } }),
+    prisma.user.count({ where: { role: "USER", createdAt: { gte: thirtyDaysAgo } } }),
+    prisma.bot.groupBy({ by: ["category"], _count: { _all: true } }),
+    prisma.bot.groupBy({ by: ["riskClass"], _count: { _all: true } }),
+    prisma.bot.findMany({
+      orderBy: [{ profitFactor: "desc" }, { winRate: "desc" }],
+      take: 5,
+      select: { id: true, name: true, category: true, winRate: true, profitFactor: true, d30: true },
+    }),
+    prisma.botRevision.findMany({
+      orderBy: { createdAt: "desc" },
+      take: 6,
+      include: { bot: { select: { id: true, name: true } } },
+    }),
+    prisma.user.findMany({
+      where: { role: "USER" },
+      orderBy: { createdAt: "desc" },
+      take: 5,
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        createdAt: true,
+        subscription: { select: { status: true, isComp: true, currentPeriodEnd: true } },
+      },
+    }),
+    // Subscriptions that ended (cancelled / unpaid), are failing to renew
+    // (past due), or are set to lapse at period end.
+    prisma.subscription.count({ where: { status: { in: ["CANCELED", "INCOMPLETE_EXPIRED"] } } }),
+    prisma.subscription.count({ where: { status: { in: ["PAST_DUE", "UNPAID"] } } }),
+    prisma.subscription.count({ where: { status: "ACTIVE", cancelAtPeriodEnd: true } }),
+    prisma.subscription.findMany({
+      where: {
+        OR: [
+          { status: { in: ["CANCELED", "INCOMPLETE_EXPIRED", "PAST_DUE", "UNPAID"] } },
+          { status: "ACTIVE", cancelAtPeriodEnd: true },
+        ],
+      },
+      orderBy: { updatedAt: "desc" },
+      take: 5,
+      select: {
+        id: true,
+        status: true,
+        cancelAtPeriodEnd: true,
+        currentPeriodEnd: true,
+        user: { select: { name: true, email: true } },
+      },
+    }),
+  ]);
 
   const data: AdminOverviewData = {
     activeBots,
@@ -70,7 +113,30 @@ export default async function AdminDashboardPage() {
       message: r.message,
       date: shortDate(r.createdAt),
     })),
-    signups: signupsRaw.map((u) => ({ id: u.id, name: u.name || u.email, date: shortDate(u.createdAt) })),
+    signups: signupsRaw.map((u) => ({
+      id: u.id,
+      name: u.name || u.email,
+      date: shortDate(u.createdAt),
+      type: isSubscriptionActive(u.subscription) ? ("member" as const) : ("guest" as const),
+    })),
+    churn: {
+      canceled: canceledCount,
+      pastDue: pastDueCount,
+      notRenewing: notRenewingCount,
+      recent: churnRaw.map((s) => ({
+        id: s.id,
+        name: s.user.name?.trim() || s.user.email,
+        email: s.user.email,
+        // A still-active row in this list is one set to cancel at period end.
+        status:
+          s.status === "ACTIVE" && s.cancelAtPeriodEnd
+            ? ("notRenewing" as const)
+            : s.status === "PAST_DUE" || s.status === "UNPAID"
+              ? ("pastDue" as const)
+              : ("canceled" as const),
+        date: s.currentPeriodEnd ? shortDate(s.currentPeriodEnd) : "—",
+      })),
+    },
   };
 
   return (

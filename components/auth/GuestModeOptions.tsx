@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { AuthMode } from "@/lib/auth-config";
 import { GUEST_TRIAL_DAYS } from "@/lib/guest";
 
 function RocketIcon() {
@@ -29,15 +30,29 @@ function CrownIcon() {
   );
 }
 
+/** Per-surface copy for the Guest path; the credential form sits right below. */
+const GUEST_COPY: Record<AuthMode, { title: string; body: string }> = {
+  login: {
+    title: "Log in as Guest",
+    body: `Explore free for ${GUEST_TRIAL_DAYS} days, no card required — sign in below.`,
+  },
+  signup: {
+    title: "Sign up as Guest",
+    body: `Get ${GUEST_TRIAL_DAYS} days free, no card required — create your account below.`,
+  },
+};
+
 /**
- * The two paths offered on the login page:
- *  - Log in as Guest — the credential form right below grants a free, read-only
- *    {@link GUEST_TRIAL_DAYS}-day trial. This card just frames that choice.
+ * The two paths offered on the login and signup cards:
+ *  - Guest — the credential form right below grants a free, read-only
+ *    {@link GUEST_TRIAL_DAYS}-day trial (the clock starts on first login). This
+ *    card just frames that choice; the wording adapts to {@link AuthMode}.
  *  - Become a Member — routes to Billing to pick a paid plan (full access).
  *
- * Rendered above the login form so the choice is the first thing a visitor sees.
+ * Rendered above the form so the choice is the first thing a visitor sees.
  */
-export function GuestModeOptions() {
+export function GuestModeOptions({ mode = "login" }: { mode?: AuthMode }) {
+  const guest = GUEST_COPY[mode];
   return (
     <div className="flex w-full flex-col gap-3">
       <div className="flex flex-col gap-2 rounded-2xl border border-accent/40 bg-accent/10 p-3">
@@ -46,10 +61,8 @@ export function GuestModeOptions() {
             <RocketIcon />
           </span>
           <div className="flex flex-col">
-            <span className="text-sm font-semibold text-white">Log in as Guest</span>
-            <span className="text-xs leading-[18px] text-muted">
-              Explore free for {GUEST_TRIAL_DAYS} days, no card required — sign in below.
-            </span>
+            <span className="text-sm font-semibold text-white">{guest.title}</span>
+            <span className="text-xs leading-[18px] text-muted">{guest.body}</span>
           </div>
         </div>
       </div>

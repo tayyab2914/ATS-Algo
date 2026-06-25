@@ -48,13 +48,25 @@ export function AdminAccessCard({ initialEmail = "" }: { initialEmail?: string }
       setCode("");
       setBanner({
         type: "success",
-        message: "If that email belongs to an admin, a 4-digit code is on its way. Check your inbox.",
+        // Echo the address so the admin can immediately spot a typo, while the
+        // conditional phrasing still avoids confirming who the admins are.
+        message: `If ${email.trim()} belongs to an admin, a 4-digit code is on its way. Check your inbox.`,
       });
     } catch {
       setBanner({ type: "error", message: "Network error. Please try again." });
     } finally {
       setPending(false);
     }
+  }
+
+  /**
+   * Return to the email step to correct a wrong address. Keeps the typed email
+   * so it can be edited (not retyped) and drops the now-stale code/banner.
+   */
+  function changeEmail() {
+    setStep("request");
+    setCode("");
+    setBanner(null);
   }
 
   async function submitRequest(event: FormEvent<HTMLFormElement>) {
@@ -125,6 +137,17 @@ export function AdminAccessCard({ initialEmail = "" }: { initialEmail?: string }
           <div className="flex w-full flex-col gap-2">
             <span className="text-xs leading-[18px] text-muted">Verification Code</span>
             <PinInput length={4} onChange={setCode} />
+            <p className="text-xs leading-[18px] text-muted">
+              Code sent to <span className="font-medium text-white">{email.trim()}</span>.{" "}
+              <button
+                type="button"
+                onClick={changeEmail}
+                disabled={pending}
+                className="text-accent underline-offset-4 transition-colors hover:underline disabled:opacity-60"
+              >
+                Change email
+              </button>
+            </p>
           </div>
 
           <Button type="submit" variant="primary" disabled={pending}>

@@ -7,9 +7,13 @@ import { prisma } from "@/lib/db";
 import { profileSchema } from "@/lib/validation";
 
 /**
- * Update the signed-in user's profile (username, password, avatar).
- * Email is intentionally immutable here and is never updated, even if sent.
- * Members only — a guest's account is read-only until they upgrade.
+ * Update the signed-in user's profile (username, password, avatar). Members
+ * only — a guest's account is read-only until they upgrade.
+ *
+ * The email address is deliberately NOT updatable here. Changing it is a
+ * security-sensitive operation that runs through its own two-step verification
+ * flow (codes to both the current and new address) under
+ * /api/account/email-change — see lib/auth/email-change.ts.
  */
 export async function PATCH(request: NextRequest) {
   const access = await requireMember();
@@ -20,8 +24,8 @@ export async function PATCH(request: NextRequest) {
   if (!parsed.success) return zodFail(parsed.error);
 
   const { username, password, avatarUrl } = parsed.data;
-  const data: Record<string, unknown> = {};
 
+  const data: Record<string, unknown> = {};
   if (username) data.name = username;
   if (avatarUrl) data.avatarUrl = avatarUrl;
   if (password) data.passwordHash = await hashPassword(password);
@@ -29,5 +33,6 @@ export async function PATCH(request: NextRequest) {
   if (Object.keys(data).length === 0) return fail("Nothing to update", 400);
 
   const user = await prisma.user.update({ where: { id: session.sub }, data });
+
   return ok({ user: toPublicUser(user) });
 }

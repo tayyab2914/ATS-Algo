@@ -4,16 +4,15 @@ import { notFound, redirect } from "next/navigation";
 import { AdminSidebar } from "@/components/admin/AdminSidebar";
 import { PencilIcon } from "@/components/admin/admin-icons";
 import { EquityChart } from "@/components/bot-library/EquityChart";
-import { profileEquityCurve, RISK_TO_PROFILE, type BotConfig, type RiskKey } from "@/lib/backtest/engine";
+import { profileEquityCurves, RISK_TO_PROFILE, type BotConfig, type RiskKey } from "@/lib/backtest/engine";
 import { getSession } from "@/lib/auth/session";
 import { cn } from "@/lib/cn";
 import { prisma } from "@/lib/db";
+import { RISK_LABEL, RISK_TEXT_CLASS, riskBadgeClass } from "@/lib/risk";
 
 export const metadata: Metadata = {
   title: "Bot Details · ATS-ALGO",
 };
-
-const RISK_LABEL = { LOW: "Low", MEDIUM: "Medium", HIGH: "High" } as const;
 
 const signedPct = (x: number) => `${x >= 0 ? "+" : ""}${x.toFixed(2)}%`;
 const tone = (x: number): Tone => (x >= 0 ? "success" : "danger");
@@ -24,9 +23,34 @@ export default async function ViewBotPage({ params }: { params: Promise<{ id: st
   if (session.role !== "ADMIN") redirect("/dashboard");
 
   const { id } = await params;
+  // Select only what this view renders — notably skipping the heavy `results`
+  // JSON, which is never read here.
   const bot = await prisma.bot.findUnique({
     where: { id },
-    include: { revisions: { orderBy: { createdAt: "desc" } } },
+    select: {
+      id: true,
+      name: true,
+      ticker: true,
+      exchange: true,
+      assetType: true,
+      category: true,
+      riskClass: true,
+      timeframe: true,
+      config: true,
+      csvData: true,
+      trades: true,
+      winRate: true,
+      profitFactor: true,
+      totalReturn: true,
+      d30: true,
+      d90: true,
+      d180: true,
+      d360: true,
+      revisions: {
+        orderBy: { createdAt: "desc" },
+        select: { id: true, message: true, createdAt: true },
+      },
+    },
   });
   if (!bot) notFound();
 
@@ -80,7 +104,7 @@ export default async function ViewBotPage({ params }: { params: Promise<{ id: st
         <header className="flex flex-col gap-1">
           <h1 className="text-2xl font-semibold leading-[31px] text-white sm:text-3xl">{bot.name}</h1>
           <p className="text-sm leading-[21px] text-muted">
-            {subtitle || "—"} · <span className="text-white">{RISK_LABEL[bot.riskClass]}</span> risk · {bot.timeframe}
+            {subtitle || "—"} · <span className={cn("font-semibold", RISK_TEXT_CLASS[bot.riskClass])}>{RISK_LABEL[bot.riskClass]}</span> risk · {bot.timeframe}
           </p>
         </header>
 
@@ -93,7 +117,16 @@ export default async function ViewBotPage({ params }: { params: Promise<{ id: st
 
         {/* equity */}
         {equity ? (
-          <EquityChart curve={equity.curve} safe={equity.safe} months={equity.months} />
+          <EquityChart
+            curve={equity.curve}
+            months={equity.months}
+            periods={[
+              { key: "30", label: "30D", points: 3, value: signedPct(bot.d30) },
+              { key: "90", label: "90D", points: 4, value: signedPct(bot.d90) },
+              { key: "180", label: "180D", points: 6, value: signedPct(bot.d180) },
+              { key: "360", label: "360D", points: equity.curve.length, value: signedPct(bot.d360) },
+            ]}
+          />
         ) : (
           <section className="rounded-2xl border border-line bg-surface p-6 text-sm text-muted">
             Not enough trade history to chart the equity curve.
@@ -139,7 +172,7 @@ export default async function ViewBotPage({ params }: { params: Promise<{ id: st
         <section className="rounded-2xl border border-line bg-surface p-4 sm:p-6">
           <div className="mb-4 flex items-center gap-3">
             <h2 className="text-base font-semibold text-white">Bot Trading Metrics</h2>
-            <span className="rounded-full bg-accent/10 px-2.5 py-1 text-xs font-semibold text-accent">
+            <span className={cn("rounded-full px-2.5 py-1 text-xs font-semibold", riskBadgeClass(bot.riskClass))}>
               {RISK_LABEL[bot.riskClass]} profile
             </span>
           </div>
@@ -214,13 +247,27 @@ function StatTile({ label, value, tone = "default" }: Stat) {
  * Returns null when there isn't enough trade history to draw anything.
  */
 function buildEquity(config: BotConfig, csv: string, riskKey: RiskKey) {
-  const selected = profileEquityCurve(config, csv, riskKey);
-  const safe = profileEquityCurve(config, csv, "safe");
-  const times = [...selected, ...safe].map((p) => p.time);
-  if (times.length === 0) return null;
+  // Trade construction is profile-independent, so build both curves from a
+  // single parse rather than re-parsing the CSV per profile.
+  const keys: RiskKey[] = riskKey === "safe" ? ["safe"] : [riskKey, "safe"];
+  const curves = profileEquityCurves(config, csv, keys);
+  const selected = curves[riskKey];
+  const safe = curves.safe;
 
-  const start = new Date(Math.min(...times));
-  const end = new Date(Math.max(...times));
+  let minTime = Infinity;
+  let maxTime = -Infinity;
+  for (const p of selected) {
+    if (p.time < minTime) minTime = p.time;
+    if (p.time > maxTime) maxTime = p.time;
+  }
+  for (const p of safe) {
+    if (p.time < minTime) minTime = p.time;
+    if (p.time > maxTime) maxTime = p.time;
+  }
+  if (!Number.isFinite(minTime)) return null;
+
+  const start = new Date(minTime);
+  const end = new Date(maxTime);
   const span = (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth()) + 1;
   const n = Math.min(12, Math.max(1, span));
 

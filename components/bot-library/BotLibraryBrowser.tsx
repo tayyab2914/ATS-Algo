@@ -11,14 +11,8 @@ import {
   signedPct,
   type BotRow,
   type Category,
-  type RiskClass,
 } from "@/lib/bot-library";
-
-const RISK_BADGE: Record<RiskClass, string> = {
-  Low: "bg-success/10 text-success",
-  Medium: "bg-accent/10 text-accent",
-  High: "bg-[#D2031E]/10 text-[#D2031E]",
-};
+import { RISK_ORDER, riskBadgeClass, toRiskLevel } from "@/lib/risk";
 
 const PERF_TONE: Record<"muted" | "success" | "danger", string> = {
   muted: "font-normal text-muted",
@@ -26,20 +20,56 @@ const PERF_TONE: Record<"muted" | "success" | "danger", string> = {
   danger: "font-semibold text-[#D2031E]",
 };
 
-const COLUMNS = [
-  "Bot Name",
-  "Timeframe",
-  "Risk Class",
-  "Win Rate",
-  "PF",
-  "30 Days",
-  "90 Days",
-  "180 Days",
-  "360 Days",
-  "Avg. Trade",
-  "Users",
-  "Action",
-] as const;
+/** Sort accessor key for each sortable column; `null` columns aren't sortable. */
+type SortKey =
+  | "name"
+  | "timeframe"
+  | "risk"
+  | "winRate"
+  | "pf"
+  | "d30"
+  | "d90"
+  | "d180"
+  | "d360"
+  | "avgTrade"
+  | "users";
+
+const COLUMNS: { label: string; sort: SortKey | null }[] = [
+  { label: "Bot Name", sort: "name" },
+  { label: "Timeframe", sort: "timeframe" },
+  { label: "Risk Class", sort: "risk" },
+  { label: "Win Rate", sort: "winRate" },
+  { label: "PF", sort: "pf" },
+  { label: "30 Days", sort: "d30" },
+  { label: "90 Days", sort: "d90" },
+  { label: "180 Days", sort: "d180" },
+  { label: "360 Days", sort: "d360" },
+  { label: "Avg. Trade", sort: "avgTrade" },
+  { label: "Users", sort: "users" },
+  { label: "Action", sort: null },
+];
+
+type SortState = { key: SortKey; dir: "asc" | "desc" };
+
+/** Compare two rows by `key`, honouring direction; null perf values sink last. */
+function compareRows(a: BotRow, b: BotRow, key: SortKey, dir: "asc" | "desc"): number {
+  const mul = dir === "asc" ? 1 : -1;
+  if (key === "d30" || key === "d90" || key === "d180" || key === "d360") {
+    const av = a[key];
+    const bv = b[key];
+    if (av === null && bv === null) return 0;
+    if (av === null) return 1; // nulls always last, regardless of direction
+    if (bv === null) return -1;
+    return (av - bv) * mul;
+  }
+  if (key === "name" || key === "timeframe") {
+    return a[key].localeCompare(b[key]) * mul;
+  }
+  if (key === "risk") {
+    return (RISK_ORDER[toRiskLevel(a.risk)] - RISK_ORDER[toRiskLevel(b.risk)]) * mul;
+  }
+  return ((a[key] as number) - (b[key] as number)) * mul;
+}
 
 function SearchIcon() {
   return (
@@ -62,15 +92,27 @@ function PerfCell({ value }: { value: number | null }) {
 export function BotLibraryBrowser({ bots }: { bots: Record<Category, BotRow[]> }) {
   const [category, setCategory] = useState<Category>("crypto");
   const [query, setQuery] = useState("");
+  const [sort, setSort] = useState<SortState | null>(null);
+
+  // Clicking a header sorts by it ascending (alphabetical / low→high); clicking
+  // the same header again flips to descending.
+  function toggleSort(key: SortKey) {
+    setSort((prev) =>
+      prev && prev.key === key
+        ? { key, dir: prev.dir === "asc" ? "desc" : "asc" }
+        : { key, dir: "asc" },
+    );
+  }
 
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
     const list = bots[category] ?? [];
-    if (!q) return list;
-    return list.filter(
-      (b) => b.name.toLowerCase().includes(q) || b.pair.toLowerCase().includes(q),
-    );
-  }, [bots, category, query]);
+    const filtered = q
+      ? list.filter((b) => b.name.toLowerCase().includes(q) || b.pair.toLowerCase().includes(q))
+      : list;
+    if (!sort) return filtered;
+    return [...filtered].sort((a, b) => compareRows(a, b, sort.key, sort.dir));
+  }, [bots, category, query, sort]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -116,17 +158,36 @@ export function BotLibraryBrowser({ bots }: { bots: Record<Category, BotRow[]> }
           <table className="w-full min-w-[1040px] border-collapse">
             <thead>
               <tr className="border-b border-line">
-                {COLUMNS.map((label, i) => (
-                  <th
-                    key={label}
-                    className={cn(
-                      "px-4 py-4 text-xs font-semibold leading-[18px] text-muted",
-                      i === 0 ? "text-left" : "text-center",
-                    )}
-                  >
-                    {label}
-                  </th>
-                ))}
+                {COLUMNS.map((col, i) => {
+                  const active = sort?.key === col.sort;
+                  const align = i === 0 ? "text-left" : "text-center";
+                  return (
+                    <th
+                      key={col.label}
+                      aria-sort={active ? (sort!.dir === "asc" ? "ascending" : "descending") : undefined}
+                      className={cn("px-4 py-4 text-xs font-semibold leading-[18px] text-muted", align)}
+                    >
+                      {col.sort ? (
+                        <button
+                          type="button"
+                          onClick={() => toggleSort(col.sort!)}
+                          className={cn(
+                            "inline-flex items-center gap-1 transition-colors hover:text-white",
+                            i === 0 ? "justify-start" : "justify-center",
+                            active && "text-white",
+                          )}
+                        >
+                          {col.label}
+                          <span aria-hidden className="text-[10px] leading-none">
+                            {active ? (sort!.dir === "asc" ? "▲" : "▼") : "↕"}
+                          </span>
+                        </button>
+                      ) : (
+                        col.label
+                      )}
+                    </th>
+                  );
+                })}
               </tr>
             </thead>
             <tbody>
@@ -145,7 +206,7 @@ export function BotLibraryBrowser({ bots }: { bots: Record<Category, BotRow[]> }
                     <span
                       className={cn(
                         "inline-flex items-center rounded-full px-2.5 py-[3.5px] text-sm font-semibold",
-                        RISK_BADGE[bot.risk],
+                        riskBadgeClass(bot.risk),
                       )}
                     >
                       {bot.risk}

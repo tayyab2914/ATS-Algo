@@ -5,7 +5,7 @@ import { AppShell } from "@/components/app/AppShell";
 import { AddToMyBotsButton } from "@/components/bot-library/AddToMyBotsButton";
 import { EquityChart } from "@/components/bot-library/EquityChart";
 import { blockExpiredGuest, getPageAccess } from "@/lib/auth/guards";
-import { getBotDetail, type StatTone } from "@/lib/bot-library";
+import { getBotDetail, signedPct, type StatTone } from "@/lib/bot-library";
 import { cn } from "@/lib/cn";
 
 const TONE: Record<StatTone, string> = {
@@ -45,6 +45,15 @@ export default async function BotDetailPage({ params }: PageProps<"/bot-library/
   const { session, tier, entitled } = await getPageAccess();
   blockExpiredGuest(tier);
 
+  // Interactive time windows for the equity chart — each trims the curve and
+  // shows that window's headline return as the "current" value.
+  const equityPeriods = [
+    { key: "30", label: "30D", points: 3, value: signedPct(detail.row.d30) },
+    { key: "90", label: "90D", points: 4, value: signedPct(detail.row.d90) },
+    { key: "180", label: "180D", points: 6, value: signedPct(detail.row.d180) },
+    { key: "360", label: "360D", points: detail.equityCurve.length, value: signedPct(detail.row.d360) },
+  ];
+
   return (
     <AppShell>
       {/* top bar */}
@@ -73,47 +82,50 @@ export default async function BotDetailPage({ params }: PageProps<"/bot-library/
       </div>
 
       {/* equity */}
-      <EquityChart curve={detail.equityCurve} safe={detail.equitySafe} months={detail.equityMonths} />
+      <EquityChart curve={detail.equityCurve} months={detail.equityMonths} periods={equityPeriods} />
 
-      {/* trade profile */}
-      <section className="rounded-2xl border border-line bg-surface p-4 sm:p-6">
-        <h2 className="mb-4 text-base font-semibold text-white">Trade Profile</h2>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[480px] border-collapse">
-            <thead>
-              <tr className="border-b border-line text-xs font-semibold text-muted">
-                <th className="px-2 py-3 text-left">Take Profit</th>
-                <th className="px-2 py-3 text-left">Target</th>
-                <th className="px-2 py-3 text-right">Allocation</th>
-              </tr>
-            </thead>
-            <tbody>
-              {detail.tradeProfile.map((tp) => (
-                <tr key={tp.label} className="border-b border-line last:border-b-0">
-                  <td className="px-2 py-4 text-sm font-semibold text-white">{tp.label}</td>
-                  <td className="px-2 py-4 text-sm font-semibold text-success">{tp.target}</td>
-                  <td className="px-2 py-4 text-right text-sm text-muted">{tp.allocation}</td>
+      {/* trade profile + trading metrics, side by side */}
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+        {/* trade profile */}
+        <section className="rounded-2xl border border-line bg-surface p-4 sm:p-6">
+          <h2 className="mb-4 text-base font-semibold text-white">Trade Profile</h2>
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse">
+              <thead>
+                <tr className="border-b border-line text-xs font-semibold text-muted">
+                  <th className="px-2 py-3 text-left">Take Profit</th>
+                  <th className="px-2 py-3 text-left">Target</th>
+                  <th className="px-2 py-3 text-right">Allocation</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
+              </thead>
+              <tbody>
+                {detail.tradeProfile.map((tp) => (
+                  <tr key={tp.label} className="border-b border-line last:border-b-0">
+                    <td className="px-2 py-4 text-sm font-semibold text-white">{tp.label}</td>
+                    <td className="px-2 py-4 text-sm font-semibold text-success">{tp.target}</td>
+                    <td className="px-2 py-4 text-right text-sm text-muted">{tp.allocation}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
 
-      {/* trading metrics */}
-      <section className="rounded-2xl border border-line bg-surface p-4 sm:p-6">
-        <div className="mb-4 flex items-center gap-3">
-          <h2 className="text-base font-semibold text-white">Bot Trading Metrics</h2>
-          <span className="rounded-full bg-accent/10 px-2.5 py-1 text-xs font-semibold text-accent">
-            360-Day-Period
-          </span>
-        </div>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-          {detail.metrics.map((m) => (
-            <StatTile key={m.label} {...m} />
-          ))}
-        </div>
-      </section>
+        {/* trading metrics */}
+        <section className="rounded-2xl border border-line bg-surface p-4 sm:p-6">
+          <div className="mb-4 flex items-center gap-3">
+            <h2 className="text-base font-semibold text-white">Bot Trading Metrics</h2>
+            <span className="rounded-full bg-accent/10 px-2.5 py-1 text-xs font-semibold text-accent">
+              360-Day-Period
+            </span>
+          </div>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            {detail.metrics.map((m) => (
+              <StatTile key={m.label} {...m} />
+            ))}
+          </div>
+        </section>
+      </div>
 
       {/* strategy timeline */}
       <section className="rounded-2xl border border-line bg-surface p-4 sm:p-6">

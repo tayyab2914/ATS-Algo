@@ -66,6 +66,30 @@ export function BotEditor({ bot, categories }: { bot: BotEditorData; categories:
   const jsonRef = useRef<HTMLInputElement>(null);
   const csvRef = useRef<HTMLInputElement>(null);
 
+  // Any edited field counts as a change — including metadata-only edits like
+  // switching the category, which previously left Save disabled with no reason.
+  const dirty =
+    name !== bot.name ||
+    category !== bot.category ||
+    timeframe !== bot.timeframe ||
+    riskClass !== bot.riskClass ||
+    configChanged ||
+    csvChanged;
+  // A fresh backtest is only required when the config or CSV changed; a
+  // metadata-only edit can save against the existing (mount-time) metrics.
+  const needsRerun = (configChanged || csvChanged) && !result;
+  const saveDisabled = pending || !dirty || needsRerun || !message.trim();
+  // Tell the admin exactly why Save is unavailable instead of showing a dead button.
+  const saveHint = pending
+    ? null
+    : !dirty
+      ? "No changes to save yet"
+      : needsRerun
+        ? "Re-run the backtest before saving"
+        : !message.trim()
+          ? "Add a change note to save"
+          : null;
+
   async function onJsonPicked(file: File) {
     setNotice(null);
     try {
@@ -268,14 +292,17 @@ export function BotEditor({ bot, categories }: { bot: BotEditorData; categories:
           >
             Cancel
           </button>
-          <button
-            type="button"
-            disabled={pending || !result || !message.trim()}
-            onClick={save}
-            className="rounded-2xl bg-accent px-5 py-2 text-sm font-semibold text-[#121212] transition-transform hover:-translate-y-0.5 disabled:opacity-50"
-          >
-            {pending ? "Saving…" : "Save Changes"}
-          </button>
+          <div className="flex items-center gap-3">
+            {saveHint && <span className="text-xs text-muted">{saveHint}</span>}
+            <button
+              type="button"
+              disabled={saveDisabled}
+              onClick={save}
+              className="rounded-2xl bg-accent px-5 py-2 text-sm font-semibold text-[#121212] transition-transform hover:-translate-y-0.5 disabled:opacity-50"
+            >
+              {pending ? "Saving…" : "Save Changes"}
+            </button>
+          </div>
         </div>
       </div>
     </AdminCard>
@@ -297,19 +324,37 @@ function ReplaceTile({
   inputRef: React.RefObject<HTMLInputElement | null>;
   onPick: (file: File) => void;
 }) {
+  const [dragging, setDragging] = useState(false);
   return (
     <div className="flex flex-col gap-2">
       <span className={labelCls}>{label}</span>
       <button
         type="button"
         onClick={() => inputRef.current?.click()}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragging(true);
+        }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragging(false);
+          const f = e.dataTransfer.files?.[0];
+          if (f) onPick(f);
+        }}
         className={cn(
           "flex items-center justify-between gap-4 rounded-2xl border border-dashed px-5 py-6 text-left transition-colors",
-          changed ? "border-accent/50 bg-accent/5" : "border-line bg-background hover:border-accent/40",
+          dragging
+            ? "border-accent bg-accent/10 ring-1 ring-accent/40"
+            : changed
+              ? "border-accent/50 bg-accent/5"
+              : "border-line bg-background hover:border-accent/40",
         )}
       >
         <span className="flex flex-col gap-1">
-          <span className="text-sm font-semibold text-white">{changed ? "New file loaded" : "Click to replace"}</span>
+          <span className="text-sm font-semibold text-white">
+            {dragging ? "Drop the file to replace" : changed ? "New file loaded" : "Click or drag to replace"}
+          </span>
           <span className="text-xs text-muted">{hint}</span>
         </span>
         {changed && (

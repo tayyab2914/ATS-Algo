@@ -20,6 +20,17 @@ const inputCls =
   "h-[42px] w-full rounded-lg border border-line bg-background px-3 text-sm text-white placeholder:text-muted focus:border-accent/60 focus:outline-none";
 const labelCls = "text-xs leading-[18px] text-muted";
 
+/**
+ * Derive the bot name from the JSON `name`, dropping any standalone "bot" word
+ * (case-insensitive) and collapsing leftover whitespace — e.g. "AAPL Bot" → "AAPL",
+ * "Crypto Bot Pro" → "Crypto Pro". Falls back to the raw name if stripping would
+ * empty it (e.g. the JSON name was literally "Bot"), so the field is never blanked.
+ */
+function cleanBotName(raw: string): string {
+  const cleaned = raw.replace(/\bbot\b/gi, " ").replace(/\s+/g, " ").trim();
+  return cleaned || raw.trim();
+}
+
 export function BotWizard({ categories }: { categories: string[] }) {
   const router = useRouter();
   const [step, setStep] = useState(0);
@@ -48,7 +59,7 @@ export function BotWizard({ categories }: { categories: string[] }) {
         return;
       }
       setConfig(parsed);
-      setName((n) => n || (parsed.name ? `${parsed.name} Bot` : ""));
+      setName((n) => n || (parsed.name ? cleanBotName(parsed.name) : ""));
       setTimeframe((t) => t || (parsed.timeframe ? `${parsed.timeframe}m` : ""));
       if (parsed.type && categories.some((c) => c.toLowerCase() === parsed.type!.toLowerCase())) {
         setCategory((c) => c || categories.find((x) => x.toLowerCase() === parsed.type!.toLowerCase())!);
@@ -142,7 +153,7 @@ export function BotWizard({ categories }: { categories: string[] }) {
               <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
                 <label className="flex flex-col gap-2">
                   <span className={labelCls}>Bot Name</span>
-                  <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Alpha BTC Bot" className={inputCls} />
+                  <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Alpha BTC" className={inputCls} />
                 </label>
                 <label className="flex flex-col gap-2">
                   <span className={labelCls}>Timeframe</span>
@@ -257,19 +268,37 @@ function UploadTile({
   inputRef: React.RefObject<HTMLInputElement | null>;
   onPick: (file: File) => void;
 }) {
+  const [dragging, setDragging] = useState(false);
   return (
     <div className="flex flex-col gap-2">
       <span className={labelCls}>{label}</span>
       <button
         type="button"
         onClick={() => inputRef.current?.click()}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragging(true);
+        }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragging(false);
+          const f = e.dataTransfer.files?.[0];
+          if (f) onPick(f);
+        }}
         className={cn(
           "flex items-center justify-between gap-4 rounded-2xl border border-dashed px-5 py-8 text-left transition-colors",
-          done ? "border-accent/50 bg-accent/5" : "border-line bg-background hover:border-accent/40",
+          dragging
+            ? "border-accent bg-accent/10 ring-1 ring-accent/40"
+            : done
+              ? "border-accent/50 bg-accent/5"
+              : "border-line bg-background hover:border-accent/40",
         )}
       >
         <span className="flex flex-col gap-1">
-          <span className="text-sm font-semibold text-white">{done ? "File loaded" : "Click to choose a file"}</span>
+          <span className="text-sm font-semibold text-white">
+            {dragging ? "Drop the file to upload" : done ? "File loaded" : "Click or drag a file here"}
+          </span>
           <span className="text-xs text-muted">{hint}</span>
         </span>
         {done && (

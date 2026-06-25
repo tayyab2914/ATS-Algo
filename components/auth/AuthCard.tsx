@@ -36,7 +36,7 @@ export function AuthCard({
         <p className="text-xs leading-[18px] text-muted">{copy.subtitle}</p>
       </header>
 
-      {mode === "login" && <GuestModeOptions />}
+      <GuestModeOptions mode={mode} />
 
       <AuthForm mode={mode} notice={notice} next={next} initialEmail={initialEmail} lockEmail={lockEmail} />
     </div>

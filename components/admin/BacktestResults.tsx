@@ -6,6 +6,7 @@ import {
   type RiskClass,
 } from "@/lib/backtest/engine";
 import { cn } from "@/lib/cn";
+import { RISK_LABEL, riskBadgeClass } from "@/lib/risk";
 
 /**
  * Shared read-out of a backtest run: a headline row for the selected risk
@@ -53,7 +54,9 @@ export function BacktestResults({
               <td className="px-4 py-4 font-semibold text-white">{name || "—"}</td>
               <td className="px-4 py-4 text-center text-muted">{timeframe || "—"}</td>
               <td className="px-4 py-4 text-center">
-                <span className="rounded-full bg-accent/10 px-2.5 py-1 text-xs font-semibold text-accent">{riskClass}</span>
+                <span className={cn("rounded-full px-2.5 py-1 text-xs font-semibold", riskBadgeClass(riskClass))}>
+                  {RISK_LABEL[riskClass]}
+                </span>
               </td>
               <td className="px-4 py-4 text-center text-white">{m.trades}</td>
               <td className="px-4 py-4 text-center text-white">{m.winRate.toFixed(2)}%</td>

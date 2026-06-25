@@ -18,27 +18,32 @@ export default async function BotManagementPage() {
   if (!session) redirect("/admin");
   if (session.role !== "ADMIN") redirect("/dashboard");
 
-  const [bots, categories] = await Promise.all([
-    prisma.bot.findMany({ orderBy: { createdAt: "desc" } }),
+  // Select only the table columns. Crucially this skips `csvData` (raw signal
+  // CSV — can be megabytes per bot), `config` and `results` (JSON), which the
+  // list never shows but `findMany` would otherwise ship for every row.
+  const [rows, categories]: [BotTableRow[], string[]] = await Promise.all([
+    prisma.bot.findMany({
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        name: true,
+        category: true,
+        ticker: true,
+        timeframe: true,
+        riskClass: true,
+        status: true,
+        trades: true,
+        winRate: true,
+        profitFactor: true,
+        d30: true,
+        d90: true,
+        d180: true,
+        d360: true,
+        avgTrade: true,
+      },
+    }),
     getCategoryNames(),
   ]);
-  const rows: BotTableRow[] = bots.map((b) => ({
-    id: b.id,
-    name: b.name,
-    category: b.category,
-    ticker: b.ticker,
-    timeframe: b.timeframe,
-    riskClass: b.riskClass,
-    status: b.status,
-    trades: b.trades,
-    winRate: b.winRate,
-    profitFactor: b.profitFactor,
-    d30: b.d30,
-    d90: b.d90,
-    d180: b.d180,
-    d360: b.d360,
-    avgTrade: b.avgTrade,
-  }));
 
   return (
     <div className="flex min-h-screen w-full flex-col bg-background text-white lg:flex-row">
