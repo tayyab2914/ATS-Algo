@@ -35,24 +35,33 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   const existing = await prisma.bot.findUnique({ where: { id } });
   if (!existing) return fail("Bot not found", 404);
 
-  // A new config replaces the old one only if it's valid; otherwise reuse it.
   const configProvided = config !== undefined;
-  if (configProvided && (!config || typeof config !== "object" || !config.profiles?.balanced)) {
-    return fail("Config JSON is missing trading profiles (safe / balanced / aggressive).", 422);
-  }
-  const cfg = (configProvided ? config : existing.config) as BotConfig;
+  const csvProvided = csvText !== undefined;
+  const riskChanged = riskClass !== undefined && riskClass !== existing.riskClass;
 
-  const csv = csvText ?? existing.csvData;
-  if (!csv) return fail("This bot has no signal CSV — upload one to re-run the backtest.", 422);
+  // Only re-run the backtest when something that actually moves the metrics
+  // changed (new config, new signals, or a different risk profile). A
+  // metadata-only edit — name, category, timeframe — saves against the existing
+  // stored metrics, so a small change can't be blocked by an unrelated backtest
+  // failure (or by a bot that happens to have no CSV on file).
+  const needsBacktest = configProvided || csvProvided || riskChanged;
 
-  const effectiveRisk = (riskClass ?? existing.riskClass) as RiskClass;
-
-  let metrics;
-  try {
-    metrics = backtestBotColumns(cfg, csv, effectiveRisk);
-  } catch (error) {
-    console.error("Backtest failed:", error);
-    return fail("Backtest failed — check that the CSV matches the expected signal format.", 422);
+  let metrics: ReturnType<typeof backtestBotColumns> | undefined;
+  if (needsBacktest) {
+    // A new config replaces the old one only if it's valid; otherwise reuse it.
+    if (configProvided && (!config || typeof config !== "object" || !config.profiles?.balanced)) {
+      return fail("Config JSON is missing trading profiles (safe / balanced / aggressive).", 422);
+    }
+    const cfg = (configProvided ? config : existing.config) as BotConfig;
+    const csv = csvText ?? existing.csvData;
+    if (!csv) return fail("This bot has no signal CSV — upload one to re-run the backtest.", 422);
+    const effectiveRisk = (riskClass ?? existing.riskClass) as RiskClass;
+    try {
+      metrics = backtestBotColumns(cfg, csv, effectiveRisk);
+    } catch (error) {
+      console.error("Backtest failed:", error);
+      return fail("Backtest failed — check that the CSV matches the expected signal format.", 422);
+    }
   }
 
   const bot = await prisma.bot.update({
@@ -63,10 +72,15 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       ...(timeframe !== undefined ? { timeframe } : {}),
       ...(riskClass !== undefined ? { riskClass } : {}),
       ...(configProvided
-        ? { config, ticker: cfg.ticker ?? null, assetType: cfg.type ?? null, exchange: cfg.exchange ?? null }
+        ? {
+            config,
+            ticker: (config as BotConfig).ticker ?? null,
+            assetType: (config as BotConfig).type ?? null,
+            exchange: (config as BotConfig).exchange ?? null,
+          }
         : {}),
       ...(csvText !== undefined ? { csvData: csvText, csvFilename: csvFilename ?? existing.csvFilename } : {}),
-      ...metrics,
+      ...(metrics ?? {}),
       revisions: { create: { message } },
     },
     select: { id: true, name: true },

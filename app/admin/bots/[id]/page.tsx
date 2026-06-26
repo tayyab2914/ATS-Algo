@@ -71,6 +71,8 @@ export default async function ViewBotPage({ params }: { params: Promise<{ id: st
     { label: "Profit Factor", value: bot.profitFactor.toFixed(2) },
   ];
 
+  const equity = bot.csvData ? buildEquity(config, bot.csvData, riskKey) : null;
+
   const metrics: Stat[] = [
     { label: "Stop Loss", value: profile?.sl != null ? `${profile.sl}%` : "—", tone: "danger" },
     { label: "SL to BE", value: profile?.be ? `TP${profile.be}` : "—" },
@@ -78,9 +80,8 @@ export default async function ViewBotPage({ params }: { params: Promise<{ id: st
     { label: "Trade Count", value: bot.trades.toLocaleString("en-US") },
     { label: "Winrate", value: `${bot.winRate.toFixed(1)}%`, tone: "success" },
     { label: "Net Profit", value: signedPct(bot.totalReturn), tone: tone(bot.totalReturn) },
+    { label: "Maximum Drawdown", value: equity ? `-${equity.maxDrawdown.toFixed(1)}%` : "—", tone: "danger" },
   ];
-
-  const equity = bot.csvData ? buildEquity(config, bot.csvData, riskKey) : null;
 
   return (
     <div className="flex min-h-screen w-full flex-col bg-background text-white lg:flex-row">
@@ -133,11 +134,13 @@ export default async function ViewBotPage({ params }: { params: Promise<{ id: st
           </section>
         )}
 
+        {/* trade profile + trading metrics, side by side */}
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         {/* trade profile */}
         <section className="rounded-2xl border border-line bg-surface p-4 sm:p-6">
           <h2 className="mb-4 text-base font-semibold text-white">Trade Profile</h2>
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[480px] border-collapse">
+            <table className="w-full min-w-70 border-collapse">
               <thead>
                 <tr className="border-b border-line text-xs font-semibold text-muted">
                   <th className="px-2 py-3 text-left">Take Profit</th>
@@ -176,12 +179,13 @@ export default async function ViewBotPage({ params }: { params: Promise<{ id: st
               {RISK_LABEL[bot.riskClass]} profile
             </span>
           </div>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             {metrics.map((m) => (
               <StatTile key={m.label} {...m} />
             ))}
           </div>
         </section>
+        </div>
 
         {/* strategy update / change log */}
         <section className="rounded-2xl border border-line bg-surface p-4 sm:p-6">
@@ -304,5 +308,20 @@ function buildEquity(config: BotConfig, csv: string, riskKey: RiskKey) {
     curve: curveRaw.map(norm),
     safe: safeRaw.map(norm),
     months: buckets.map((b) => b.label),
+    maxDrawdown: maxDrawdownPct(curveRaw),
   };
+}
+
+/**
+ * Largest peak-to-trough decline (%) over a real equity series (1 = start
+ * capital). Tracks the running peak and the deepest fall from it.
+ */
+function maxDrawdownPct(equity: number[]): number {
+  let peak = -Infinity;
+  let maxDD = 0;
+  for (const e of equity) {
+    peak = Math.max(peak, e);
+    if (peak > 0) maxDD = Math.max(maxDD, (peak - e) / peak);
+  }
+  return maxDD * 100;
 }
