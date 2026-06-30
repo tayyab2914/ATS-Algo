@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { DangerAction, PrimaryAction, SettingsCard } from "@/components/account/SettingsCard";
 import { Notice, type NoticeData } from "@/components/ui/Notice";
@@ -8,6 +9,7 @@ import { EXCHANGES, type ExchangeName } from "@/lib/account";
 type Connections = Partial<Record<ExchangeName, { permissions: string }>>;
 
 export function ExchangeSection({ initial }: { initial: Connections }) {
+  const router = useRouter();
   const [connections, setConnections] = useState<Connections>(initial);
   const [adding, setAdding] = useState<ExchangeName | null>(null);
   const [apiKey, setApiKey] = useState("");
@@ -38,6 +40,8 @@ export function ExchangeSection({ initial }: { initial: Connections }) {
       }
       setConnections((prev) => ({ ...prev, [exchange]: { permissions: data.permissions } }));
       setAdding(null);
+      // Re-sync the server-rendered connection list for back/forward navigation.
+      router.refresh();
     } catch {
       setBanner({ type: "error", message: "Network error. Please try again." });
     } finally {
@@ -59,6 +63,7 @@ export function ExchangeSection({ initial }: { initial: Connections }) {
           delete next[exchange];
           return next;
         });
+        router.refresh();
       }
     } finally {
       setPending(false);

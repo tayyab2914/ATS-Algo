@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
 import { guestTrialFrom, guestTrialLabel } from "@/lib/guest";
 import { cn } from "@/lib/cn";
 
@@ -31,18 +32,30 @@ function SparkIcon() {
  * without a refresh and is robust to clock skew between render and view.
  */
 export function GuestTrialBanner({ expiresAt }: { expiresAt: string }) {
+  const router = useRouter();
   const deadline = new Date(expiresAt);
   const [trial, setTrial] = useState(() => guestTrialFrom(deadline));
 
   useEffect(() => {
     // Re-tick every minute; enough for a day/hour countdown without churn.
-    const id = setInterval(() => setTrial(guestTrialFrom(deadline)), 60_000);
+    const id = setInterval(() => setTrial(guestTrialFrom(new Date(expiresAt))), 60_000);
     return () => clearInterval(id);
-    // `expiresAt` is the only input; `deadline` is derived from it.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expiresAt]);
 
   const expired = trial.expired;
+
+  // When the trial elapses DURING a session, the client countdown crosses zero
+  // but the server-side gate (getPageAccess -> blockExpiredGuest) only re-runs on
+  // a request. Without this, an expired guest keeps silent read access to the
+  // open tab until they happen to navigate. Refresh once on the expiry edge so
+  // the server re-evaluates and walls them to Billing immediately.
+  const walledRef = useRef(false);
+  useEffect(() => {
+    if (expired && !walledRef.current) {
+      walledRef.current = true;
+      router.refresh();
+    }
+  }, [expired, router]);
 
   return (
     <div

@@ -1,10 +1,12 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { PrimaryAction, SettingsCard } from "@/components/account/SettingsCard";
 import { cn } from "@/lib/cn";
 
 export function TradingViewSection({ initialConnected }: { initialConnected: boolean }) {
+  const router = useRouter();
   const [connected, setConnected] = useState(initialConnected);
   const [pending, setPending] = useState(false);
 
@@ -16,7 +18,11 @@ export function TradingViewSection({ initialConnected }: { initialConnected: boo
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ target: "tradingview", connected: !connected }),
       });
-      if (res.ok) setConnected((value) => !value);
+      if (res.ok) {
+        setConnected((value) => !value);
+        // Keep the server-rendered badge in sync on back/forward navigation.
+        router.refresh();
+      }
     } finally {
       setPending(false);
     }

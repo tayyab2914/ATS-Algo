@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useMemo, useState, type FormEvent } from "react";
 import { DangerAction, PrimaryAction, SettingsCard } from "@/components/account/SettingsCard";
 import { Notice, type NoticeData } from "@/components/ui/Notice";
@@ -40,6 +41,7 @@ function sortMethods(methods: PaymentMethodView[]): PaymentMethodView[] {
  * validated here but never transmitted or stored.
  */
 export function PaymentMethodsSection({ initial }: { initial: PaymentMethodView[] }) {
+  const router = useRouter();
   const [methods, setMethods] = useState<PaymentMethodView[]>(() => sortMethods(initial));
   const [adding, setAdding] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
@@ -117,6 +119,8 @@ export function PaymentMethodsSection({ initial }: { initial: PaymentMethodView[
       setMethods((prev) => sortMethods([...prev, data.paymentMethod as PaymentMethodView]));
       setBanner({ type: "success", message: "Payment method added." });
       closeForm();
+      // Re-sync the server-rendered list so it survives back/forward navigation.
+      router.refresh();
     } catch {
       setBanner({ type: "error", message: "Network error. Please try again." });
     } finally {
@@ -141,6 +145,7 @@ export function PaymentMethodsSection({ initial }: { initial: PaymentMethodView[
       setMethods((prev) =>
         sortMethods(prev.map((m) => ({ ...m, isDefault: m.id === id }))),
       );
+      router.refresh();
     } catch {
       setBanner({ type: "error", message: "Network error. Please try again." });
     } finally {
@@ -170,6 +175,7 @@ export function PaymentMethodsSection({ initial }: { initial: PaymentMethodView[
             .map((m) => (newDefaultId && m.id === newDefaultId ? { ...m, isDefault: true } : m)),
         ),
       );
+      router.refresh();
     } catch {
       setBanner({ type: "error", message: "Network error. Please try again." });
     } finally {

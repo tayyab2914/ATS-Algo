@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { SettingsCard } from "@/components/account/SettingsCard";
 import { Notice, type NoticeData } from "@/components/ui/Notice";
@@ -11,6 +12,7 @@ import { cn } from "@/lib/cn";
  * require a one-time code emailed to the account address after the password.
  */
 export function TwoFactorSection({ initialEnabled }: { initialEnabled: boolean }) {
+  const router = useRouter();
   const [enabled, setEnabled] = useState(initialEnabled);
   const [pending, setPending] = useState(false);
   const [banner, setBanner] = useState<NoticeData | null>(null);
@@ -26,6 +28,9 @@ export function TwoFactorSection({ initialEnabled }: { initialEnabled: boolean }
       });
       if (res.ok) {
         setEnabled(next);
+        // Re-sync the server-rendered /account payload so the toggle doesn't
+        // revert to its old value on a later back/forward navigation.
+        router.refresh();
         setBanner({
           type: "success",
           message: next

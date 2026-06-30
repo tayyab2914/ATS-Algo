@@ -44,7 +44,10 @@ export async function POST(request: NextRequest) {
       // Stamp the user id onto the subscription so webhook events resolve back
       // to an account without depending on a customer lookup.
       subscription_data: { metadata: { userId: user.id } },
-      success_url: `${base}/billing?status=success&session_id={CHECKOUT_SESSION_ID}`,
+      // Return through a handler that syncs the subscription from Stripe before
+      // /billing renders, so the plan is active immediately rather than only once
+      // the webhook lands. See app/api/billing/return/route.ts.
+      success_url: `${base}/api/billing/return?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${base}/billing?status=cancelled`,
     });
     url = checkout.url;

@@ -147,3 +147,68 @@ export async function syncSubscriptionFromStripe(subscription: Stripe.Subscripti
     update: data,
   });
 }
+
+/**
+ * Belt-and-suspenders activation for the moment a user returns from Checkout.
+ *
+ * Webhooks are authoritative but asynchronous — if one is delayed, mis-signed, or
+ * never reaches this deployment, the user is charged yet sees no plan (and every
+ * gated tab stays locked). So when they land back from Stripe with their checkout
+ * `session_id`, we retrieve that session and sync its subscription immediately,
+ * exactly as the webhook would. Idempotent with the webhook (both upsert the one
+ * row keyed by user); whichever runs first wins and the other is a no-op.
+ *
+ * Scoped to the signed-in user: a session whose `client_reference_id` (stamped at
+ * checkout) doesn't match is ignored, so one user can't activate off another's
+ * checkout. Returns false when there is nothing to sync.
+ */
+export async function reconcileCheckoutSession(sessionId: string, userId: string): Promise<boolean> {
+  const checkout = await stripe().checkout.sessions.retrieve(sessionId);
+  if (checkout.client_reference_id && checkout.client_reference_id !== userId) return false;
+  if (checkout.mode !== "subscription" || !checkout.subscription) return false;
+
+  const subscriptionId =
+    typeof checkout.subscription === "string" ? checkout.subscription : checkout.subscription.id;
+  const subscription = await stripe().subscriptions.retrieve(subscriptionId);
+  await syncSubscriptionFromStripe(subscription);
+  return true;
+}
+
+/**
+ * Self-healing fallback for a user whose cached subscription row is missing or
+ * stale because the activation webhook was never delivered. Given their Stripe
+ * customer, pull the latest subscription state straight from Stripe and sync it,
+ * preferring one that currently grants access over a stale canceled/incomplete
+ * one. This is what repairs an already-charged user who has since navigated away
+ * from the post-checkout page (so has no `session_id` to reconcile against): the
+ * next time they open Billing, their plan settles. No customer, or no
+ * subscriptions on Stripe, means there is genuinely nothing to grant.
+ */
+export async function reconcileSubscriptionFromStripe(customerId: string): Promise<boolean> {
+  const subs = await stripe().subscriptions.list({
+    customer: customerId,
+    status: "all",
+    limit: 100,
+  });
+  if (subs.data.length === 0) return false;
+
+  // Stripe returns newest first. Pick by entitlement priority, not just recency,
+  // so an access-granting subscription always wins over a stale/dead one even if
+  // a newer non-paying sub exists (e.g. an abandoned re-checkout left INCOMPLETE
+  // after the real paid sub). Within a tier, the first (newest) is kept.
+  const RANK: Record<string, number> = {
+    active: 0,
+    trialing: 1,
+    past_due: 2,
+    unpaid: 3,
+    paused: 4,
+    incomplete: 5,
+    canceled: 6,
+    incomplete_expired: 7,
+  };
+  const best = subs.data.reduce((a, b) =>
+    (RANK[b.status] ?? 99) < (RANK[a.status] ?? 99) ? b : a,
+  );
+  await syncSubscriptionFromStripe(best);
+  return true;
+}

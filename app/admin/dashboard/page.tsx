@@ -44,7 +44,10 @@ export default async function AdminDashboardPage() {
     prisma.bot.count(),
     prisma.bot.count({ where: { status: "ACTIVE" } }),
     prisma.user.count({ where: { role: "USER" } }),
-    prisma.subscription.count({ where: { status: "ACTIVE" } }),
+    // "Paying" excludes admin-granted comps (isComp) — they're free, not revenue —
+    // and a raw status:ACTIVE also counts comps whose grant has lapsed (their row
+    // stays ACTIVE; the entitlement check expires them at read time, not in the DB).
+    prisma.subscription.count({ where: { status: "ACTIVE", isComp: false } }),
     prisma.user.count({ where: { role: "USER", createdAt: { gte: thirtyDaysAgo } } }),
     prisma.bot.groupBy({ by: ["category"], _count: { _all: true } }),
     prisma.bot.groupBy({ by: ["riskClass"], _count: { _all: true } }),

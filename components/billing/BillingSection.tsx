@@ -1,11 +1,11 @@
 "use client";
 
-import { useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { dropClientCacheAfterActivation } from "@/app/billing/actions";
 import { SettingsCard, PrimaryAction } from "@/components/account/SettingsCard";
 import { AuthRequiredDialog } from "@/components/billing/AuthRequiredDialog";
 import { Notice, type NoticeData } from "@/components/ui/Notice";
-import { cn } from "@/lib/cn";
 
 /** Client-safe view of the user's subscription (Stripe stays authoritative). */
 export type SubscriptionView = {
@@ -46,16 +46,34 @@ export function BillingSection({
   subscription,
   hasCustomer,
   authenticated,
+  justActivated = false,
 }: {
   subscription: SubscriptionView | null;
   hasCustomer: boolean;
   /** False for a signed-out visitor browsing plans; gates the checkout action. */
   authenticated: boolean;
+  /**
+   * True when this render's server-side self-heal just flipped the user to
+   * active. The other tabs may still be cached as locked in this browser; we
+   * purge that cache once so they unlock without a manual refresh.
+   */
+  justActivated?: boolean;
 }) {
   const params = useSearchParams();
+  const router = useRouter();
   const returnStatus = params.get("status");
   const gated = params.get("gated");
   const expired = params.get("expired");
+
+  // One-shot: when a self-heal just activated the plan, drop the stale (locked)
+  // Router Cache for every other tab, then re-render the current route. Guarded
+  // so router.refresh()'s re-render can't retrigger it into a loop.
+  const bustedRef = useRef(false);
+  useEffect(() => {
+    if (!justActivated || bustedRef.current) return;
+    bustedRef.current = true;
+    void dropClientCacheAfterActivation().then(() => router.refresh());
+  }, [justActivated, router]);
 
   const [banner, setBanner] = useState<NoticeData | null>(
     returnStatus === "success"
@@ -113,6 +131,13 @@ export function BillingSection({
   const openPortal = () => redirectTo("/api/billing/portal", undefined, "portal");
 
   const active = subscription?.active ?? false;
+  // A subscription that exists but does NOT grant access because payment lapsed.
+  // Kept separate from `active` so the card never claims "Current Plan" while the
+  // gated tabs are locked — instead we show an honest "restore access" state.
+  const paymentProblem =
+    !!subscription &&
+    !active &&
+    (subscription.status === "PAST_DUE" || subscription.status === "UNPAID");
 
   return (
     <>
@@ -126,7 +151,7 @@ export function BillingSection({
 
       {banner && <Notice notice={banner} />}
 
-      {subscription && (active || subscription.status === "PAST_DUE" || subscription.status === "UNPAID") ? (
+      {subscription && active ? (
         <SettingsCard
           title="Current Plan"
           subtitle="Your subscription is managed securely through Stripe."
@@ -137,12 +162,7 @@ export function BillingSection({
                 <span className="text-base font-semibold text-white">
                   {subscription.isComp ? "Complimentary access" : `${PLANS[subscription.plan].label} plan`}
                 </span>
-                <span
-                  className={cn(
-                    "rounded-full px-2 py-0.5 text-[11px] font-medium",
-                    active ? "bg-success/15 text-success" : "bg-red-500/15 text-red-400",
-                  )}
-                >
+                <span className="rounded-full bg-success/15 px-2 py-0.5 text-[11px] font-medium text-success">
                   {subscription.isComp ? "Granted" : STATUS_LABEL[subscription.status] ?? subscription.status}
                 </span>
               </div>
@@ -153,9 +173,7 @@ export function BillingSection({
                     : "Granted by your team · no expiry"
                   : subscription.cancelAtPeriodEnd
                     ? `Access ends ${formatDate(subscription.currentPeriodEnd)}`
-                    : active
-                      ? `Renews ${formatDate(subscription.currentPeriodEnd)}`
-                      : "Update your payment method to restore access."}
+                    : `Renews ${formatDate(subscription.currentPeriodEnd)}`}
               </span>
             </div>
             {/* Comp access has no Stripe customer, so there's nothing to manage. */}
@@ -164,6 +182,33 @@ export function BillingSection({
                 {pending === "portal" ? "Opening…" : "Manage billing"}
               </PrimaryAction>
             )}
+          </div>
+        </SettingsCard>
+      ) : paymentProblem ? (
+        // Has a subscription, but a lapsed payment means access is paused. Be
+        // honest: this is NOT an active plan (the tabs are locked), so don't show
+        // a reassuring "Current Plan" card — point them at fixing the payment.
+        <SettingsCard
+          title="Payment problem"
+          subtitle="Your subscription is past due, so access is paused until payment goes through."
+        >
+          <div className="flex flex-col gap-4 rounded-xl border border-red-500/30 bg-red-500/5 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center gap-2.5">
+                <span className="text-base font-semibold text-white">
+                  {PLANS[subscription.plan].label} plan
+                </span>
+                <span className="rounded-full bg-red-500/15 px-2 py-0.5 text-[11px] font-medium text-red-400">
+                  {STATUS_LABEL[subscription.status] ?? subscription.status}
+                </span>
+              </div>
+              <span className="text-xs text-muted">
+                Update your payment method to restore access to the dashboard and your bots.
+              </span>
+            </div>
+            <PrimaryAction onClick={openPortal} disabled={pending !== null}>
+              {pending === "portal" ? "Opening…" : "Update payment"}
+            </PrimaryAction>
           </div>
         </SettingsCard>
       ) : (
