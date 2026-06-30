@@ -16,6 +16,7 @@ const updateBotSchema = z.object({
   name: z.string().trim().min(1).max(80).optional(),
   category: z.string().trim().min(1).max(60).optional(),
   timeframe: z.string().trim().min(1).max(20).optional(),
+  exchange: z.string().trim().max(40).optional(),
   riskClass: z.enum(["LOW", "MEDIUM", "HIGH"]).optional(),
   config: z.any().optional(),
   csvText: z.string().min(1).optional(),
@@ -30,7 +31,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   const { id } = await params;
   const parsed = updateBotSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return zodFail(parsed.error);
-  const { name, category, timeframe, riskClass, config, csvText, csvFilename, message } = parsed.data;
+  const { name, category, timeframe, exchange, riskClass, config, csvText, csvFilename, message } = parsed.data;
 
   const existing = await prisma.bot.findUnique({ where: { id } });
   if (!existing) return fail("Bot not found", 404);
@@ -79,6 +80,8 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
             exchange: (config as BotConfig).exchange ?? null,
           }
         : {}),
+      // Admin's explicit pick overrides any exchange derived from a swapped config.
+      ...(exchange !== undefined ? { exchange: exchange || null } : {}),
       ...(csvText !== undefined ? { csvData: csvText, csvFilename: csvFilename ?? existing.csvFilename } : {}),
       ...(metrics ?? {}),
       revisions: { create: { message } },

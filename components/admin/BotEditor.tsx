@@ -5,6 +5,7 @@ import { useRef, useState } from "react";
 import { AdminCard } from "@/components/admin/AdminCard";
 import { BacktestResults } from "@/components/admin/BacktestResults";
 import { CheckIcon } from "@/components/admin/admin-icons";
+import { ExchangeSelect } from "@/components/admin/ExchangeSelect";
 import { Notice, type NoticeData } from "@/components/ui/Notice";
 import { Switch } from "@/components/ui/Switch";
 import { runBacktest, type BacktestResult, type BotConfig, type RiskClass } from "@/lib/backtest/engine";
@@ -25,6 +26,7 @@ export type BotEditorData = {
   name: string;
   category: string;
   timeframe: string;
+  exchange: string;
   riskClass: RiskClass;
   status: "ACTIVE" | "DISABLED";
   csvFilename: string | null;
@@ -42,6 +44,7 @@ export function BotEditor({ bot, categories }: { bot: BotEditorData; categories:
   const [name, setName] = useState(bot.name);
   const [category, setCategory] = useState(bot.category);
   const [timeframe, setTimeframe] = useState(bot.timeframe);
+  const [exchange, setExchange] = useState(bot.exchange);
   const [riskClass, setRiskClass] = useState<RiskClass>(bot.riskClass);
   const [enabled, setEnabled] = useState(bot.status === "ACTIVE");
   const [statusPending, setStatusPending] = useState(false);
@@ -72,6 +75,7 @@ export function BotEditor({ bot, categories }: { bot: BotEditorData; categories:
     name !== bot.name ||
     category !== bot.category ||
     timeframe !== bot.timeframe ||
+    exchange !== bot.exchange ||
     riskClass !== bot.riskClass ||
     configChanged ||
     csvChanged;
@@ -171,6 +175,7 @@ export function BotEditor({ bot, categories }: { bot: BotEditorData; categories:
           name,
           category,
           timeframe,
+          exchange,
           riskClass,
           message: message.trim(),
           ...(configChanged ? { config } : {}),
@@ -232,6 +237,10 @@ export function BotEditor({ bot, categories }: { bot: BotEditorData; categories:
               {categoryOptions.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
           </label>
+          <div className="flex flex-col gap-2">
+            <span className={labelCls}>Exchange</span>
+            <ExchangeSelect value={exchange} onChange={setExchange} />
+          </div>
           <label className="flex flex-col gap-2">
             <span className={labelCls}>Risk Class</span>
             <select value={riskClass} onChange={(e) => setRiskClass(e.target.value as RiskClass)} className={cn(inputCls, "appearance-none pr-10")}>

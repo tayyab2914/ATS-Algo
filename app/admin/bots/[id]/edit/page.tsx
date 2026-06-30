@@ -28,6 +28,7 @@ export default async function EditBotPage({ params }: { params: Promise<{ id: st
     name: bot.name,
     category: bot.category,
     timeframe: bot.timeframe,
+    exchange: bot.exchange ?? "",
     riskClass: bot.riskClass,
     status: bot.status,
     csvFilename: bot.csvFilename,

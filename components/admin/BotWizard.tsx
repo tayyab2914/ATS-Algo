@@ -5,7 +5,9 @@ import { useRef, useState } from "react";
 import { AdminCard } from "@/components/admin/AdminCard";
 import { BacktestResults } from "@/components/admin/BacktestResults";
 import { CheckIcon } from "@/components/admin/admin-icons";
+import { ExchangeSelect } from "@/components/admin/ExchangeSelect";
 import { Notice, type NoticeData } from "@/components/ui/Notice";
+import { matchBotExchange } from "@/lib/bot-exchanges";
 import { runBacktest, type BacktestResult, type BotConfig, type RiskClass } from "@/lib/backtest/engine";
 import { cn } from "@/lib/cn";
 
@@ -42,6 +44,7 @@ export function BotWizard({ categories }: { categories: string[] }) {
   const [config, setConfig] = useState<BotConfig | null>(null);
   const [name, setName] = useState("");
   const [timeframe, setTimeframe] = useState("");
+  const [exchange, setExchange] = useState("");
   const [riskClass, setRiskClass] = useState<RiskClass>("MEDIUM");
   const [csvText, setCsvText] = useState("");
   const [csvFilename, setCsvFilename] = useState("");
@@ -61,6 +64,7 @@ export function BotWizard({ categories }: { categories: string[] }) {
       setConfig(parsed);
       setName((n) => n || (parsed.name ? cleanBotName(parsed.name) : ""));
       setTimeframe((t) => t || (parsed.timeframe ? `${parsed.timeframe}m` : ""));
+      setExchange((x) => x || matchBotExchange(parsed.exchange));
       if (parsed.type && categories.some((c) => c.toLowerCase() === parsed.type!.toLowerCase())) {
         setCategory((c) => c || categories.find((x) => x.toLowerCase() === parsed.type!.toLowerCase())!);
       }
@@ -99,7 +103,7 @@ export function BotWizard({ categories }: { categories: string[] }) {
       const res = await fetch("/api/admin/bots", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, category, timeframe, riskClass, config, csvText, csvFilename }),
+        body: JSON.stringify({ name, category, timeframe, exchange, riskClass, config, csvText, csvFilename }),
       });
       const data = (await res.json().catch(() => null)) as { error?: string } | null;
       if (!res.ok) {
@@ -117,7 +121,7 @@ export function BotWizard({ categories }: { categories: string[] }) {
 
   const canNext = [
     Boolean(category),
-    Boolean(config && name.trim() && timeframe.trim()),
+    Boolean(config && name.trim() && timeframe.trim() && exchange),
     Boolean(csvText),
   ];
 
@@ -150,7 +154,7 @@ export function BotWizard({ categories }: { categories: string[] }) {
               onPick={onJsonPicked}
             />
             {config && (
-              <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
+              <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
                 <label className="flex flex-col gap-2">
                   <span className={labelCls}>Bot Name</span>
                   <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Alpha BTC" className={inputCls} />
@@ -159,6 +163,10 @@ export function BotWizard({ categories }: { categories: string[] }) {
                   <span className={labelCls}>Timeframe</span>
                   <input value={timeframe} onChange={(e) => setTimeframe(e.target.value)} placeholder="e.g. 5m" className={inputCls} />
                 </label>
+                <div className="flex flex-col gap-2">
+                  <span className={labelCls}>Exchange</span>
+                  <ExchangeSelect value={exchange} onChange={setExchange} />
+                </div>
                 <label className="flex flex-col gap-2">
                   <span className={labelCls}>Risk Class</span>
                   <select value={riskClass} onChange={(e) => setRiskClass(e.target.value as RiskClass)} className={cn(inputCls, "appearance-none pr-10")}>

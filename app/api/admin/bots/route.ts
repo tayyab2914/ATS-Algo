@@ -16,6 +16,7 @@ const createBotSchema = z.object({
   name: z.string().trim().min(1, "Name is required").max(80),
   category: z.string().trim().min(1, "Category is required").max(60),
   timeframe: z.string().trim().min(1, "Timeframe is required").max(20),
+  exchange: z.string().trim().max(40).optional(),
   riskClass: z.enum(["LOW", "MEDIUM", "HIGH"]),
   config: z.any(),
   csvText: z.string().min(1, "CSV data is required"),
@@ -28,7 +29,7 @@ export async function POST(request: NextRequest) {
 
   const parsed = createBotSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return zodFail(parsed.error);
-  const { name, category, timeframe, riskClass, config, csvText, csvFilename } = parsed.data;
+  const { name, category, timeframe, exchange, riskClass, config, csvText, csvFilename } = parsed.data;
 
   const cfg = config as BotConfig;
   if (!cfg || typeof cfg !== "object" || !cfg.profiles?.balanced) {
@@ -51,7 +52,8 @@ export async function POST(request: NextRequest) {
       riskClass,
       ticker: cfg.ticker ?? null,
       assetType: cfg.type ?? null,
-      exchange: cfg.exchange ?? null,
+      // Admin's explicit pick wins; fall back to whatever the JSON config declared.
+      exchange: exchange || cfg.exchange || null,
       config,
       csvFilename: csvFilename ?? null,
       csvData: csvText,

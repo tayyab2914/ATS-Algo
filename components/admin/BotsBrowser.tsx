@@ -29,7 +29,11 @@ export function BotsBrowser({ bots, categories }: { bots: BotTableRow[]; categor
       const inCategory = filter === "All" || b.category.toLowerCase() === filter.toLowerCase();
       if (!inCategory) return false;
       if (!q) return true;
-      return b.name.toLowerCase().includes(q) || (b.ticker ?? "").toLowerCase().includes(q);
+      return (
+        b.name.toLowerCase().includes(q) ||
+        (b.ticker ?? "").toLowerCase().includes(q) ||
+        (b.exchange ?? "").toLowerCase().includes(q)
+      );
     });
   }, [bots, filter, query]);
 

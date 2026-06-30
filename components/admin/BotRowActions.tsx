@@ -2,15 +2,59 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
-import { EyeIcon, PencilIcon, TrashIcon } from "@/components/admin/admin-icons";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { DotsIcon, EyeIcon, PencilIcon, TrashIcon } from "@/components/admin/admin-icons";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { cn } from "@/lib/cn";
 
-/** Per-row Edit link + Delete button (with confirmation) for the bots table. */
+const MENU_WIDTH = 168;
+
+/** Per-row kebab menu (View / Edit / Delete-with-confirm) for the bots table. */
 export function BotRowActions({ botId, botName }: { botId: string; botName: string }) {
   const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [rect, setRect] = useState<{ top: number; left: number } | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [pending, setPending] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Position the menu under the trigger, right-aligned so it stays inside the table.
+  useLayoutEffect(() => {
+    if (!open) return;
+    function place() {
+      const el = triggerRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      setRect({ top: r.bottom + 4, left: r.right - MENU_WIDTH });
+    }
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDown(e: MouseEvent) {
+      const t = e.target as Node;
+      if (triggerRef.current?.contains(t) || menuRef.current?.contains(t)) return;
+      setOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
 
   async function onDelete() {
     setPending(true);
@@ -29,33 +73,68 @@ export function BotRowActions({ botId, botName }: { botId: string; botName: stri
     }
   }
 
+  const itemCls = "flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm transition-colors";
+
   return (
-    <div className="flex items-center justify-center gap-1.5">
-      <Link
-        href={`/admin/bots/${botId}`}
-        aria-label={`View ${botName}`}
-        title="View details"
-        className="flex size-8 items-center justify-center rounded-lg border border-line text-muted transition-colors hover:border-accent/50 hover:text-accent"
-      >
-        <EyeIcon className="size-4" />
-      </Link>
-      <Link
-        href={`/admin/bots/${botId}/edit`}
-        aria-label={`Edit ${botName}`}
-        title="Edit / update"
-        className="flex size-8 items-center justify-center rounded-lg border border-line text-muted transition-colors hover:border-accent/50 hover:text-accent"
-      >
-        <PencilIcon className="size-4" />
-      </Link>
+    <div className="flex items-center justify-center">
       <button
+        ref={triggerRef}
         type="button"
-        aria-label={`Delete ${botName}`}
-        title="Delete"
-        onClick={() => setConfirming(true)}
-        className="flex size-8 items-center justify-center rounded-lg border border-line text-muted transition-colors hover:border-red-500/50 hover:text-red-400"
+        aria-label={`Actions for ${botName}`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        title="Actions"
+        onClick={() => setOpen((o) => !o)}
+        className={cn(
+          "flex size-8 items-center justify-center rounded-lg border text-muted transition-colors hover:border-accent/50 hover:text-accent",
+          open ? "border-accent/50 text-accent" : "border-line",
+        )}
       >
-        <TrashIcon className="size-4" />
+        <DotsIcon className="size-4" />
       </button>
+
+      {open &&
+        rect &&
+        createPortal(
+          <div
+            ref={menuRef}
+            role="menu"
+            style={{ position: "fixed", top: rect.top, left: rect.left, width: MENU_WIDTH }}
+            className="z-50 overflow-hidden rounded-lg border border-line bg-surface py-1 shadow-lg shadow-black/40"
+          >
+            <Link
+              href={`/admin/bots/${botId}`}
+              role="menuitem"
+              onClick={() => setOpen(false)}
+              className={cn(itemCls, "text-white hover:bg-accent/10")}
+            >
+              <EyeIcon className="size-4 text-muted" />
+              View details
+            </Link>
+            <Link
+              href={`/admin/bots/${botId}/edit`}
+              role="menuitem"
+              onClick={() => setOpen(false)}
+              className={cn(itemCls, "text-white hover:bg-accent/10")}
+            >
+              <PencilIcon className="size-4 text-muted" />
+              Edit / update
+            </Link>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                setConfirming(true);
+              }}
+              className={cn(itemCls, "text-red-400 hover:bg-red-500/10")}
+            >
+              <TrashIcon className="size-4" />
+              Delete
+            </button>
+          </div>,
+          document.body,
+        )}
 
       <ConfirmDialog
         open={confirming}

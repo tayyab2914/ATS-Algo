@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { AdminCard } from "@/components/admin/AdminCard";
 import { BotRowActions } from "@/components/admin/BotRowActions";
+import { ExchangeBadge } from "@/components/admin/ExchangeBadge";
 import { cn } from "@/lib/cn";
 import { RISK_LABEL, RISK_ORDER, riskBadgeClass } from "@/lib/risk";
 
@@ -11,6 +12,7 @@ export type BotTableRow = {
   name: string;
   category: string;
   ticker: string | null;
+  exchange: string | null;
   timeframe: string;
   riskClass: "LOW" | "MEDIUM" | "HIGH";
   status: "ACTIVE" | "DISABLED";
@@ -27,6 +29,7 @@ export type BotTableRow = {
 /** Sort accessor key for each sortable column; `null` columns aren't sortable. */
 type SortKey =
   | "name"
+  | "exchange"
   | "timeframe"
   | "riskClass"
   | "winRate"
@@ -40,6 +43,7 @@ type SortKey =
 
 const COLUMNS: { label: string; sort: SortKey | null }[] = [
   { label: "Bot Name", sort: "name" },
+  { label: "Exchange", sort: "exchange" },
   { label: "Timeframe", sort: "timeframe" },
   { label: "Risk Class", sort: "riskClass" },
   { label: "Win Rate", sort: "winRate" },
@@ -63,6 +67,9 @@ function compareRows(a: BotTableRow, b: BotTableRow, key: SortKey, dir: "asc" | 
   const mul = dir === "asc" ? 1 : -1;
   if (key === "name" || key === "timeframe") {
     return a[key].localeCompare(b[key]) * mul;
+  }
+  if (key === "exchange") {
+    return (a.exchange ?? "").localeCompare(b.exchange ?? "") * mul;
   }
   if (key === "riskClass") {
     return (RISK_ORDER[a.riskClass] - RISK_ORDER[b.riskClass]) * mul;
@@ -154,6 +161,7 @@ export function BotsTable({
               rows.map((b) => (
                 <tr key={b.id} className="border-b border-line/60 last:border-0">
                   <td className="px-4 py-4 text-sm font-semibold text-white">{b.name}</td>
+                  <td className="px-4 py-4 text-center"><ExchangeBadge exchange={b.exchange} /></td>
                   <td className="px-4 py-4 text-center text-sm text-muted">{b.timeframe}</td>
                   <td className="px-4 py-4 text-center">
                     <span className={cn("rounded-full px-2.5 py-1 text-xs font-semibold", riskBadgeClass(b.riskClass))}>
