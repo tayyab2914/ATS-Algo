@@ -1,6 +1,5 @@
 import { z } from "zod";
 import { EXCHANGES } from "@/lib/account";
-import { isCardExpired, luhnValid, normalizeCardNumber } from "@/lib/payment";
 
 /** Shared field rules. */
 const email = z.string().trim().toLowerCase().email("Enter a valid email address");
@@ -71,11 +70,6 @@ export const emailChangeCodeSchema = z.object({
   code: z.string().regex(/^\d{6}$/, "Enter the 6-digit code from your email"),
 });
 
-export const connectionToggleSchema = z.object({
-  target: z.literal("tradingview"),
-  connected: z.boolean(),
-});
-
 export const exchangeAddSchema = z.object({
   exchange: z.enum(EXCHANGES),
   apiKey: z.string().trim().min(6, "API key looks too short"),
@@ -84,35 +78,6 @@ export const exchangeAddSchema = z.object({
 
 export const exchangeRemoveSchema = z.object({
   exchange: z.enum(EXCHANGES),
-});
-
-// ── Payment methods ───────────────────────────────────────────────────────────
-
-/**
- * Add a saved card. The raw `number` is normalized + Luhn-checked here but only
- * its brand and last four are ever persisted (see the payment-methods route).
- * The CVV is intentionally absent from the schema — the client never sends it.
- */
-export const paymentMethodAddSchema = z
-  .object({
-    number: z
-      .string()
-      .trim()
-      .transform(normalizeCardNumber)
-      .refine((v) => luhnValid(v), "Enter a valid card number"),
-    expMonth: z.coerce.number().int().min(1, "Invalid expiry month").max(12, "Invalid expiry month"),
-    expYear: z.coerce.number().int().min(2000, "Invalid expiry year").max(2099, "Invalid expiry year"),
-    holderName: z.string().trim().min(2, "Enter the name on the card").max(100, "Name is too long"),
-    label: z.string().trim().max(60, "Label is too long").optional().or(z.literal("")),
-  })
-  .refine((d) => !isCardExpired(d.expMonth, d.expYear), {
-    message: "That card has already expired",
-    path: ["expMonth"],
-  });
-
-/** Identify a saved card by id (remove / set-default). */
-export const paymentMethodIdSchema = z.object({
-  id: z.string().min(1, "Missing payment method id"),
 });
 
 // ── Billing ──────────────────────────────────────────────────────────────────
@@ -149,8 +114,6 @@ export type TwoFactorCodeInput = z.infer<typeof twoFactorCodeSchema>;
 export type TwoFactorToggleInput = z.infer<typeof twoFactorToggleSchema>;
 export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
 export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
-export type PaymentMethodAddInput = z.infer<typeof paymentMethodAddSchema>;
-export type PaymentMethodIdInput = z.infer<typeof paymentMethodIdSchema>;
 export type CheckoutInput = z.infer<typeof checkoutSchema>;
 export type AdminMemberActionInput = z.infer<typeof adminMemberActionSchema>;
 export type AdminSetRoleInput = z.infer<typeof adminSetRoleSchema>;

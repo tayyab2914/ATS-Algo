@@ -6,14 +6,11 @@ import { SubscriptionGate } from "@/components/app/SubscriptionGate";
 import { TabPreviewSkeleton } from "@/components/app/TabPreviewSkeleton";
 import { EmailChangeSection } from "@/components/account/EmailChangeSection";
 import { ExchangeSection } from "@/components/account/ExchangeSection";
-import { PaymentMethodsSection } from "@/components/account/PaymentMethodsSection";
 import { ProfileSection } from "@/components/account/ProfileSection";
-import { TradingViewSection } from "@/components/account/TradingViewSection";
 import { TwoFactorSection } from "@/components/account/TwoFactorSection";
 import type { ExchangeName } from "@/lib/account";
 import { blockExpiredGuest, getPageAccess } from "@/lib/auth/guards";
 import { prisma } from "@/lib/db";
-import { isCardExpired, type PaymentMethodView } from "@/lib/payment";
 
 export const metadata: Metadata = {
   title: "Account Settings · ATS-ALGO",
@@ -66,21 +63,7 @@ export default async function AccountPage() {
       emailVerified: true,
       avatarUrl: true,
       twoFactorEnabled: true,
-      tradingViewConnected: true,
       exchangeConnections: { select: { exchange: true, permissions: true } },
-      paymentMethods: {
-        orderBy: [{ isDefault: "desc" }, { createdAt: "desc" }],
-        select: {
-          id: true,
-          brand: true,
-          last4: true,
-          expMonth: true,
-          expYear: true,
-          holderName: true,
-          label: true,
-          isDefault: true,
-        },
-      },
     },
   });
   if (!user) redirect("/login");
@@ -88,11 +71,6 @@ export default async function AccountPage() {
   const connections = Object.fromEntries(
     user.exchangeConnections.map((c) => [c.exchange, { permissions: c.permissions }]),
   ) as Partial<Record<ExchangeName, { permissions: string }>>;
-
-  const paymentMethods: PaymentMethodView[] = user.paymentMethods.map((m) => ({
-    ...m,
-    expired: isCardExpired(m.expMonth, m.expYear),
-  }));
 
   return (
     <AppShell>
@@ -106,8 +84,6 @@ export default async function AccountPage() {
       <ProfileSection initial={{ username: user.name ?? "", avatarUrl: user.avatarUrl }} />
       <EmailChangeSection email={user.email} verified={user.emailVerified !== null} />
       <TwoFactorSection initialEnabled={user.twoFactorEnabled} />
-      <PaymentMethodsSection initial={paymentMethods} />
-      <TradingViewSection initialConnected={user.tradingViewConnected} />
       <ExchangeSection initial={connections} />
     </AppShell>
   );

@@ -1,5 +1,6 @@
-/** Exchanges shown in the Account Settings → Exchange API Connections list. */
-export const EXCHANGES = ["Hyperliquid", "Bitget", "Bybit", "Mexc", "Phemex", "OKX"] as const;
+/** Exchanges shown in the Account Settings → Exchange API Connections list.
+ * Kept in sync with the venues we support (see BOT_EXCHANGES). */
+export const EXCHANGES = ["Bybit", "Bitget", "Blofin"] as const;
 
 export type ExchangeName = (typeof EXCHANGES)[number];
 
