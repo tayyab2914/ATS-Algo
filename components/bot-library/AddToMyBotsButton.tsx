@@ -33,27 +33,31 @@ function LockIcon() {
  * "Add to My Bots" CTA, gated by what the viewer is allowed to do:
  *  - visitor   → routed to login (with a return path); the action needs an account.
  *  - guest     → deploying is a paid feature, so routed to Billing to upgrade.
- *  - member    → optimistic added/added-back toggle.
+ *  - member    → persists the add/remove to "My Bots" (optimistic, with revert).
  *
  * Guests can browse bot profiles read-only but can't deploy until they're members.
  */
 export function AddToMyBotsButton({
-  slug,
+  botId,
   authed,
   canDeploy,
+  initialAdded = false,
 }: {
-  slug: string;
+  botId: string;
   /** Whether the viewer is signed in at all. */
   authed: boolean;
   /** Whether the viewer may actually deploy (member/admin). */
   canDeploy: boolean;
+  /** Whether this bot is already in the member's My Bots. */
+  initialAdded?: boolean;
 }) {
   const router = useRouter();
-  const [added, setAdded] = useState(false);
+  const [added, setAdded] = useState(initialAdded);
+  const [pending, setPending] = useState(false);
 
-  function handleClick() {
+  async function handleClick() {
     if (!authed) {
-      router.push(`/login?next=${encodeURIComponent(`/bot-library/${slug}`)}`);
+      router.push(`/login?next=${encodeURIComponent(`/bot-library/${botId}`)}`);
       return;
     }
     if (!canDeploy) {
@@ -61,7 +65,29 @@ export function AddToMyBotsButton({
       router.push("/billing?gated=1");
       return;
     }
-    setAdded((v) => !v);
+    if (pending) return;
+
+    const next = !added;
+    setAdded(next); // optimistic
+    setPending(true);
+    try {
+      const res = next
+        ? await fetch("/api/my-bots", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ botId }),
+          })
+        : await fetch(`/api/my-bots/${botId}`, { method: "DELETE" });
+      if (!res.ok) {
+        setAdded(!next); // revert
+        return;
+      }
+      router.refresh(); // keep My Bots / counts in sync
+    } catch {
+      setAdded(!next); // revert
+    } finally {
+      setPending(false);
+    }
   }
 
   // Signed-in guests see a "members only" affordance instead of the add toggle.
@@ -71,10 +97,11 @@ export function AddToMyBotsButton({
     <button
       type="button"
       onClick={handleClick}
+      disabled={pending}
       aria-pressed={added}
       title={locked ? "Deploying bots is a members-only feature" : undefined}
       className={cn(
-        "inline-flex h-11 items-center justify-center gap-2 rounded-full px-5 text-sm font-semibold transition-colors",
+        "inline-flex h-11 items-center justify-center gap-2 rounded-full px-5 text-sm font-semibold transition-colors disabled:opacity-70",
         locked
           ? "border border-line bg-surface text-muted hover:border-accent/40 hover:text-white"
           : added

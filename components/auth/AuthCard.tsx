@@ -1,6 +1,5 @@
 import { AuthForm } from "@/components/auth/AuthForm";
 import { AuthTabs } from "@/components/auth/AuthTabs";
-import { GuestModeOptions } from "@/components/auth/GuestModeOptions";
 import type { NoticeData } from "@/components/ui/Notice";
 import { AUTH_COPY, type AuthMode } from "@/lib/auth-config";
 
@@ -35,8 +34,6 @@ export function AuthCard({
         <h2 className="text-2xl font-semibold leading-[31px] text-heading">{copy.title}</h2>
         <p className="text-xs leading-[18px] text-muted">{copy.subtitle}</p>
       </header>
-
-      <GuestModeOptions mode={mode} />
 
       <AuthForm mode={mode} notice={notice} next={next} initialEmail={initialEmail} lockEmail={lockEmail} />
     </div>

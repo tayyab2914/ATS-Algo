@@ -73,6 +73,7 @@ model User {
   paymentMethods      PaymentMethod[]
   subscription        Subscription?
   emailChangeRequest  EmailChangeRequest?
+  bots                UserBot[]
 
   @@map("users")
 }
@@ -204,6 +205,13 @@ enum BotStatus {
   DISABLED
 }
 
+/// How a deployed bot sizes each trade. FIXED spends the same capital every
+/// trade; PERCENTAGE risks a share of the allocated balance.
+enum AllocationType {
+  FIXED
+  PERCENTAGE
+}
+
 /// A trading bot created from an uploaded JSON config + signal CSV, backtested
 /// on creation. Headline metrics are for the selected `riskClass`; `results`
 /// holds the full per-profile backtest output. The raw CSV is kept so the
@@ -237,6 +245,7 @@ model Bot {
   results Json? // full per-profile metrics from the backtest
 
   revisions BotRevision[]
+  userBots  UserBot[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -261,6 +270,42 @@ model BotRevision {
 
   @@index([botId])
   @@map("bot_revisions")
+}
+
+/// A bot a user has added to "My Bots" from the library. `active` distinguishes
+/// a running deployment (Active Bots tab) from one merely added but idle
+/// (Non-Active Bots tab). `allocatedCapital` is the user-set capital behind the
+/// deployment (defaults to 0, editable later). Live execution metrics (PnL, TP
+/// progress, break-even) are not modelled yet — there is no execution engine, so
+/// the UI shows them as placeholders. One row per (user, bot).
+model UserBot {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  botId  String
+  bot    Bot    @relation(fields: [botId], references: [id], onDelete: Cascade)
+
+  active           Boolean @default(false)
+  allocatedCapital Float   @default(0)
+
+  // Bot Settings — capital & automation controls set from the deployment's
+  // Settings screen. No execution engine consumes these yet; they are persisted
+  // so the member's configuration survives reloads.
+  allocationType AllocationType @default(FIXED)
+  /// Capital used per trade — a dollar amount when FIXED, a percentage (0–100)
+  /// of the allocated balance when PERCENTAGE.
+  capitalPerTrade Float   @default(0)
+  /// When true the bot grows its position size as the balance grows.
+  compounding     Boolean @default(false)
+  /// Chosen exchange/wallet the deployment draws from (a BOT_EXCHANGES value).
+  exchangeSource  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, botId])
+  @@index([userId])
+  @@map("user_bots")
 }
 
 /// A bot category, managed from the "Update Categories" admin screen. Bots

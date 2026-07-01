@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 import { AdminCard } from "@/components/admin/AdminCard";
 import { BotRowActions } from "@/components/admin/BotRowActions";
 import { ExchangeBadge } from "@/components/admin/ExchangeBadge";
@@ -92,11 +92,23 @@ function Perf({ value }: { value: number }) {
 export function BotsTable({
   bots,
   emptyLabel = "No bots yet. Use “Add New Bot” to create one.",
+  title = "Bots",
+  subtitle = "Every bot you've created, with its latest backtest metrics.",
+  showStatus = true,
+  renderAction,
 }: {
   bots: BotTableRow[];
   emptyLabel?: string;
+  title?: string;
+  subtitle?: string;
+  /** Show the admin-only Status column (active/disabled). Hidden on public surfaces. */
+  showStatus?: boolean;
+  /** Render the per-row Action cell. Defaults to the admin kebab menu. */
+  renderAction?: (bot: BotTableRow) => ReactNode;
 }) {
   const [sort, setSort] = useState<SortState | null>(null);
+  const action = renderAction ?? ((b: BotTableRow) => <BotRowActions botId={b.id} botName={b.name} />);
+  const columns = showStatus ? COLUMNS : COLUMNS.filter((c) => c.sort !== "status");
 
   // Clicking a header sorts by it ascending (alphabetical / low→high); clicking
   // the same header again flips to descending.
@@ -114,12 +126,12 @@ export function BotsTable({
   }, [bots, sort]);
 
   return (
-    <AdminCard title="Bots" subtitle="Every bot you've created, with its latest backtest metrics.">
+    <AdminCard title={title} subtitle={subtitle}>
       <div className="max-h-[520px] overflow-auto">
         <table className="w-full min-w-[980px] text-left">
           <thead className="sticky top-0 z-10 bg-surface">
             <tr className="border-b border-line text-xs font-semibold text-muted">
-              {COLUMNS.map((col, i) => {
+              {columns.map((col, i) => {
                 const active = sort?.key === col.sort;
                 return (
                   <th
@@ -153,7 +165,7 @@ export function BotsTable({
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={COLUMNS.length} className="px-4 py-8 text-center text-sm text-muted">
+                <td colSpan={columns.length} className="px-4 py-8 text-center text-sm text-muted">
                   {emptyLabel}
                 </td>
               </tr>
@@ -175,19 +187,19 @@ export function BotsTable({
                   <td className="px-4 py-4 text-center text-sm"><Perf value={b.d180} /></td>
                   <td className="px-4 py-4 text-center text-sm"><Perf value={b.d360} /></td>
                   <td className="px-4 py-4 text-center text-sm text-white">{b.avgTrade.toFixed(2)}%</td>
-                  <td className="px-4 py-4 text-center">
-                    <span
-                      className={cn(
-                        "rounded-full px-2.5 py-1 text-xs font-semibold",
-                        b.status === "ACTIVE" ? "bg-success/10 text-success" : "bg-muted/10 text-muted",
-                      )}
-                    >
-                      {b.status === "ACTIVE" ? "Active" : "Disabled"}
-                    </span>
-                  </td>
-                  <td className="px-4 py-4">
-                    <BotRowActions botId={b.id} botName={b.name} />
-                  </td>
+                  {showStatus && (
+                    <td className="px-4 py-4 text-center">
+                      <span
+                        className={cn(
+                          "rounded-full px-2.5 py-1 text-xs font-semibold",
+                          b.status === "ACTIVE" ? "bg-success/10 text-success" : "bg-muted/10 text-muted",
+                        )}
+                      >
+                        {b.status === "ACTIVE" ? "Active" : "Disabled"}
+                      </span>
+                    </td>
+                  )}
+                  <td className="px-4 py-4">{action(b)}</td>
                 </tr>
               ))
             )}

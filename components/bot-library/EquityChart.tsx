@@ -7,6 +7,10 @@ const W = 1000;
 const H = 300;
 const DD_H = 90;
 const PAD_X = 4;
+// Vertical breathing room (viewBox units) so the drawdown stroke at a new peak
+// (top) and at the deepest point (bottom) isn't clipped by the SVG edge.
+const DD_PAD_TOP = 6;
+const DD_PAD_BOTTOM = 12;
 
 /** A selectable time window. `points` = trailing curve points to show. */
 export type EquityPeriod = { key: string; label: string; points: number; value: string };
@@ -29,10 +33,10 @@ function smoothPath(points: [number, number][]): string {
   return d;
 }
 
-function toPoints(series: number[], height: number): [number, number][] {
-  if (series.length === 1) return [[W / 2, series[0] * height]];
+function toPoints(series: number[], height: number, yOffset = 0): [number, number][] {
+  if (series.length === 1) return [[W / 2, yOffset + series[0] * height]];
   const step = (W - PAD_X * 2) / (series.length - 1);
-  return series.map((v, i) => [PAD_X + i * step, v * height]);
+  return series.map((v, i) => [PAD_X + i * step, yOffset + v * height]);
 }
 
 /** Underwater drawdown series (0 at a new peak, growing as equity falls). */
@@ -91,7 +95,8 @@ export function EquityChart({
   const ddScale = Math.max(maxDD, 0.05); // avoid a flat/empty strip
   const ddPoints = toPoints(
     dd.map((d) => d / ddScale),
-    DD_H,
+    DD_H - DD_PAD_TOP - DD_PAD_BOTTOM,
+    DD_PAD_TOP,
   );
   const ddLine = smoothPath(ddPoints);
   const ddArea = ddPoints.length >= 2 ? `M ${PAD_X} 0 ${ddLine.slice(2)} L ${W - PAD_X} 0 Z` : "";

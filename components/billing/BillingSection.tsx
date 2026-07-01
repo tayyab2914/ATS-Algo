@@ -39,7 +39,10 @@ const STATUS_LABEL: Record<string, string> = {
 
 function formatDate(iso: string | null): string {
   if (!iso) return "—";
-  return new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" });
+  // Pin the locale so SSR (server locale) and the client (browser locale) format
+  // identically — an `undefined` locale renders e.g. "30 July 2026" vs
+  // "July 30, 2026" and triggers a hydration mismatch.
+  return new Date(iso).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
 }
 
 export function BillingSection({
