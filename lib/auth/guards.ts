@@ -73,18 +73,28 @@ const loadViewer = cache(
     const session = await verifyToken(token);
     if (!session) return null;
 
-    const user = await prisma.user.findUnique({
-      where: { id: session.sub },
-      select: {
-        status: true,
-        sessionsValidFrom: true,
-        guestExpiresAt: true,
-        name: true,
-        email: true,
-        avatarUrl: true,
-        subscription: { select: { status: true, isComp: true, currentPeriodEnd: true } },
-      },
-    });
+    let user;
+    try {
+      user = await prisma.user.findUnique({
+        where: { id: session.sub },
+        select: {
+          status: true,
+          sessionsValidFrom: true,
+          guestExpiresAt: true,
+          name: true,
+          email: true,
+          avatarUrl: true,
+          subscription: { select: { status: true, isComp: true, currentPeriodEnd: true } },
+        },
+      });
+    } catch (error) {
+      // DB unreachable → we can't confirm liveness/entitlement. Fail CLOSED to a
+      // visitor (same as a revoked session) so a transient blip renders the
+      // signed-out gate instead of 500-ing the gated page and its AppShell. Mirrors
+      // isSessionLive in lib/auth/session.ts; self-heals next request. Logged.
+      console.error("loadViewer: viewer query failed — failing closed to visitor", error);
+      return null;
+    }
     if (!user) return null;
 
     // Authoritative liveness gate — identical to lib/auth/session.ts isSessionLive.

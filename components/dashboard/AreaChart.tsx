@@ -1,8 +1,30 @@
-/** Decorative full-width area chart (cyan), no data/axes. */
-export function AreaChart() {
-  const line =
-    "M0 120 C40 110 70 95 110 100 C150 105 180 80 220 85 C260 90 290 70 330 72 C370 74 400 55 440 60 C480 65 510 48 550 52 C590 56 620 45 700 40";
+/**
+ * The portfolio equity curve: cumulative realized PnL, one point per month.
+ * A flat line at zero is the truth for an account that hasn't traded — we draw it
+ * rather than invent a rising curve.
+ */
+export function AreaChart({ points }: { points: number[] }) {
+  if (points.length < 2) {
+    return (
+      <div className="flex h-[200px] items-center justify-center rounded-xl border border-dashed border-line text-xs text-muted">
+        No closed trades yet — the curve fills in as your bots trade.
+      </div>
+    );
+  }
+
+  const min = Math.min(...points, 0);
+  const max = Math.max(...points, 0);
+  const span = max - min || 1;
+
+  const coords = points.map((value, index) => {
+    const x = (index / (points.length - 1)) * 700;
+    const y = 190 - ((value - min) / span) * 170;
+    return `${x.toFixed(1)} ${y.toFixed(1)}`;
+  });
+  const line = `M${coords.join(" L")}`;
   const area = `${line} L700 200 L0 200 Z`;
+  // Where zero sits, so gains and losses read differently at a glance.
+  const zeroY = 190 - ((0 - min) / span) * 170;
 
   return (
     <svg viewBox="0 0 700 200" preserveAspectRatio="none" className="h-[200px] w-full" aria-hidden>
@@ -13,6 +35,7 @@ export function AreaChart() {
         </linearGradient>
       </defs>
       <path d={area} fill="url(#portfolio-area)" />
+      <line x1="0" y1={zeroY} x2="700" y2={zeroY} stroke="#8A8F98" strokeWidth={1} strokeDasharray="4 4" vectorEffect="non-scaling-stroke" opacity={0.4} />
       <path d={line} fill="none" stroke="#28B8D5" strokeWidth={2} vectorEffect="non-scaling-stroke" />
     </svg>
   );

@@ -6,6 +6,7 @@ import { BotMenu } from "@/components/admin/BotMenu";
 import { getSession } from "@/lib/auth/session";
 import { isSubscriptionActive } from "@/lib/billing";
 import { prisma } from "@/lib/db";
+import { describeEvent } from "@/lib/my-bots/live-view";
 
 export const metadata: Metadata = {
   title: "Admin Dashboard · ATS-ALGO",
@@ -25,9 +26,11 @@ export default async function AdminDashboardPage() {
 
   const thirtyDaysAgo = cutoffDaysAgo(30);
 
+  const oneDayAgo = cutoffDaysAgo(1);
+
   const [
     totalBots,
-    activeBots,
+    publishedBots,
     users,
     subscribers,
     newSignups,
@@ -40,8 +43,17 @@ export default async function AdminDashboardPage() {
     pastDueCount,
     notRenewingCount,
     churnRaw,
+    runningDeploymentsRaw,
+    totalDeployments,
+    openPositions,
+    signals24h,
+    failures24h,
+    liveArmedCount,
+    engineErrorsRaw,
   ] = await Promise.all([
     prisma.bot.count(),
+    // Published = listed in the library. NOT the same as running: a member has to
+    // deploy a bot and switch it on before it trades. See `runningDeployments`.
     prisma.bot.count({ where: { status: "ACTIVE" } }),
     prisma.user.count({ where: { role: "USER" } }),
     // "Paying" excludes admin-granted comps (isComp) — they're free, not revenue —
@@ -95,11 +107,41 @@ export default async function AdminDashboardPage() {
         user: { select: { name: true, email: true } },
       },
     }),
+
+    // ── Execution engine health. Nothing else in the admin panel can see this. ──
+    prisma.userBot.findMany({ where: { active: true }, select: { botId: true }, distinct: ["botId"] }),
+    prisma.userBot.count(),
+    prisma.position.count({ where: { status: "OPEN" } }),
+    prisma.signal.count({ where: { createdAt: { gte: oneDayAgo } } }),
+    prisma.executionLog.count({ where: { level: "error", createdAt: { gte: oneDayAgo } } }),
+    // Deployments armed to trade REAL money. The number an operator must know.
+    prisma.userBot.count({ where: { liveArmed: true } }),
+    prisma.executionLog.findMany({
+      where: { level: { in: ["error", "warn"] } },
+      orderBy: { createdAt: "desc" },
+      take: 6,
+      select: { id: true, level: true, event: true, detail: true, createdAt: true },
+    }),
   ]);
 
   const data: AdminOverviewData = {
-    activeBots,
+    publishedBots,
     totalBots,
+    engine: {
+      runningBots: runningDeploymentsRaw.length,
+      totalDeployments,
+      openPositions,
+      signals24h,
+      failures24h,
+      liveArmed: liveArmedCount,
+      recent: engineErrorsRaw.map((log) => ({
+        id: log.id,
+        level: log.level,
+        event: log.event,
+        message: describeEvent(log.event, log.detail as Record<string, unknown> | null),
+        at: shortDate(log.createdAt),
+      })),
+    },
     users,
     subscribers,
     newSignups,

@@ -1,47 +1,71 @@
+import Link from "next/link";
 import { SectionHeading } from "@/components/dashboard/SectionHeading";
 import { TAG_ICONS } from "@/components/dashboard/icons";
-import { PH, TOP_BOTS } from "@/lib/dashboard-data";
+import { cn } from "@/lib/cn";
+import { format, type TopBot } from "@/lib/dashboard/metrics";
 
-const TAGS = [
-  { icon: TAG_ICONS.strategy, label: "Scalping" },
-  { icon: TAG_ICONS.clock, label: "5m" },
-  { icon: TAG_ICONS.risk, label: "Medium" },
-];
-
-export function TopActiveBots() {
+/**
+ * The best-returning bots that are actually RUNNING — deployed by a member and
+ * switched on. When nobody is running anything we fall back to the published
+ * catalogue, and say so rather than implying those bots are live.
+ */
+export function TopActiveBots({ bots, running }: { bots: TopBot[]; running: boolean }) {
   return (
     <section className="flex flex-col gap-4">
-      <SectionHeading title="Top Active Bots" subtitle="Best performing bots currently active across the platform." />
+      <SectionHeading
+        title={running ? "Top Active Bots" : "Top Published Bots"}
+        subtitle={
+          running
+            ? "Best performing bots currently running across the platform."
+            : "No bots are running yet — showing the best published bots by backtest."
+        }
+      />
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-        {TOP_BOTS.map((bot) => (
-          <article
-            key={bot.id}
-            className="relative isolate flex flex-col gap-6 overflow-hidden rounded-2xl border border-line bg-surface p-4"
-          >
-            <span
-              aria-hidden
-              className="pointer-events-none absolute -left-[45px] -top-[41px] z-0 size-[102px] rounded-full bg-accent/20 blur-[32px]"
-            />
-            <div className="relative z-[1] flex items-start justify-between">
-              <div className="flex flex-col gap-0.5">
-                <span className="text-sm font-semibold text-white">{bot.name}</span>
-                <span className="text-xs text-muted">{bot.pair}</span>
-              </div>
-              <span className="rounded-full bg-success/10 px-2.5 py-1 text-xs font-semibold text-success">{PH}</span>
-            </div>
-
-            <div className="relative z-[1] flex items-center gap-4">
-              {TAGS.map((tag) => (
-                <span key={tag.label} className="flex items-center gap-1.5 text-xs text-muted">
-                  <tag.icon className="text-accent" />
-                  {tag.label}
+      {bots.length === 0 ? (
+        <div className="rounded-2xl border border-line bg-surface p-6 text-sm text-muted">
+          No bots published yet.
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+          {bots.map((bot) => (
+            <Link
+              key={bot.id}
+              href={`/bot-library/${bot.id}`}
+              className="relative isolate flex flex-col gap-6 overflow-hidden rounded-2xl border border-line bg-surface p-4 transition-colors hover:border-accent/40"
+            >
+              <span
+                aria-hidden
+                className="pointer-events-none absolute -left-[45px] -top-[41px] z-0 size-[102px] rounded-full bg-accent/20 blur-[32px]"
+              />
+              <div className="relative z-[1] flex items-start justify-between gap-2">
+                <div className="flex min-w-0 flex-col gap-0.5">
+                  <span className="truncate text-sm font-semibold text-white">{bot.name}</span>
+                  <span className="text-xs text-muted">{bot.pair}</span>
+                </div>
+                <span
+                  className={cn(
+                    "shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold",
+                    bot.returnPct >= 0 ? "bg-success/10 text-success" : "bg-[#D2031E]/10 text-[#D2031E]",
+                  )}
+                >
+                  {format.signedPct(bot.returnPct)}
                 </span>
-              ))}
-            </div>
-          </article>
-        ))}
-      </div>
+              </div>
+
+              <div className="relative z-[1] flex items-center gap-4">
+                <span className="flex items-center gap-1.5 text-xs text-muted">
+                  <TAG_ICONS.clock className="text-accent" />
+                  {bot.timeframe}
+                </span>
+                <span className="flex items-center gap-1.5 text-xs text-muted">
+                  <TAG_ICONS.risk className="text-accent" />
+                  {bot.risk}
+                </span>
+              </div>
+            </Link>
+          ))}
+        </div>
+      )}
     </section>
   );
 }

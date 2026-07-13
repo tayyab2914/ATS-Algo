@@ -9,9 +9,23 @@ const RISK_LABEL = { LOW: "Low", MEDIUM: "Medium", HIGH: "High" } as const;
 export type SignupType = "member" | "guest";
 export type ChurnKind = "canceled" | "pastDue" | "notRenewing";
 
+export type EngineHealth = {
+  /** Distinct bots a member has deployed AND switched on. */
+  runningBots: number;
+  totalDeployments: number;
+  openPositions: number;
+  signals24h: number;
+  failures24h: number;
+  /** Deployments armed to trade REAL money. */
+  liveArmed: number;
+  recent: { id: string; level: string; event: string; message: string; at: string }[];
+};
+
 export type AdminOverviewData = {
-  activeBots: number;
+  /** Bots listed in the library. Says nothing about whether anyone runs them. */
+  publishedBots: number;
   totalBots: number;
+  engine: EngineHealth;
   users: number;
   subscribers: number;
   newSignups: number;
@@ -37,24 +51,81 @@ const CHURN_BADGE: Record<ChurnKind, { label: string; className: string }> = {
 const pct = (x: number) => `${x >= 0 ? "+" : ""}${x.toFixed(2)}%`;
 
 export function AdminOverview({ data }: { data: AdminOverviewData }) {
-  const disabledBots = Math.max(0, data.totalBots - data.activeBots);
+  const disabledBots = Math.max(0, data.totalBots - data.publishedBots);
+  const { engine } = data;
 
   return (
     <div className="flex flex-col gap-6">
       {/* KPI cards */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <KpiTile label="Active Bots" value={String(data.activeBots)} sub={`of ${data.totalBots} total`} Icon={ToggleIcon} />
+        <KpiTile label="Published Bots" value={String(data.publishedBots)} sub={`of ${data.totalBots} total`} Icon={ToggleIcon} />
         <KpiTile label="Users" value={data.users.toLocaleString("en-US")} Icon={ShieldUsersIcon} />
         <KpiTile label="Paying Subscribers" value={data.subscribers.toLocaleString("en-US")} Icon={GiftIcon} />
         <KpiTile label="New Signups" value={data.newSignups.toLocaleString("en-US")} sub="last 30 days" Icon={UserIcon} />
       </div>
+
+      {/* Execution engine — the only view an operator has of what is actually trading. */}
+      <AdminCard
+        title="Execution engine"
+        subtitle="What is running right now, and what went wrong in the last 24 hours."
+      >
+        <div className="flex flex-col gap-5">
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+            <MiniStat label="Running bots" value={engine.runningBots} tone={engine.runningBots ? "success" : "muted"} Icon={BotIcon} />
+            <MiniStat label="Deployments" value={engine.totalDeployments} tone="muted" Icon={BotIcon} />
+            <MiniStat label="Open positions" value={engine.openPositions} tone={engine.openPositions ? "success" : "muted"} Icon={BotIcon} />
+            <MiniStat label="Signals (24h)" value={engine.signals24h} tone="muted" Icon={BotIcon} />
+            <MiniStat label="Errors (24h)" value={engine.failures24h} tone={engine.failures24h ? "danger" : "muted"} Icon={BotIcon} />
+          </div>
+
+          {/* Real money. Never let this be something an operator has to go looking for. */}
+          <div
+            className={cn(
+              "flex items-center justify-between gap-3 rounded-xl border px-4 py-3",
+              engine.liveArmed > 0 ? "border-[#D2031E]/40 bg-[#D2031E]/10" : "border-line bg-background",
+            )}
+          >
+            <div className="flex flex-col">
+              <span className={cn("text-sm font-semibold", engine.liveArmed > 0 ? "text-[#D2031E]" : "text-white")}>
+                {engine.liveArmed > 0
+                  ? `${engine.liveArmed} deployment${engine.liveArmed === 1 ? "" : "s"} armed for real money`
+                  : "No deployment is armed for live trading"}
+              </span>
+              <span className="text-xs text-muted">
+                A signal places real orders only where a member has explicitly armed a live key.
+              </span>
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <span className="text-xs font-semibold text-muted">Recent warnings and errors</span>
+            {engine.recent.length === 0 ? (
+              <p className="text-sm text-muted">Nothing to report.</p>
+            ) : (
+              <ul className="flex flex-col gap-1.5">
+                {engine.recent.map((entry) => (
+                  <li key={entry.id} className="flex items-start justify-between gap-3 border-b border-line/60 pb-1.5 last:border-0">
+                    <div className="flex min-w-0 flex-col">
+                      <span className={cn("truncate text-xs font-medium", entry.level === "error" ? "text-[#D2031E]" : "text-[#F5A524]")}>
+                        {entry.message}
+                      </span>
+                      <span className="font-mono text-[10px] text-muted">{entry.event}</span>
+                    </div>
+                    <span className="shrink-0 text-[10px] text-muted">{entry.at}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      </AdminCard>
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
         {/* Bots overview */}
         <AdminCard title="Bots overview" subtitle="Health and best performers across the catalogue.">
           <div className="flex flex-col gap-5">
             <div className="grid grid-cols-2 gap-3">
-              <MiniStat label="Active" value={data.activeBots} tone="success" Icon={BotIcon} />
+              <MiniStat label="Published" value={data.publishedBots} tone="success" Icon={BotIcon} />
               <MiniStat label="Disabled" value={disabledBots} tone="muted" Icon={BotIcon} />
             </div>
 

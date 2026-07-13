@@ -1,7 +1,18 @@
-/** Decorative 80×40 area sparkline (no data — purely visual). */
-export function Sparkline({ color }: { color: string }) {
+/** An 80×40 area sparkline over a real series. Blank when there's nothing to plot. */
+export function Sparkline({ color, points }: { color: string; points: number[] }) {
+  if (points.length < 2) return <span className="block h-10 w-20" aria-hidden />;
+
   const gradientId = `spark-${color.replace("#", "")}`;
-  const line = "M2 30 L13 26 L24 28 L35 18 L46 21 L57 13 L68 15 L78 8";
+  const min = Math.min(...points);
+  const max = Math.max(...points);
+  const span = max - min || 1;
+
+  const coords = points.map((value, index) => {
+    const x = 2 + (index / (points.length - 1)) * 76;
+    const y = 34 - ((value - min) / span) * 26;
+    return `${x.toFixed(1)} ${y.toFixed(1)}`;
+  });
+  const line = `M${coords.join(" L")}`;
   const area = `${line} L78 40 L2 40 Z`;
 
   return (

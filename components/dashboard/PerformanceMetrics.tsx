@@ -1,20 +1,28 @@
-import { ChevronDown } from "@/components/dashboard/icons";
 import { MetricCard } from "@/components/dashboard/MetricCard";
-import { METRICS } from "@/lib/dashboard-data";
+import { PeriodTabs } from "@/components/dashboard/PeriodTabs";
+import type { DashboardData } from "@/lib/dashboard/metrics";
+import { PERIOD_DAYS } from "@/lib/dashboard/window";
 
-export function PerformanceMetrics() {
+export function PerformanceMetrics({ data }: { data: DashboardData }) {
+  const days = PERIOD_DAYS[data.period];
+
   return (
     <section className="flex flex-col gap-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-base font-semibold leading-6 text-white">Performance Metrics</h2>
-        <div className="flex items-center gap-2 rounded-lg border border-line bg-surface px-2 py-1 text-xs text-muted">
-          <span>30 D</span>
-          <ChevronDown className="text-muted" />
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-col gap-0.5">
+          <h2 className="text-base font-semibold leading-6 text-white">Performance Metrics</h2>
+          <p className="text-xs text-muted">
+            {data.hasLive
+              ? `Realized across trades closed in the last ${days} days.`
+              : `No trades closed in the last ${days} days — showing the catalogue's backtested figures.`}{" "}
+            Windows are UTC+2.
+          </p>
         </div>
+        <PeriodTabs active={data.period} timeframe={data.timeframe} />
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {METRICS.map((metric) => (
+        {data.metrics.map((metric) => (
           <MetricCard key={metric.id} metric={metric} />
         ))}
       </div>

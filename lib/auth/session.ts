@@ -19,10 +19,22 @@ const MAX_AGE_SECONDS = 60 * 60 * 24 * 7; // 7 days
  * database, so this is the single place these revocations actually take effect.
  */
 async function isSessionLive(session: SessionPayload): Promise<boolean> {
-  const user = await prisma.user.findUnique({
-    where: { id: session.sub },
-    select: { status: true, sessionsValidFrom: true },
-  });
+  let user: { status: string; sessionsValidFrom: Date | null } | null;
+  try {
+    user = await prisma.user.findUnique({
+      where: { id: session.sub },
+      select: { status: true, sessionsValidFrom: true },
+    });
+  } catch (error) {
+    // The DB is unreachable, so we can't confirm the account is still in good
+    // standing. A revocation check that cannot verify must fail CLOSED: treat the
+    // session as not-live so a transient blip renders the signed-out view instead
+    // of throwing a 500 (which would take down even the public landing page). It
+    // self-heals on the next request once the DB recovers. Logged, never silent,
+    // so a real outage stays diagnosable rather than looking like a mass logout.
+    console.error("isSessionLive: liveness query failed — failing closed", error);
+    return false;
+  }
   if (!user || user.status !== "ACTIVE") return false;
   if (user.sessionsValidFrom && session.iat != null) {
     // `iat` is whole seconds; the cutoff is a precise instant.

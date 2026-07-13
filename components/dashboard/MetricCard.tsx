@@ -1,15 +1,26 @@
 import { MetricIcon } from "@/components/dashboard/icons";
-import { Sparkline } from "@/components/dashboard/Sparkline";
-import { PH, type Metric } from "@/lib/dashboard-data";
+import { cn } from "@/lib/cn";
+import type { DashboardMetric } from "@/lib/dashboard/metrics";
 
 /**
- * A single performance-metric card: label + icon chip, a placeholder value, and
- * (for trending metrics) a coloured delta with a sparkline. Mirrors the design's
- * corner glow and top gradient hairline.
+ * One performance metric.
+ *
+ * The `source` badge is the point: the catalogue's backtested 30-day return and a
+ * realized live result are different claims, and a member must never mistake one
+ * for the other. "live" is earned; "backtest" is a promise; "—" is honest.
  */
-export function MetricCard({ metric }: { metric: Metric }) {
-  const showFooter = metric.trend === "up";
+const SOURCE_STYLE: Record<DashboardMetric["source"], string> = {
+  live: "bg-success/10 text-success",
+  backtest: "bg-white/5 text-muted",
+  none: "bg-white/5 text-muted",
+};
+const SOURCE_LABEL: Record<DashboardMetric["source"], string> = {
+  live: "live",
+  backtest: "backtest",
+  none: "no data",
+};
 
+export function MetricCard({ metric }: { metric: DashboardMetric }) {
   return (
     <article className="relative isolate flex h-[138px] flex-col justify-between overflow-hidden rounded-2xl border border-line bg-surface p-4">
       <span
@@ -28,16 +39,28 @@ export function MetricCard({ metric }: { metric: Metric }) {
         </span>
       </div>
 
-      <span className="relative z-[2] text-xl font-semibold leading-[26px] text-white">{PH}</span>
+      <span
+        className={cn(
+          "relative z-[2] text-xl font-semibold leading-[26px]",
+          metric.source === "none" ? "text-muted" : "text-white",
+        )}
+      >
+        {metric.value}
+      </span>
 
-      {showFooter ? (
-        <div className="relative z-[4] flex items-end justify-between">
-          <span className="text-xs leading-[18px] text-success">{PH}</span>
-          <Sparkline color="#22C55E" />
-        </div>
-      ) : (
-        <div className="h-10" aria-hidden />
-      )}
+      <div className="relative z-[4] flex items-end justify-between gap-2">
+        <span
+          className={cn(
+            "truncate text-xs leading-[18px]",
+            metric.tone === "success" ? "text-success" : metric.tone === "danger" ? "text-[#D2031E]" : "text-muted",
+          )}
+        >
+          {metric.delta ?? ""}
+        </span>
+        <span className={cn("shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold", SOURCE_STYLE[metric.source])}>
+          {SOURCE_LABEL[metric.source]}
+        </span>
+      </div>
     </article>
   );
 }

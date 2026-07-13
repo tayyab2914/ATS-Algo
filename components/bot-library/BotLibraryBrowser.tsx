@@ -34,7 +34,7 @@ export function BotLibraryBrowser({ bots, categories }: { bots: BotTableRow[]; c
       return (
         b.name.toLowerCase().includes(q) ||
         (b.ticker ?? "").toLowerCase().includes(q) ||
-        (b.exchange ?? "").toLowerCase().includes(q)
+        b.exchanges.some((e) => e.toLowerCase().includes(q))
       );
     });
   }, [bots, filter, query]);

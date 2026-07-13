@@ -5,6 +5,7 @@ import { AdminSidebar } from "@/components/admin/AdminSidebar";
 import { PlusIcon } from "@/components/admin/admin-icons";
 import { BotsBrowser } from "@/components/admin/BotsBrowser";
 import { type BotTableRow } from "@/components/admin/BotsTable";
+import { countFor, deploymentCounts } from "@/lib/bots/deployment-counts";
 import { getCategoryNames } from "@/lib/categories";
 import { getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
@@ -21,7 +22,7 @@ export default async function BotManagementPage() {
   // Select only the table columns. Crucially this skips `csvData` (raw signal
   // CSV — can be megabytes per bot), `config` and `results` (JSON), which the
   // list never shows but `findMany` would otherwise ship for every row.
-  const [rows, categories]: [BotTableRow[], string[]] = await Promise.all([
+  const [bots, categories, counts] = await Promise.all([
     prisma.bot.findMany({
       orderBy: { createdAt: "desc" },
       select: {
@@ -30,6 +31,7 @@ export default async function BotManagementPage() {
         category: true,
         ticker: true,
         exchange: true,
+        exchanges: true,
         timeframe: true,
         riskClass: true,
         status: true,
@@ -44,7 +46,11 @@ export default async function BotManagementPage() {
       },
     }),
     getCategoryNames(),
+    deploymentCounts(),
   ]);
+
+  // Adoption ("users") and what is actually trading ("running") are different facts.
+  const rows: BotTableRow[] = bots.map((bot) => ({ ...bot, ...countFor(counts, bot.id) }));
 
   return (
     <div className="flex min-h-screen w-full flex-col bg-background text-white lg:flex-row">

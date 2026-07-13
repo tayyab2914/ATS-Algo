@@ -7,24 +7,37 @@ import { PortfolioAndHoldings } from "@/components/dashboard/PortfolioAndHolding
 import { TopActiveBots } from "@/components/dashboard/TopActiveBots";
 import { TopAssets } from "@/components/dashboard/TopAssets";
 import { blockExpiredGuest, getPageAccess } from "@/lib/auth/guards";
+import { loadDashboard } from "@/lib/dashboard/metrics";
+import { parsePeriod, parseTimeframe } from "@/lib/dashboard/window";
 
 export const metadata: Metadata = {
   title: "Dashboard · ATS-ALGO",
 };
 
-export default async function DashboardPage() {
+export default async function DashboardPage({ searchParams }: PageProps<"/dashboard">) {
   const { session, tier } = await getPageAccess();
   // Expired guests are walled to Billing; visitors see the locked preview;
   // active guests and members alike see the (read-only) dashboard content.
   blockExpiredGuest(tier);
 
+  const params = await searchParams;
+  // Two controls, two windows. `p` picks a trailing period the catalogue can
+  // actually express (30/90/180/360d); `tf` picks a calendar window over live
+  // trades, where "today" and "this week" mean something.
+  const period = parsePeriod(params.p);
+  const timeframe = parseTimeframe(params.tf);
+
+  // A visitor has no deployments, so the member panels load empty — and the guest
+  // gate blurs them regardless. Platform metrics are identical for everyone.
+  const data = await loadDashboard(session?.sub ?? null, period, timeframe);
+
   const content = (
     <>
-      <PerformanceMetrics />
-      <TopActiveBots />
-      <MyBotsPerformance />
-      <PortfolioAndHoldings />
-      <TopAssets />
+      <PerformanceMetrics data={data} />
+      <TopActiveBots bots={data.topBots} running={data.topBotsAreRunning} />
+      <MyBotsPerformance bots={data.myBots} timeframe={data.timeframe} period={data.period} />
+      <PortfolioAndHoldings data={data} />
+      <TopAssets performers={data.topPerformers} />
     </>
   );
 

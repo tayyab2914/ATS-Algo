@@ -1,6 +1,9 @@
 // Smoke-test the shipped backtest engine against the fixtures and the reference
 // scenario-table numbers from TEST SIM/runs/BTC/.../scenario_table_safe.csv.
-// Run: node --experimental-strip-types scripts/verify-engine.ts
+// Run: npx tsx scripts/verify-engine.ts
+// (tsx, not `node --experimental-strip-types` — the engine now imports the shared
+//  config types from lib/bot-config.ts, and bare Node's ESM resolver needs an
+//  explicit file extension there.)
 import { readFileSync } from "node:fs";
 import { runBacktest, roundMetrics, type RiskKey } from "../lib/backtest/engine.ts";
 

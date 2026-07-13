@@ -37,34 +37,12 @@
  * count those as losses; see the safe profile, which flips between the two.)
  */
 
-export type RiskKey = "safe" | "balanced" | "aggressive";
-export type RiskClass = "LOW" | "MEDIUM" | "HIGH";
+// The config shape lives in lib/bot-config.ts so the live execution path can read
+// a bot's ladder without importing this engine. Re-exported here unchanged.
+import { RISK_KEYS, type BotConfig, type ProfileConfig, type RiskKey } from "../bot-config";
 
-export const RISK_TO_PROFILE: Record<RiskClass, RiskKey> = {
-  LOW: "safe",
-  MEDIUM: "balanced",
-  HIGH: "aggressive",
-};
-
-export type ProfileConfig = {
-  tp: number[];
-  w: number[];
-  sl: number;
-  /** Move the stop to break-even after this many TP rungs fill (null/0 = never). */
-  be: number | null;
-  lev: number;
-};
-
-export type BotConfig = {
-  name?: string;
-  ticker?: string;
-  type?: string;
-  exchange?: string;
-  timeframe?: string;
-  optimized_period?: number;
-  fees?: { maker_fee_pct?: number; taker_fee_pct?: number };
-  profiles: Record<RiskKey, ProfileConfig>;
-};
+export { RISK_TO_PROFILE } from "../bot-config";
+export type { BotConfig, ProfileConfig, RiskClass, RiskKey } from "../bot-config";
 
 export type Candle = {
   time: Date;
@@ -126,7 +104,6 @@ export type BacktestOptions = {
 };
 
 const DAY_MS = 86_400_000;
-const RISK_KEYS: RiskKey[] = ["safe", "balanced", "aggressive"];
 const EPS = 1e-9;
 
 /** Column aliases (case-insensitive) for the TradingView export header. */

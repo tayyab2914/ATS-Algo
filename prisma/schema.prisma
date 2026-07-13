@@ -161,15 +161,37 @@ enum SubscriptionStatus {
   PAUSED
 }
 
-/// A user's connection to an exchange's API (key stored masked, never raw).
+/// A user's connection to an exchange's API. The usable credentials are stored
+/// ENCRYPTED at rest (AES-256-GCM, see lib/crypto/secrets.ts); `apiKeyMasked` is
+/// kept only for display. Legacy rows created before encryption existed have the
+/// mask but null ciphertext — treated as "reconnect required" by the read path.
 model ExchangeConnection {
-  id           String   @id @default(cuid())
+  id           String @id @default(cuid())
   userId       String
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user         User   @relation(fields: [userId], references: [id], onDelete: Cascade)
   exchange     String
-  permissions  String   @default("Read & Trade")
+  /// Human-readable scope derived from the key at validation time (e.g. "Read &
+  /// Trade"). No longer a hardcoded constant.
+  permissions  String @default("Read & Trade")
+  /// Display-only mask of the API key (last 4 chars). Never used for signing.
   apiKeyMasked String?
-  createdAt    DateTime @default(now())
+
+  /// AES-256-GCM ciphertext, each a self-describing packed "iv.tag.ct" (base64url)
+  /// string. Nullable so pre-encryption rows stay valid until re-connected.
+  /// `passphraseEnc` is only set for venues that require one (e.g. Bitget).
+  apiKeyEnc     String?
+  apiSecretEnc  String?
+  passphraseEnc String?
+  /// True when this is a DEMO/paper (sandbox) key rather than a live one. Detected
+  /// automatically at connect time (a demo key only validates in sandbox mode) and
+  /// drives whether execution runs against Bitget's paper engine or real money.
+  sandbox Boolean @default(false)
+  /// Which ENCRYPTION_KEY version encrypted this row (supports future rotation).
+  keyVersion Int @default(1)
+  /// Last time the key passed CCXT read-only validation.
+  lastVerifiedAt DateTime?
+
+  createdAt DateTime @default(now())
 
   @@unique([userId, exchange])
   @@map("exchange_connections")
@@ -222,7 +244,12 @@ model Bot {
   ticker    String?
   category  String
   assetType String? // from JSON `type` (e.g. Crypto)
-  exchange  String? // from JSON `exchange` (e.g. Bybit)
+  /// Display-primary venue, kept mirrored to `exchanges[0]` so tables/cards/badges
+  /// that show a single exchange keep working.
+  exchange  String?
+  /// Exchanges the admin ALLOWS this bot to run on (1..3). The user picks ONE of
+  /// these per deployment (see UserBot.exchangeSource).
+  exchanges String[] @default([])
   timeframe String
   riskClass RiskClass @default(MEDIUM)
   status    BotStatus @default(ACTIVE)
@@ -244,8 +271,16 @@ model Bot {
 
   results Json? // full per-profile metrics from the backtest
 
+  /// Shared secret the TradingView alert embeds in its JSON payload, proving the
+  /// signal came from this bot's alert. AES-256-GCM, AAD = the bot id (a bot fans
+  /// out to many users, so there is no single userId to bind to).
+  signalSecretEnc  String?
+  /// Which ENCRYPTION_KEY version encrypted `signalSecretEnc` (supports rotation).
+  signalKeyVersion Int     @default(1)
+
   revisions BotRevision[]
   userBots  UserBot[]
+  signals   Signal[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -275,9 +310,7 @@ model BotRevision {
 /// A bot a user has added to "My Bots" from the library. `active` distinguishes
 /// a running deployment (Active Bots tab) from one merely added but idle
 /// (Non-Active Bots tab). `allocatedCapital` is the user-set capital behind the
-/// deployment (defaults to 0, editable later). Live execution metrics (PnL, TP
-/// progress, break-even) are not modelled yet — there is no execution engine, so
-/// the UI shows them as placeholders. One row per (user, bot).
+/// deployment (defaults to 0, editable later). One row per (user, bot).
 model UserBot {
   id     String @id @default(cuid())
   userId String
@@ -289,8 +322,7 @@ model UserBot {
   allocatedCapital Float   @default(0)
 
   // Bot Settings — capital & automation controls set from the deployment's
-  // Settings screen. No execution engine consumes these yet; they are persisted
-  // so the member's configuration survives reloads.
+  // Settings screen.
   allocationType AllocationType @default(FIXED)
   /// Capital used per trade — a dollar amount when FIXED, a percentage (0–100)
   /// of the allocated balance when PERCENTAGE.
@@ -300,12 +332,248 @@ model UserBot {
   /// Chosen exchange/wallet the deployment draws from (a BOT_EXCHANGES value).
   exchangeSource  String?
 
+  /// Running sum of realized PnL for this deployment. When `compounding`, sizing
+  /// works off `allocatedCapital + realizedBalance`. Only the reconcile job writes it.
+  realizedBalance Float @default(0)
+
+  /// SAFETY GATE. A webhook has no human to confirm a real-money trade, so a live
+  /// (non-sandbox) connection additionally requires this explicit, deliberate
+  /// opt-in. Sandbox keys always trade (paper money); live keys never do until
+  /// this is true. Default false — never inferred, never set implicitly.
+  liveArmed Boolean @default(false)
+
+  /// Fingerprint of the exchange settings already applied for this deployment —
+  /// `exchange|mode|symbol|leverage`. Preparing (one-way position mode, cross
+  /// margin, profile leverage) at arm time keeps three REST round-trips off the
+  /// order path.
+  ///
+  /// A fingerprint rather than a timestamp on purpose: leverage changes when an
+  /// admin edits the bot's risk class, the symbol changes with its ticker, and the
+  /// mode flips when a demo key is swapped for a live one. A timestamp would still
+  /// read "prepared" and the next order would go out at the wrong leverage. Any
+  /// mismatch re-prepares, so no caller has to remember to invalidate it.
+  exchangePrepared String?
+
+  positions Position[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([userId, botId])
   @@index([userId])
   @@map("user_bots")
+}
+
+// ── Execution engine ─────────────────────────────────────────────────────────
+
+/// What a TradingView alert (or an admin dispatch) is telling us to do. `TP1..TP10`
+/// mirror the indicator's take-profit alerts; they are only *hints* to re-check
+/// fills, never a source of price — TP levels come from the bot's config JSON.
+enum SignalAction {
+  ENTER
+  EXIT
+  TP1
+  TP2
+  TP3
+  TP4
+  TP5
+  TP6
+  TP7
+  TP8
+  TP9
+  TP10
+}
+
+enum PositionSide {
+  LONG
+  SHORT
+}
+
+enum PositionStatus {
+  OPEN
+  CLOSED
+}
+
+enum OrderKind {
+  ENTRY
+  STOP
+  TP
+  /// The market order that flattens a position on an `exit` signal. Recorded so
+  /// its fills can be attributed when realized PnL is booked.
+  CLOSE
+}
+
+enum OrderState {
+  PENDING
+  OPEN
+  FILLED
+  CANCELED
+  REJECTED
+}
+
+/// One verified inbound signal. This row is the idempotency anchor for the whole
+/// engine: TradingView retries alerts, and without the `(botId, action, ts)`
+/// unique a replayed `ENTER` would open a second real position. `ts` is the
+/// indicator's bar-open timestamp, which is stable within a bar. Insert first,
+/// act second — a duplicate hits the unique index and is dropped.
+model Signal {
+  id     String       @id @default(cuid())
+  botId  String
+  bot    Bot          @relation(fields: [botId], references: [id], onDelete: Cascade)
+  action SignalAction
+  /// Set on ENTER only; TP/EXIT act on whatever position is currently open.
+  side   PositionSide?
+  /// Indicator bar-open timestamp (epoch ms, as sent). Part of the dedupe key.
+  ts     String
+  /// Where it came from: "tradingview" or "admin".
+  source String       @default("tradingview")
+  /// The verified payload, kept for audit.
+  raw    Json
+
+  createdAt DateTime @default(now())
+
+  @@unique([botId, action, ts])
+  @@index([botId, createdAt])
+  @@map("signals")
+}
+
+/// One user's live position for one bot, opened from a Signal and fanned out.
+/// `(userBotId, entrySignalId)` is unique so a retried fan-out cannot double-open.
+model Position {
+  id        String  @id @default(cuid())
+  userBotId String
+  userBot   UserBot @relation(fields: [userBotId], references: [id], onDelete: Cascade)
+  /// Denormalized so reconcile can resolve the exchange connection without a join.
+  userId    String
+  /// The ENTER signal that opened this position (scalar, not a relation — an
+  /// audit trail should not be able to block a cascade delete).
+  entrySignalId String
+
+  /// A BOT_EXCHANGES value, e.g. "Bitget".
+  exchange String
+  symbol   String
+  /// True when this was placed against the exchange's paper engine.
+  sandbox  Boolean
+
+  side   PositionSide
+  status PositionStatus @default(OPEN)
+
+  leverage   Float
+  /// Actual fill price of the entry order — every TP/stop level derives from it.
+  entryPrice Float
+  /// Total contracts opened.
+  size       Float
+  /// Collateral committed (size * entryPrice / leverage).
+  marginUsed Float
+
+  initialStopPrice Float
+  currentStopPrice Float
+  /// True once the stop has been moved to `entryPrice` (see ProfileConfig.be).
+  beMoved          Boolean @default(false)
+  /// How many ladder rungs have filled. Display only — break-even is armed by the
+  /// fill of a specific rung INDEX, never by a count (the ladder isn't ascending).
+  tpRungsFilled    Int     @default(0)
+
+  /// Booked by the reconcile job from real fills; feeds UserBot.realizedBalance.
+  realizedPnl  Float     @default(0)
+  /// SL | TP_FULL | EXIT | RECONCILE
+  closedReason String?
+  closedAt     DateTime?
+
+  orders Order[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userBotId, entrySignalId])
+  @@index([userBotId, status])
+  @@index([status])
+  @@map("positions")
+}
+
+/// Every order we place: the market entry, its stop, and one resting reduce-only
+/// limit per take-profit rung. `clientOrderId` is derived deterministically from
+/// (signal, userBot, kind, rung) and sent to the exchange as `clientOid`, so a
+/// retry is rejected by the venue itself — which is what lets the hot path place
+/// orders *before* writing to the database.
+model Order {
+  id         String   @id @default(cuid())
+  positionId String
+  position   Position @relation(fields: [positionId], references: [id], onDelete: Cascade)
+
+  kind  OrderKind
+  state OrderState @default(PENDING)
+
+  /// The venue's own order id, once accepted.
+  exchangeOrderId String?
+  clientOrderId   String  @unique
+
+  /// 0-based index into the profile's `tp[]`/`w[]`; null for ENTRY and STOP.
+  rungIndex Int?
+  /// "buy" | "sell" as sent to the exchange.
+  side      String
+  /// Limit or trigger price; null for a market order.
+  price      Float?
+  size       Float
+  filledSize Float   @default(0)
+  /// Average fill price, once known.
+  avgFillPrice Float?
+  reduceOnly   Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([positionId, kind])
+  @@index([exchangeOrderId])
+  @@index([state])
+  @@map("orders")
+}
+
+/// Append-only audit of every decision on the signal path: which users traded,
+/// which were skipped and why (`live.notArmed`, `bot.notReady`, `no.connection`),
+/// and every exchange error. The foreign keys are plain scalars on purpose — an
+/// audit record must outlive the rows it describes.
+model ExecutionLog {
+  id         String  @id @default(cuid())
+  botId      String?
+  userBotId  String?
+  signalId   String?
+  positionId String?
+
+  /// info | warn | error
+  level  String
+  /// Dotted event name, e.g. "order.placed", "fanout.skip.liveNotArmed".
+  event  String
+  detail Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([botId, createdAt])
+  @@index([userBotId, createdAt])
+  @@index([positionId])
+  @@map("execution_logs")
+}
+
+/// A cached ccxt market descriptor (precision, limits, contract size). Loading
+/// Bitget's full market list costs ~2.7s and 1950 entries; one market object is
+/// ~1.3KB and `setMarkets([m])` costs nothing. Refreshed by the reconcile cron.
+///
+/// Keyed by `sandbox` as well: the descriptors are byte-identical across modes
+/// (verified — same id, precision, contractSize), but AVAILABILITY is not. Bitget's
+/// paper venue lists ~51 markets against ~1950 live, so a miss for
+/// (exchange, symbol, sandbox=true) is what tells us an instrument cannot be
+/// traded on demo.
+model MarketCache {
+  id       String  @id @default(cuid())
+  exchange String
+  symbol   String
+  sandbox  Boolean
+  data     Json
+
+  updatedAt DateTime @updatedAt
+
+  @@unique([exchange, symbol, sandbox])
+  @@map("market_cache")
 }
 
 /// A bot category, managed from the "Update Categories" admin screen. Bots

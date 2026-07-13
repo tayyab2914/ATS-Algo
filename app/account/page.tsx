@@ -11,6 +11,7 @@ import { TwoFactorSection } from "@/components/account/TwoFactorSection";
 import type { ExchangeName } from "@/lib/account";
 import { blockExpiredGuest, getPageAccess } from "@/lib/auth/guards";
 import { prisma } from "@/lib/db";
+import { staticEgressIp } from "@/lib/execution/egress";
 
 export const metadata: Metadata = {
   title: "Account Settings · ATS-ALGO",
@@ -84,7 +85,7 @@ export default async function AccountPage() {
       <ProfileSection initial={{ username: user.name ?? "", avatarUrl: user.avatarUrl }} />
       <EmailChangeSection email={user.email} verified={user.emailVerified !== null} />
       <TwoFactorSection initialEnabled={user.twoFactorEnabled} />
-      <ExchangeSection initial={connections} />
+      <ExchangeSection initial={connections} egressIp={staticEgressIp()} />
     </AppShell>
   );
 }

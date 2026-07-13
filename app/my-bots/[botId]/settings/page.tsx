@@ -3,10 +3,11 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { AppShell } from "@/components/app/AppShell";
 import { BotSettingsForm } from "@/components/my-bots/BotSettingsForm";
-import { MockAreaChart } from "@/components/my-bots/MockAreaChart";
+import { AreaChart } from "@/components/dashboard/AreaChart";
 import { blockExpiredGuest, getPageAccess } from "@/lib/auth/guards";
-import { BOT_EXCHANGES } from "@/lib/bot-exchanges";
+import { chosenExchange } from "@/lib/bot-exchanges";
 import { cn } from "@/lib/cn";
+import { monthlyCurve } from "@/lib/dashboard/metrics";
 import { prisma } from "@/lib/db";
 
 const RISK_EXPOSURE: Record<"LOW" | "MEDIUM" | "HIGH", string> = {
@@ -31,16 +32,45 @@ export default async function BotSettingsPage({ params }: PageProps<"/my-bots/[b
   const userBot = await prisma.userBot.findUnique({
     where: { userId_botId: { userId: session.sub, botId } },
     select: {
+      id: true,
       allocationType: true,
       capitalPerTrade: true,
+      allocatedCapital: true,
       compounding: true,
       exchangeSource: true,
-      bot: { select: { id: true, name: true, riskClass: true } },
+      realizedBalance: true,
+      bot: { select: { id: true, name: true, riskClass: true, exchanges: true } },
+      positions: { where: { status: "CLOSED" }, select: { realizedPnl: true, closedAt: true, marginUsed: true } },
     },
   });
   if (!userBot) notFound();
 
   const { bot } = userBot;
+
+  // This deployment's own record. ROI is measured against the collateral each trade
+  // actually committed — the number leverage magnifies — not against the notional.
+  const closed = userBot.positions.filter(
+    (position): position is { realizedPnl: number; closedAt: Date; marginUsed: number } => position.closedAt !== null,
+  );
+  const realized = closed.reduce((sum, position) => sum + position.realizedPnl, 0);
+  const marginCommitted = closed.reduce((sum, position) => sum + position.marginUsed, 0);
+  const roi = marginCommitted > 0 ? (realized / marginCommitted) * 100 : 0;
+  const { curve } = monthlyCurve(closed, 8);
+
+  // The admin allows one or more exchanges; the user picks one. Precompute the
+  // connection status for EVERY allowed exchange in a single query so switching
+  // the pick in the form is instant (no server round-trip per chip click).
+  const chosen = chosenExchange(userBot.exchangeSource, bot.exchanges);
+  const conns = bot.exchanges.length
+    ? await prisma.exchangeConnection.findMany({
+        where: { userId: session.sub, exchange: { in: bot.exchanges }, NOT: { apiKeyEnc: null } },
+        select: { exchange: true },
+      })
+    : [];
+  const connectedSet = new Set(conns.map((c) => c.exchange));
+  const connectedByExchange: Record<string, boolean> = Object.fromEntries(
+    bot.exchanges.map((e) => [e, connectedSet.has(e)]),
+  );
 
   return (
     <AppShell>
@@ -63,23 +93,40 @@ export default async function BotSettingsPage({ params }: PageProps<"/my-bots/[b
 
       <BotSettingsForm
         botId={bot.id}
-        exchanges={BOT_EXCHANGES}
+        exchanges={bot.exchanges}
+        chosen={chosen}
+        connectedByExchange={connectedByExchange}
         initial={{
           allocationType: userBot.allocationType,
           capitalPerTrade: userBot.capitalPerTrade,
+          allocatedCapital: userBot.allocatedCapital,
           compounding: userBot.compounding,
-          exchangeSource: userBot.exchangeSource,
         }}
       >
-        {/* Performance Overview — static demo figures (no execution engine yet). */}
+        {/* Performance Overview — this deployment's own realized results. */}
         <section className="rounded-2xl border border-line bg-surface p-5 sm:p-6">
-          <h2 className="mb-5 text-base font-semibold text-white">Performance Overview</h2>
+          <h2 className="mb-1 text-base font-semibold text-white">Performance Overview</h2>
+          <p className="mb-5 text-xs text-muted">
+            {closed.length
+              ? `Realized across ${closed.length} closed trade${closed.length === 1 ? "" : "s"}.`
+              : "No closed trades yet — these fill in from real fills."}
+          </p>
           <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <OverviewCard label="ROI" value="+32.4%" tone="success" icon={<TrendIcon />} />
-            <OverviewCard label="Monthly Returns" value="+4.2%" tone="success" icon={<BarIcon />} />
+            <OverviewCard
+              label="ROI on margin"
+              value={closed.length ? `${roi >= 0 ? "+" : ""}${roi.toFixed(2)}%` : "—"}
+              tone={closed.length ? (roi >= 0 ? "success" : "danger") : undefined}
+              icon={<TrendIcon />}
+            />
+            <OverviewCard
+              label="Realized PnL"
+              value={closed.length ? `${realized >= 0 ? "+" : "-"}$${Math.abs(realized).toFixed(2)}` : "—"}
+              tone={closed.length ? (realized >= 0 ? "success" : "danger") : undefined}
+              icon={<BarIcon />}
+            />
             <OverviewCard label="Risk Exposure" value={RISK_EXPOSURE[bot.riskClass]} icon={<ShieldIcon />} />
           </div>
-          <MockAreaChart id="perf-overview" />
+          <AreaChart points={curve} />
         </section>
       </BotSettingsForm>
     </AppShell>
@@ -94,7 +141,8 @@ function OverviewCard({
 }: {
   label: string;
   value: string;
-  tone?: "default" | "success";
+  // Real results can lose money; the mock they replaced never could.
+  tone?: "default" | "success" | "danger";
   icon: React.ReactNode;
 }) {
   return (
@@ -103,7 +151,14 @@ function OverviewCard({
         <span className="text-sm text-muted">{label}</span>
         <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent">{icon}</span>
       </div>
-      <span className={cn("text-2xl font-semibold", tone === "success" ? "text-success" : "text-white")}>{value}</span>
+      <span
+        className={cn(
+          "text-2xl font-semibold",
+          tone === "success" ? "text-success" : tone === "danger" ? "text-[#D2031E]" : "text-white",
+        )}
+      >
+        {value}
+      </span>
     </div>
   );
 }

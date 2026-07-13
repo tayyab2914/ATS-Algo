@@ -3,6 +3,7 @@ import { AppShell } from "@/components/app/AppShell";
 import { BotLibraryBrowser } from "@/components/bot-library/BotLibraryBrowser";
 import { type BotTableRow } from "@/components/admin/BotsTable";
 import { blockExpiredGuest, getPageAccess } from "@/lib/auth/guards";
+import { countFor, deploymentCounts } from "@/lib/bots/deployment-counts";
 import { prisma } from "@/lib/db";
 
 export const metadata: Metadata = {
@@ -24,7 +25,8 @@ export default async function BotLibraryPage() {
 
   // Only the table columns — skips the heavy csvData/config/results blobs. Only
   // ACTIVE bots are public; disabled bots are hidden from members.
-  const rows: BotTableRow[] = await prisma.bot.findMany({
+  const [bots, counts] = await Promise.all([
+    prisma.bot.findMany({
     where: { status: "ACTIVE" },
     orderBy: { createdAt: "desc" },
     select: {
@@ -33,6 +35,7 @@ export default async function BotLibraryPage() {
       category: true,
       ticker: true,
       exchange: true,
+      exchanges: true,
       timeframe: true,
       riskClass: true,
       status: true,
@@ -44,8 +47,13 @@ export default async function BotLibraryPage() {
       d180: true,
       d360: true,
       avgTrade: true,
-    },
-  });
+      },
+    }),
+    deploymentCounts(),
+  ]);
+
+  // "Users" is how many members deployed the bot; "running" how many are trading it.
+  const rows: BotTableRow[] = bots.map((bot) => ({ ...bot, ...countFor(counts, bot.id) }));
 
   // Tabs are the categories actually present, so there are no empty tabs.
   const categories = [...new Set(rows.map((r) => r.category))].sort((a, b) => a.localeCompare(b));

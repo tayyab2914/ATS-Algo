@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { AppShell } from "@/components/app/AppShell";
+import { ExchangePills } from "@/components/admin/ExchangePills";
 import { AddToMyBotsButton } from "@/components/bot-library/AddToMyBotsButton";
 import { EquityChart } from "@/components/bot-library/EquityChart";
 import { RISK_TO_PROFILE, type BotConfig } from "@/lib/backtest/engine";
@@ -23,6 +24,7 @@ async function getActiveBot(id: string) {
       name: true,
       ticker: true,
       exchange: true,
+      exchanges: true,
       assetType: true,
       category: true,
       riskClass: true,
@@ -82,7 +84,7 @@ export default async function BotDetailPage({ params }: PageProps<"/bot-library/
   const tps = profile?.tp ?? [];
   const weights = profile?.w ?? [];
 
-  const subtitle = [bot.ticker, bot.exchange, bot.assetType ?? bot.category].filter(Boolean).join(" · ");
+  const subtitle = [bot.ticker, bot.assetType ?? bot.category].filter(Boolean).join(" · ");
 
   const statCards: Stat[] = [
     { label: "30 Days Performance", value: signedPct(bot.d30), tone: tone(bot.d30) },
@@ -125,6 +127,10 @@ export default async function BotDetailPage({ params }: PageProps<"/bot-library/
         <p className="text-sm leading-[21px] text-muted">
           {subtitle || "—"} · <span className={cn("font-semibold", RISK_TEXT_CLASS[bot.riskClass])}>{RISK_LABEL[bot.riskClass]}</span> risk · {bot.timeframe}
         </p>
+        <div className="mt-1.5 flex flex-wrap items-center gap-2">
+          <span className="text-sm text-muted">Runs on</span>
+          <ExchangePills exchanges={bot.exchanges} />
+        </div>
       </header>
 
       {/* headline stats */}

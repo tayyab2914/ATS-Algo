@@ -3,7 +3,7 @@
 import { type ReactNode, useMemo, useState } from "react";
 import { AdminCard } from "@/components/admin/AdminCard";
 import { BotRowActions } from "@/components/admin/BotRowActions";
-import { ExchangeBadge } from "@/components/admin/ExchangeBadge";
+import { ExchangeCluster } from "@/components/admin/ExchangeCluster";
 import { cn } from "@/lib/cn";
 import { RISK_LABEL, RISK_ORDER, riskBadgeClass } from "@/lib/risk";
 
@@ -12,7 +12,8 @@ export type BotTableRow = {
   name: string;
   category: string;
   ticker: string | null;
-  exchange: string | null;
+  exchange: string | null; // display-primary (exchanges[0]); kept for sorting/search
+  exchanges: string[]; // admin-allowed venues
   timeframe: string;
   riskClass: "LOW" | "MEDIUM" | "HIGH";
   status: "ACTIVE" | "DISABLED";
@@ -24,6 +25,9 @@ export type BotTableRow = {
   d180: number;
   d360: number;
   avgTrade: number;
+  /** How many members have deployed this bot, and how many are running it. */
+  users: number;
+  running: number;
 };
 
 /** Sort accessor key for each sortable column; `null` columns aren't sortable. */
@@ -39,6 +43,7 @@ type SortKey =
   | "d180"
   | "d360"
   | "avgTrade"
+  | "users"
   | "status";
 
 const COLUMNS: { label: string; sort: SortKey | null }[] = [
@@ -53,6 +58,7 @@ const COLUMNS: { label: string; sort: SortKey | null }[] = [
   { label: "180 Days", sort: "d180" },
   { label: "360 Days", sort: "d360" },
   { label: "Avg. Trade", sort: "avgTrade" },
+  { label: "Users", sort: "users" },
   { label: "Status", sort: "status" },
   { label: "Action", sort: null },
 ];
@@ -173,7 +179,9 @@ export function BotsTable({
               rows.map((b) => (
                 <tr key={b.id} className="border-b border-line/60 last:border-0">
                   <td className="px-4 py-4 text-sm font-semibold text-white">{b.name}</td>
-                  <td className="px-4 py-4 text-center"><ExchangeBadge exchange={b.exchange} /></td>
+                  <td className="px-4 py-4">
+                    <span className="flex justify-center"><ExchangeCluster exchanges={b.exchanges} /></span>
+                  </td>
                   <td className="px-4 py-4 text-center text-sm text-muted">{b.timeframe}</td>
                   <td className="px-4 py-4 text-center">
                     <span className={cn("rounded-full px-2.5 py-1 text-xs font-semibold", riskBadgeClass(b.riskClass))}>
@@ -186,7 +194,14 @@ export function BotsTable({
                   <td className="px-4 py-4 text-center text-sm"><Perf value={b.d90} /></td>
                   <td className="px-4 py-4 text-center text-sm"><Perf value={b.d180} /></td>
                   <td className="px-4 py-4 text-center text-sm"><Perf value={b.d360} /></td>
-                  <td className="px-4 py-4 text-center text-sm text-white">{b.avgTrade.toFixed(2)}%</td>
+                  <td className="px-4 py-4 text-center text-sm">
+                    <span className="text-white">{b.users}</span>
+                    {b.running > 0 && (
+                      <span className="ml-1.5 rounded-full bg-success/10 px-1.5 py-0.5 text-[10px] font-semibold text-success">
+                        {b.running} running
+                      </span>
+                    )}
+                  </td>
                   {showStatus && (
                     <td className="px-4 py-4 text-center">
                       <span

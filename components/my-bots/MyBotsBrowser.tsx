@@ -5,24 +5,46 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { ExchangeBadge } from "@/components/admin/ExchangeBadge";
 import { cn } from "@/lib/cn";
+import { botReadiness } from "@/lib/my-bots/readiness";
 import { riskBadgeClass } from "@/lib/risk";
 
 export type MyBotRow = {
   botId: string;
   name: string;
-  exchange: string | null;
+  /** Exchanges the admin allows this bot on. */
+  exchanges: string[];
+  /** The exchange the user has chosen to run on (null when multiple allowed, none picked). */
+  chosen: string | null;
   riskClass: "LOW" | "MEDIUM" | "HIGH";
   winRate: number;
   /** Trailing 360-day backtest return — shown as "Last Performance" on idle cards. */
   d360: number;
   active: boolean;
   allocatedCapital: number;
+  /** How the bot sizes trades — decides whether the allocated pool is required. */
+  allocationType: "FIXED" | "PERCENTAGE";
+  /** Per-trade capital set in Settings — must be > 0 to activate. */
+  capitalPerTrade: number;
+  /** Whether the member has a usable API key for the chosen exchange. */
+  connected: boolean;
+  /** Realized PnL the reconcile job has booked for this deployment. */
+  realizedBalance: number;
+  /** Number of take-profit rungs in the traded profile (the ladder length). */
+  rungCount: number;
+  /** The live position on this deployment right now, or null when flat. */
+  open: { side: "LONG" | "SHORT"; tpRungsFilled: number; beMoved: boolean } | null;
 };
 
 export type MyBotsKpis = {
+  /** Deployments the member has switched ON (UserBot.active) — not published bots. */
   totalActive: number;
   totalCapital: number;
-  avgWinRate: number;
+  /** Realized across every trade these bots have closed. */
+  realizedPnl: number;
+  closedTrades: number;
+  winRate: number;
+  /** False when `winRate` is the bots' backtested figure, not this member's. */
+  winRateIsLive: boolean;
 };
 
 /** Risk class → the profile label the design uses. Colours come from riskBadgeClass. */
@@ -44,10 +66,20 @@ export function MyBotsBrowser({ rows, kpis }: { rows: MyBotRow[]; kpis: MyBotsKp
     <div className="flex flex-col gap-6">
       {/* KPI cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <Kpi label="Total Active Bots" value={String(kpis.totalActive)} icon={<BotIcon />} />
+        <Kpi label="Running Bots" value={String(kpis.totalActive)} icon={<BotIcon />} hint="deployed and switched on" />
         <Kpi label="Total Allocated Capital" value={money(kpis.totalCapital)} icon={<DollarIcon />} />
-        <Kpi label="Total Profit/Loss" value="—" icon={<TrendIcon />} hint="Live once a bot is executing" />
-        <Kpi label="Average Win Rate" value={`${kpis.avgWinRate.toFixed(1)}%`} icon={<TargetIcon />} />
+        <Kpi
+          label="Total Profit/Loss"
+          value={kpis.closedTrades ? `${kpis.realizedPnl >= 0 ? "+" : "-"}$${Math.abs(kpis.realizedPnl).toFixed(2)}` : "—"}
+          icon={<TrendIcon />}
+          hint={kpis.closedTrades ? `${kpis.closedTrades} closed trade${kpis.closedTrades === 1 ? "" : "s"}` : "no closed trades yet"}
+        />
+        <Kpi
+          label="Average Win Rate"
+          value={kpis.closedTrades || kpis.totalActive ? `${kpis.winRate.toFixed(1)}%` : "—"}
+          icon={<TargetIcon />}
+          hint={kpis.winRateIsLive ? "your closed trades" : "backtest, not your results"}
+        />
       </div>
 
       {/* Tabs */}
@@ -113,17 +145,40 @@ function ActiveBots({ rows }: { rows: MyBotRow[] }) {
                   </td>
                   <td className="px-4 py-4 text-center text-sm text-muted">
                     <span className="inline-flex justify-center">
-                      <ExchangeBadge exchange={r.exchange} />
+                      <ExchangeBadge exchange={r.chosen ?? r.exchanges[0] ?? null} />
                     </span>
                   </td>
-                  <td className="px-4 py-4 text-center">
-                    <CapitalCell botId={r.botId} value={r.allocatedCapital} />
+                  <td className="px-4 py-4 text-center text-sm font-medium text-white">{money(r.allocatedCapital)}</td>
+                  {/* Realized PnL booked so far (unrealized on an open position needs a
+                      live price — shown on the detail page, not summarised here). */}
+                  <td
+                    className={cn(
+                      "px-4 py-4 text-center text-sm font-semibold",
+                      r.realizedBalance > 0 ? "text-success" : r.realizedBalance < 0 ? "text-[#D2031E]" : "text-muted",
+                    )}
+                  >
+                    {r.realizedBalance === 0 ? "—" : `${r.realizedBalance >= 0 ? "+" : "-"}$${Math.abs(r.realizedBalance).toFixed(2)}`}
                   </td>
-                  <td className="px-4 py-4 text-center text-sm text-muted">—</td>
-                  <td className="px-4 py-4 text-center text-sm text-muted">—</td>
-                  <td className="px-4 py-4 text-center text-sm text-muted">—</td>
+                  <td className="px-4 py-4 text-center text-sm text-muted">
+                    {r.open ? `${r.open.tpRungsFilled}/${r.rungCount}` : "—"}
+                  </td>
+                  <td className="px-4 py-4 text-center text-sm">
+                    {r.open ? (
+                      <span className={r.open.beMoved ? "font-semibold text-success" : "text-muted"}>
+                        {r.open.beMoved ? "Armed" : "Not yet"}
+                      </span>
+                    ) : (
+                      <span className="text-muted">—</span>
+                    )}
+                  </td>
                   <td className="px-4 py-4 text-center">
-                    <span className="rounded-full bg-success/10 px-2.5 py-1 text-xs font-semibold text-success">Running</span>
+                    {r.open ? (
+                      <span className="rounded-full bg-accent/10 px-2.5 py-1 text-xs font-semibold text-accent">
+                        In position · {r.open.side}
+                      </span>
+                    ) : (
+                      <span className="rounded-full bg-success/10 px-2.5 py-1 text-xs font-semibold text-success">Running</span>
+                    )}
                   </td>
                   <td className="px-4 py-4 text-center">
                     <Link
@@ -140,67 +195,6 @@ function ActiveBots({ rows }: { rows: MyBotRow[] }) {
         </table>
       </div>
     </section>
-  );
-}
-
-/** Inline-editable allocated-capital cell (default $0, edit later). */
-function CapitalCell({ botId, value }: { botId: string; value: number }) {
-  const router = useRouter();
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(String(value));
-  const [pending, setPending] = useState(false);
-
-  async function save() {
-    setEditing(false);
-    const next = Math.max(0, Math.round(Number(draft) || 0));
-    if (next === value) return;
-    setPending(true);
-    try {
-      const res = await fetch(`/api/my-bots/${botId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ allocatedCapital: next }),
-      });
-      if (res.ok) router.refresh();
-    } finally {
-      setPending(false);
-    }
-  }
-
-  if (editing) {
-    return (
-      <input
-        type="number"
-        min={0}
-        autoFocus
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={save}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") save();
-          if (e.key === "Escape") {
-            setDraft(String(value));
-            setEditing(false);
-          }
-        }}
-        className="h-8 w-24 rounded-lg border border-accent/60 bg-background px-2 text-center text-sm text-white focus:outline-none"
-      />
-    );
-  }
-
-  return (
-    <button
-      type="button"
-      onClick={() => {
-        setDraft(String(value));
-        setEditing(true);
-      }}
-      disabled={pending}
-      title="Click to edit allocated capital"
-      className="text-sm font-medium text-white transition-colors hover:text-accent disabled:opacity-60"
-    >
-      {money(value)}
-    </button>
   );
 }
 
@@ -232,18 +226,35 @@ function InactiveBots({ rows }: { rows: MyBotRow[] }) {
 function InactiveCard({ row }: { row: MyBotRow }) {
   const router = useRouter();
   const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const readiness = botReadiness({
+    exchanges: row.exchanges,
+    chosen: row.chosen,
+    connected: row.connected,
+    capitalPerTrade: row.capitalPerTrade,
+    allocationType: row.allocationType,
+    allocatedCapital: row.allocatedCapital,
+  });
 
   async function activate() {
     setPending(true);
+    setError(null);
     try {
       const res = await fetch(`/api/my-bots/${row.botId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ active: true }),
       });
-      if (res.ok) router.refresh();
-      else setPending(false);
+      if (res.ok) {
+        router.refresh();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error ?? "Couldn't activate. Try again.");
+        setPending(false);
+      }
     } catch {
+      setError("Network error. Please try again.");
       setPending(false);
     }
   }
@@ -254,6 +265,12 @@ function InactiveCard({ row }: { row: MyBotRow }) {
         <span className="text-base font-semibold text-white">{row.name}</span>
         <span className="text-sm text-muted">{PROFILE_LABEL[row.riskClass]} Profile</span>
       </div>
+
+      {!readiness.ready && (
+        <p className="text-xs text-[#f5a623]">⚠ Before activating: {readiness.missing.join(" · ")}.</p>
+      )}
+      {error && <p className="text-xs text-[#D2031E]">{error}</p>}
+
       <div className="flex items-end justify-between gap-4">
         <div className="flex flex-col gap-0.5">
           <span className="text-xs text-muted">Last Performance</span>
@@ -268,14 +285,23 @@ function InactiveCard({ row }: { row: MyBotRow }) {
           >
             View
           </Link>
-          <button
-            type="button"
-            onClick={activate}
-            disabled={pending}
-            className="inline-flex h-10 items-center justify-center rounded-2xl bg-accent px-5 text-sm font-semibold text-[#121212] transition-opacity hover:opacity-90 disabled:opacity-60"
-          >
-            {pending ? "Activating…" : "Activate Bot"}
-          </button>
+          {readiness.ready ? (
+            <button
+              type="button"
+              onClick={activate}
+              disabled={pending}
+              className="inline-flex h-10 items-center justify-center rounded-2xl bg-accent px-5 text-sm font-semibold text-[#121212] transition-opacity hover:opacity-90 disabled:opacity-60"
+            >
+              {pending ? "Activating…" : "Activate Bot"}
+            </button>
+          ) : (
+            <Link
+              href={`/my-bots/${row.botId}/settings`}
+              className="inline-flex h-10 items-center justify-center rounded-2xl bg-accent px-5 text-sm font-semibold text-[#121212] transition-opacity hover:opacity-90"
+            >
+              Set Up
+            </Link>
+          )}
         </div>
       </div>
     </div>

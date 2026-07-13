@@ -5,11 +5,12 @@ import { useRef, useState } from "react";
 import { AdminCard } from "@/components/admin/AdminCard";
 import { BacktestResults } from "@/components/admin/BacktestResults";
 import { CheckIcon } from "@/components/admin/admin-icons";
-import { ExchangeSelect } from "@/components/admin/ExchangeSelect";
+import { ExchangeMultiSelect } from "@/components/admin/ExchangeMultiSelect";
 import { Notice, type NoticeData } from "@/components/ui/Notice";
 import { Switch } from "@/components/ui/Switch";
 import { runBacktest, type BacktestResult, type BotConfig, type RiskClass } from "@/lib/backtest/engine";
 import { cn } from "@/lib/cn";
+import { botConfigError } from "@/lib/validation";
 
 const RISKS: { value: RiskClass; label: string }[] = [
   { value: "LOW", label: "Low (safe)" },
@@ -26,7 +27,7 @@ export type BotEditorData = {
   name: string;
   category: string;
   timeframe: string;
-  exchange: string;
+  exchanges: string[];
   riskClass: RiskClass;
   status: "ACTIVE" | "DISABLED";
   csvFilename: string | null;
@@ -44,7 +45,7 @@ export function BotEditor({ bot, categories }: { bot: BotEditorData; categories:
   const [name, setName] = useState(bot.name);
   const [category, setCategory] = useState(bot.category);
   const [timeframe, setTimeframe] = useState(bot.timeframe);
-  const [exchange, setExchange] = useState(bot.exchange);
+  const [exchanges, setExchanges] = useState<string[]>(bot.exchanges);
   const [riskClass, setRiskClass] = useState<RiskClass>(bot.riskClass);
   const [enabled, setEnabled] = useState(bot.status === "ACTIVE");
   const [statusPending, setStatusPending] = useState(false);
@@ -75,7 +76,8 @@ export function BotEditor({ bot, categories }: { bot: BotEditorData; categories:
     name !== bot.name ||
     category !== bot.category ||
     timeframe !== bot.timeframe ||
-    exchange !== bot.exchange ||
+    exchanges.length !== bot.exchanges.length ||
+    exchanges.some((e) => !bot.exchanges.includes(e)) ||
     riskClass !== bot.riskClass ||
     configChanged ||
     csvChanged;
@@ -98,8 +100,10 @@ export function BotEditor({ bot, categories }: { bot: BotEditorData; categories:
     setNotice(null);
     try {
       const parsed = JSON.parse(await file.text()) as BotConfig;
-      if (!parsed?.profiles?.balanced) {
-        setNotice({ type: "error", message: "That JSON has no trading profiles (safe / balanced / aggressive)." });
+      // Same rules the API enforces, so a bad ladder is caught before upload.
+      const configError = botConfigError(parsed, riskClass);
+      if (configError) {
+        setNotice({ type: "error", message: configError });
         return;
       }
       setConfig(parsed);
@@ -175,7 +179,7 @@ export function BotEditor({ bot, categories }: { bot: BotEditorData; categories:
           name,
           category,
           timeframe,
-          exchange,
+          exchanges,
           riskClass,
           message: message.trim(),
           ...(configChanged ? { config } : {}),
@@ -237,9 +241,9 @@ export function BotEditor({ bot, categories }: { bot: BotEditorData; categories:
               {categoryOptions.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
           </label>
-          <div className="flex flex-col gap-2">
-            <span className={labelCls}>Exchange</span>
-            <ExchangeSelect value={exchange} onChange={setExchange} />
+          <div className="flex flex-col gap-2 lg:col-span-2">
+            <span className={labelCls}>Exchanges — allowed venues (users pick one)</span>
+            <ExchangeMultiSelect value={exchanges} onChange={setExchanges} />
           </div>
           <label className="flex flex-col gap-2">
             <span className={labelCls}>Risk Class</span>

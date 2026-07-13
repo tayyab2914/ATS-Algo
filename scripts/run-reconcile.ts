@@ -1,0 +1,53 @@
+/**
+ * Local stand-in for Vercel Cron.
+ *
+ * Pings the reconcile and keep-warm routes over HTTP on the same schedule Vercel
+ * would. It deliberately calls the routes rather than importing the reconciler,
+ * so it exercises the exact code path production runs — and so it doesn't need to
+ * satisfy the `server-only` guard.
+ *
+ *   npm run dev            (or: npm run build && npm start)
+ *   npx tsx scripts/run-reconcile.ts
+ *
+ * Env: APP_URL (default http://localhost:3000), CRON_SECRET.
+ */
+import "dotenv/config";
+
+const BASE = process.env.APP_URL ?? "http://localhost:3000";
+const SECRET = process.env.CRON_SECRET;
+const EVERY_MS = 60_000;
+/** `?deep=1` also scans for orphans and refreshes market descriptors. Hourly. */
+const DEEP_EVERY = 60;
+
+let tick = 0;
+
+async function ping(path: string): Promise<string> {
+  const res = await fetch(`${BASE}${path}`, { headers: { authorization: `Bearer ${SECRET}` } });
+  const body = await res.text();
+  return `${res.status} ${body.slice(0, 160)}`;
+}
+
+async function run() {
+  const deep = tick % DEEP_EVERY === 0;
+  const stamp = new Date().toISOString().slice(11, 19);
+  try {
+    console.log(`[${stamp}] reconcile${deep ? " (deep)" : ""}: ${await ping(`/api/cron/reconcile${deep ? "?deep=1" : ""}`)}`);
+  } catch (error) {
+    console.log(`[${stamp}] reconcile: unreachable (${error instanceof Error ? error.message : String(error)})`);
+  }
+  try {
+    console.log(`[${stamp}] warm     : ${await ping("/api/signals/warm")}`);
+  } catch {
+    /* the server is down; the next tick will say so */
+  }
+  tick++;
+}
+
+if (!SECRET) {
+  console.error("CRON_SECRET is not set — the cron routes fail closed and will answer 401.");
+  process.exit(1);
+}
+
+console.log(`Reconciling ${BASE} every ${EVERY_MS / 1000}s (deep every ${DEEP_EVERY} ticks). Ctrl-C to stop.`);
+void run();
+setInterval(() => void run(), EVERY_MS);

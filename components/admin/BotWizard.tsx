@@ -5,11 +5,12 @@ import { useRef, useState } from "react";
 import { AdminCard } from "@/components/admin/AdminCard";
 import { BacktestResults } from "@/components/admin/BacktestResults";
 import { CheckIcon } from "@/components/admin/admin-icons";
-import { ExchangeSelect } from "@/components/admin/ExchangeSelect";
+import { ExchangeMultiSelect } from "@/components/admin/ExchangeMultiSelect";
 import { Notice, type NoticeData } from "@/components/ui/Notice";
 import { matchBotExchange } from "@/lib/bot-exchanges";
 import { runBacktest, type BacktestResult, type BotConfig, type RiskClass } from "@/lib/backtest/engine";
 import { cn } from "@/lib/cn";
+import { botConfigError } from "@/lib/validation";
 
 const RISKS: { value: RiskClass; label: string }[] = [
   { value: "LOW", label: "Low (safe)" },
@@ -44,7 +45,7 @@ export function BotWizard({ categories }: { categories: string[] }) {
   const [config, setConfig] = useState<BotConfig | null>(null);
   const [name, setName] = useState("");
   const [timeframe, setTimeframe] = useState("");
-  const [exchange, setExchange] = useState("");
+  const [exchanges, setExchanges] = useState<string[]>([]);
   const [riskClass, setRiskClass] = useState<RiskClass>("MEDIUM");
   const [csvText, setCsvText] = useState("");
   const [csvFilename, setCsvFilename] = useState("");
@@ -57,14 +58,20 @@ export function BotWizard({ categories }: { categories: string[] }) {
     setNotice(null);
     try {
       const parsed = JSON.parse(await file.text()) as BotConfig;
-      if (!parsed?.profiles?.balanced) {
-        setNotice({ type: "error", message: "That JSON has no trading profiles (safe / balanced / aggressive)." });
+      // Same rules the API enforces, so a bad ladder is caught before upload.
+      const configError = botConfigError(parsed, riskClass);
+      if (configError) {
+        setNotice({ type: "error", message: configError });
         return;
       }
       setConfig(parsed);
       setName((n) => n || (parsed.name ? cleanBotName(parsed.name) : ""));
       setTimeframe((t) => t || (parsed.timeframe ? `${parsed.timeframe}m` : ""));
-      setExchange((x) => x || matchBotExchange(parsed.exchange));
+      setExchanges((xs) => {
+        if (xs.length) return xs;
+        const m = matchBotExchange(parsed.exchange);
+        return m ? [m] : [];
+      });
       if (parsed.type && categories.some((c) => c.toLowerCase() === parsed.type!.toLowerCase())) {
         setCategory((c) => c || categories.find((x) => x.toLowerCase() === parsed.type!.toLowerCase())!);
       }
@@ -103,7 +110,7 @@ export function BotWizard({ categories }: { categories: string[] }) {
       const res = await fetch("/api/admin/bots", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, category, timeframe, exchange, riskClass, config, csvText, csvFilename }),
+        body: JSON.stringify({ name, category, timeframe, exchanges, riskClass, config, csvText, csvFilename }),
       });
       const data = (await res.json().catch(() => null)) as { error?: string } | null;
       if (!res.ok) {
@@ -121,7 +128,7 @@ export function BotWizard({ categories }: { categories: string[] }) {
 
   const canNext = [
     Boolean(category),
-    Boolean(config && name.trim() && timeframe.trim() && exchange),
+    Boolean(config && name.trim() && timeframe.trim() && exchanges.length > 0),
     Boolean(csvText),
   ];
 
@@ -163,9 +170,9 @@ export function BotWizard({ categories }: { categories: string[] }) {
                   <span className={labelCls}>Timeframe</span>
                   <input value={timeframe} onChange={(e) => setTimeframe(e.target.value)} placeholder="e.g. 5m" className={inputCls} />
                 </label>
-                <div className="flex flex-col gap-2">
-                  <span className={labelCls}>Exchange</span>
-                  <ExchangeSelect value={exchange} onChange={setExchange} />
+                <div className="flex flex-col gap-2 lg:col-span-2">
+                  <span className={labelCls}>Exchanges — allowed venues (users pick one)</span>
+                  <ExchangeMultiSelect value={exchanges} onChange={setExchanges} />
                 </div>
                 <label className="flex flex-col gap-2">
                   <span className={labelCls}>Risk Class</span>

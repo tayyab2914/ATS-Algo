@@ -3,6 +3,9 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { AdminSidebar } from "@/components/admin/AdminSidebar";
 import { PencilIcon } from "@/components/admin/admin-icons";
+import { BotExecutionPanel } from "@/components/admin/BotExecutionPanel";
+import { ExchangePills } from "@/components/admin/ExchangePills";
+import { TradingViewSetup } from "@/components/admin/TradingViewSetup";
 import { EquityChart } from "@/components/bot-library/EquityChart";
 import { RISK_TO_PROFILE, type BotConfig } from "@/lib/backtest/engine";
 import { buildBotEquity } from "@/lib/backtest/equity-view";
@@ -33,11 +36,13 @@ export default async function ViewBotPage({ params }: { params: Promise<{ id: st
       name: true,
       ticker: true,
       exchange: true,
+      exchanges: true,
       assetType: true,
       category: true,
       riskClass: true,
       timeframe: true,
       config: true,
+      signalSecretEnc: true,
       csvData: true,
       trades: true,
       winRate: true,
@@ -61,7 +66,7 @@ export default async function ViewBotPage({ params }: { params: Promise<{ id: st
   const tps = profile?.tp ?? [];
   const weights = profile?.w ?? [];
 
-  const subtitle = [bot.ticker, bot.exchange, bot.assetType ?? bot.category].filter(Boolean).join(" · ");
+  const subtitle = [bot.ticker, bot.assetType ?? bot.category].filter(Boolean).join(" · ");
 
   const statCards: Stat[] = [
     { label: "30 Days Performance", value: signedPct(bot.d30), tone: tone(bot.d30) },
@@ -108,6 +113,10 @@ export default async function ViewBotPage({ params }: { params: Promise<{ id: st
           <p className="text-sm leading-[21px] text-muted">
             {subtitle || "—"} · <span className={cn("font-semibold", RISK_TEXT_CLASS[bot.riskClass])}>{RISK_LABEL[bot.riskClass]}</span> risk · {bot.timeframe}
           </p>
+          <div className="mt-1.5 flex flex-wrap items-center gap-2">
+            <span className="text-sm text-muted">Runs on</span>
+            <ExchangePills exchanges={bot.exchanges} />
+          </div>
         </header>
 
         {/* headline stats */}
@@ -116,6 +125,20 @@ export default async function ViewBotPage({ params }: { params: Promise<{ id: st
             <StatTile key={c.label} {...c} />
           ))}
         </div>
+
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+          <BotExecutionPanel botId={bot.id} botName={bot.name} />
+          <TradingViewSetup
+            botId={bot.id}
+            webhookUrl={`${process.env.APP_URL ?? ""}/api/signals/${bot.id}`}
+            hasSecret={bot.signalSecretEnc !== null}
+            // Straight from the profile this bot trades, so the alert it tells you to
+            // paste always describes the ladder the executor will actually place.
+            profile={profile ? { tp: profile.tp, sl: profile.sl, be: profile.be, lev: profile.lev } : null}
+            riskLabel={RISK_LABEL[bot.riskClass]}
+          />
+        </div>
+
 
         {/* equity */}
         {equity ? (

@@ -42,6 +42,8 @@ const MINI = [
 ];
 
 const BARS = [42, 64, 38, 78, 52, 88, 60, 96, 70];
+/** Illustrative only — this is the marketing hero, not a member's dashboard. */
+const PREVIEW_SPARK = [10, 14, 12, 22, 19, 27, 25, 32];
 
 /**
  * Self-contained, glassy product preview card — an algo bot's equity curve,
@@ -98,7 +100,7 @@ export function DashboardPreview({ floating = false }: { floating?: boolean }) {
                   {m.value}
                 </p>
                 <div className="mt-1">
-                  <Sparkline color={m.color} />
+                  <Sparkline color={m.color} points={PREVIEW_SPARK} />
                 </div>
               </div>
             ))}

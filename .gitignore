@@ -45,3 +45,22 @@ yarn-error.log*
 next-env.d.ts
 
 /lib/generated/prisma
+
+# local dev docs — not part of the product repo
+/EXECUTION-TESTING.md
+/TRADINGVIEW.md
+
+# local research/generator workspace — not product code
+/TEST SIM/
+
+# logs (dev server output, smoke runs)
+*.log
+
+# editor / IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# os
+Thumbs.db
