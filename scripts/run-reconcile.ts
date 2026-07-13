@@ -7,11 +7,15 @@
  * satisfy the `server-only` guard.
  *
  *   npm run dev            (or: npm run build && npm start)
- *   npx tsx scripts/run-reconcile.ts
+ *   npm run cron:local
  *
  * Env: APP_URL (default http://localhost:3000), CRON_SECRET.
  */
-import "dotenv/config";
+// `.env.local` first, the way Next loads it — plain `dotenv/config` reads only
+// `.env`, which this project does not have, so CRON_SECRET would come back unset.
+import { config } from "dotenv";
+
+config({ path: [".env.local", ".env"] });
 
 const BASE = process.env.APP_URL ?? "http://localhost:3000";
 const SECRET = process.env.CRON_SECRET;

@@ -17,7 +17,13 @@ import { resolveSymbol } from "./symbol";
  * into a worse fill. `ensurePrepared` costs nothing once the fingerprint matches.
  */
 
-export const MARGIN_MODE = "crossed";
+/**
+ * Must be "cross", not "crossed". ccxt's `setMarginMode` accepts either spelling,
+ * but `createOrder` compares against "cross" exactly and sends `isolated` for
+ * anything else — so "crossed" silently opens every position isolated, at the
+ * venue's default leverage rather than the profile's.
+ */
+export const MARGIN_MODE = "cross";
 
 /**
  * The settings a prepared account is carrying. Compared, not parsed — any change
