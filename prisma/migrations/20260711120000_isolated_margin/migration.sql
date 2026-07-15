@@ -1,0 +1,18 @@
+-- ISOLATED margin, platform-wide. Cross is never used again.
+--
+-- `exchangePrepared` is a fingerprint of the settings already applied to a venue
+-- account. It gains a margin-mode segment (`exchange|sandboxMode|symbol|leverage|
+-- marginMode`), so changing the platform's margin mode now invalidates every
+-- fingerprint by itself.
+--
+-- Nulling the column here is belt-and-braces for exactly one scenario: a row
+-- written by the OLD code carries a 4-segment key that can never equal a 5-segment
+-- one, so it would re-prepare anyway. But if any row were somehow written with the
+-- new format before this ran, it would short-circuit `ensurePrepared`, skip
+-- `setMarginMode`, and keep trading on CROSS while its orders claimed isolated.
+-- One UPDATE removes that whole class of doubt.
+--
+-- NOTE: Bitget rejects a margin-mode change while a position is open (error 45117).
+-- Deploy against a FLAT book — any deployment holding contracts will fail its next
+-- prepare until it is closed.
+UPDATE "user_bots" SET "exchangePrepared" = NULL;

@@ -343,15 +343,21 @@ model UserBot {
   liveArmed Boolean @default(false)
 
   /// Fingerprint of the exchange settings already applied for this deployment —
-  /// `exchange|mode|symbol|leverage`. Preparing (one-way position mode, cross
-  /// margin, profile leverage) at arm time keeps three REST round-trips off the
-  /// order path.
+  /// `exchange|sandboxMode|symbol|leverage|marginMode`. Preparing (one-way position
+  /// mode, ISOLATED margin, profile leverage) at arm time keeps three REST
+  /// round-trips off the order path.
   ///
   /// A fingerprint rather than a timestamp on purpose: leverage changes when an
   /// admin edits the bot's risk class, the symbol changes with its ticker, and the
-  /// mode flips when a demo key is swapped for a live one. A timestamp would still
-  /// read "prepared" and the next order would go out at the wrong leverage. Any
+  /// sandbox mode flips when a demo key is swapped for a live one. A timestamp would
+  /// still read "prepared" and the next order would go out at the wrong leverage. Any
   /// mismatch re-prepares, so no caller has to remember to invalidate it.
+  ///
+  /// The MARGIN mode is a segment for a reason: `sandboxMode` is demo/live, not
+  /// cross/isolated. Without it, changing the platform's margin mode would leave
+  /// every fingerprint still matching — `setMarginMode` would never be re-sent, and
+  /// every account would keep trading on the old mode while its orders claimed the
+  /// new one.
   exchangePrepared String?
 
   positions Position[]
@@ -468,15 +474,40 @@ model Position {
 
   initialStopPrice Float
   currentStopPrice Float
-  /// True once the stop has been moved to `entryPrice` (see ProfileConfig.be).
+  /// True once the stop sits AT OR BEYOND entry — i.e. it is no longer a losing stop.
+  /// Under the legacy `be` rule that happened once, at the entry. Under the ratchet it
+  /// becomes true when the ladder crosses entry and stays true (monotone).
   beMoved          Boolean @default(false)
-  /// How many ladder rungs have filled. Display only — break-even is armed by the
-  /// fill of a specific rung INDEX, never by a count (the ladder isn't ascending).
+  /// How many take-profit rungs have FILLED. Load-bearing, not display: the progressive
+  /// stop ratchet keys off this COUNT. A count is correct here (and a rung INDEX is not)
+  /// precisely because the ladder isn't ascending — price fills rungs in PRICE order, so
+  /// after n fills it is the n NEAREST rungs that are gone.
   tpRungsFilled    Int     @default(0)
+  /// Ratchet generation the working stop is at. 0 = only the entry's attached preset;
+  /// n >= 1 = a standalone trigger stop placed after n rungs had filled. Monotonic — the
+  /// ratchet only ever tightens. Also the idempotency key: a generation is never
+  /// re-placed, because its deterministic clientOid is already burned at the venue
+  /// (Bitget rejects a duplicate with 40786).
+  stopStep         Int     @default(0)
+  /// The profile this position ACTUALLY trades, frozen at open: { tp, w, sl, be,
+  /// sl_tighten_pct, lev, takerFeePct, slippagePct }.
+  ///
+  /// The stop maths must never read the live bot config. An admin editing the bot — or
+  /// its risk class — while a position is open would otherwise move `sl`, the ladder,
+  /// even `tp[]`, UNDERNEATH the open trade. Null only on rows that predate this column.
+  profileSnapshot  Json?
+
+  /// Live-mark snapshot, refreshed every reconcile pass while the position is OPEN, so the
+  /// member's page can show unrealized PnL without its own exchange call on every load. Stale
+  /// by at most the cron interval; `markedAt` lets the UI say how fresh it is. Null until the
+  /// first sync after open.
+  lastMarkPrice Float?
+  unrealizedPnl Float?
+  markedAt      DateTime?
 
   /// Booked by the reconcile job from real fills; feeds UserBot.realizedBalance.
   realizedPnl  Float     @default(0)
-  /// SL | TP_FULL | EXIT | RECONCILE
+  /// SL | TP_FULL | EXIT | REVERSAL | RECONCILE
   closedReason String?
   closedAt     DateTime?
 
@@ -508,7 +539,12 @@ model Order {
   exchangeOrderId String?
   clientOrderId   String  @unique
 
-  /// 0-based index into the profile's `tp[]`/`w[]`; null for ENTRY and STOP.
+  /// TP:   0-based index into the profile's `tp[]`/`w[]`.
+  /// STOP: the stop GENERATION — 0 = the entry's uncancellable preset, 1..n = the
+  ///       trigger stops the ratchet placed. ONE ROW PER GENERATION: overwriting a row
+  ///       destroys an `exchangeOrderId`, and a lost id makes that order's fills
+  ///       unattributable when PnL is booked (see manage.ts `realizedPnlFor`).
+  /// Null for ENTRY and CLOSE.
   rungIndex Int?
   /// "buy" | "sell" as sent to the exchange.
   side      String

@@ -39,20 +39,32 @@ async function inChunks<T, R>(items: T[], size: number, fn: (item: T) => Promise
 export type ReconcileResult = {
   scanned: number;
   closed: number;
-  beArmed: number;
+  /** Working stops that advanced a ratchet generation this pass. */
+  stopsMoved: number;
   errors: number;
 };
 
 /**
  * The per-minute pass. For every open position: read its true state, mark filled
- * rungs, arm break-even if the configured rung has filled, and settle it if the
- * venue shows it flat.
+ * rungs, ratchet the stop if a rung has filled, and settle it if the venue shows it flat.
  *
  * Costs one `fetchPositions` per open position in the common case where nothing
  * happened. With no open positions it costs a single database query.
  *
  * Oldest-touched first, so a large backlog drains fairly across invocations
  * instead of the same few positions being re-checked every minute.
+ *
+ * NOT gated by SIGNALS_KILL_SWITCH — by deliberate design. The kill switch freezes NEW
+ * entries (`fanOut`); it must never freeze this pass, because everything it does is
+ * risk-REDUCING: tightening a stop, settling a closed position, booking PnL. The money is
+ * already committed at entry, so a frozen ratchet would strand open positions with only the
+ * original `sl%` preset and no profit-lock — the opposite of what a kill switch is for. This
+ * is the same principle as exits never being gated. NOTE the blast radius is real now: the
+ * ratchet places `pos_loss` stops that actually fire (before the pos_loss fix it placed
+ * reduce-only plan stops that were starved and never fired), so an operator flipping the kill
+ * switch during a venue incident will still see positions ratcheted and stopped out. If the
+ * intent ever changes to "freeze ALL venue writes", gate the `ratchetStop` PLACEMENT only —
+ * never settlement or attribution, which must always run.
  */
 export async function reconcileOpenPositions(limit = DEFAULT_LIMIT): Promise<ReconcileResult> {
   const positions = await prisma.position.findMany({
@@ -62,7 +74,7 @@ export async function reconcileOpenPositions(limit = DEFAULT_LIMIT): Promise<Rec
     select: { id: true },
   });
 
-  const result: ReconcileResult = { scanned: positions.length, closed: 0, beArmed: 0, errors: 0 };
+  const result: ReconcileResult = { scanned: positions.length, closed: 0, stopsMoved: 0, errors: 0 };
   if (positions.length === 0) return result;
 
   const outcomes = await inChunks(positions, CHUNK, (p) => syncPosition(p.id));
@@ -73,10 +85,10 @@ export async function reconcileOpenPositions(limit = DEFAULT_LIMIT): Promise<Rec
       continue;
     }
     if (outcome.value.closed) result.closed++;
-    if (outcome.value.beArmed) result.beArmed++;
+    if (outcome.value.stopMoved) result.stopsMoved++;
   }
 
-  if (result.closed || result.beArmed || result.errors) {
+  if (result.closed || result.stopsMoved || result.errors) {
     await logExec({ level: "info", event: "reconcile.pass", detail: { ...result } });
   }
   return result;

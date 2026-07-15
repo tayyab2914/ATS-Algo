@@ -8,7 +8,7 @@ import { exchangeClient, type TradeCreds } from "./client";
 import { resolveSymbol } from "./symbol";
 
 /**
- * Account settings a position depends on — one-way position mode, cross margin,
+ * Account settings a position depends on — one-way position mode, ISOLATED margin,
  * and the profile's leverage — applied once and remembered, instead of on every
  * order.
  *
@@ -18,19 +18,41 @@ import { resolveSymbol } from "./symbol";
  */
 
 /**
- * Must be "cross", not "crossed". ccxt's `setMarginMode` accepts either spelling,
- * but `createOrder` compares against "cross" exactly and sends `isolated` for
- * anything else — so "crossed" silently opens every position isolated, at the
- * venue's default leverage rather than the profile's.
+ * ISOLATED margin, always. The rule is absolute: a loss on one position must never
+ * reach the collateral behind another. Cross is never used, and this constant is
+ * the ONLY place the mode is chosen — one global value is what makes "never cross"
+ * unviolatable, rather than a per-bot setting someone can get wrong.
+ *
+ * ccxt's Bitget adapter compares `marginMode === "cross"` exactly, sending
+ * `crossed` for that and `isolated` for ANYTHING else. So "isolated" is isolated —
+ * and, usefully, a typo also lands on isolated rather than silently opening
+ * positions on cross. The failure mode points the safe way.
+ *
+ * This value is part of {@link preparedKey}, so changing it re-prepares every
+ * account. Bitget rejects a margin-mode change under an open position (45117), so
+ * a cutover must run against a flat book.
  */
-export const MARGIN_MODE = "cross";
+export const MARGIN_MODE = "isolated";
 
 /**
  * The settings a prepared account is carrying. Compared, not parsed — any change
- * to venue, mode, instrument or leverage yields a different string and re-prepares.
+ * to venue, sandbox mode, instrument, leverage **or margin mode** yields a
+ * different string and re-prepares.
+ *
+ * The margin mode is in here because leaving it out is a silent, expensive bug:
+ * the `demo|live` segment is the SANDBOX mode, not the margin mode. Without the
+ * margin mode present, changing {@link MARGIN_MODE} would leave every stored
+ * fingerprint still matching — `ensurePrepared` short-circuits, `setMarginMode` is
+ * never re-sent, and every account keeps trading on the OLD mode while each order
+ * claims the new one.
  */
-export const preparedKey = (exchange: string, sandbox: boolean, symbol: string, leverage: number): string =>
-  `${exchange}|${sandbox ? "demo" : "live"}|${symbol}|${leverage}`;
+export const preparedKey = (
+  exchange: string,
+  sandbox: boolean,
+  symbol: string,
+  leverage: number,
+  marginMode: string = MARGIN_MODE,
+): string => `${exchange}|${sandbox ? "demo" : "live"}|${symbol}|${leverage}|${marginMode}`;
 
 export type PrepareInput = {
   userBotId: string;
@@ -77,7 +99,7 @@ export async function ensurePrepared(input: PrepareInput): Promise<boolean> {
 /**
  * Forget the fingerprint so the next order re-applies the settings. Only needed
  * when something outside the fingerprint changes (e.g. the API key is replaced);
- * leverage, symbol, venue and mode changes invalidate themselves.
+ * venue, sandbox mode, symbol, leverage and margin mode all invalidate themselves.
  */
 export async function clearPrepared(userBotId: string): Promise<void> {
   await prisma.userBot.update({ where: { id: userBotId }, data: { exchangePrepared: null } });

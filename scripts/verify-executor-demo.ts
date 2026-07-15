@@ -11,11 +11,11 @@
 import "dotenv/config";
 import { readFileSync } from "node:fs";
 import type { BotConfig } from "../lib/bot-config";
-import { profileFor } from "../lib/bot-config";
+import { profileFor, snapshotProfile } from "../lib/bot-config";
 import { encryptSecret } from "../lib/crypto/secrets";
 import { prisma } from "../lib/db";
 import { exchangeClient, type TradeCreds } from "../lib/execution/client";
-import { closeAll, executionError, moveStopToBreakEven, openPosition } from "../lib/execution/execute";
+import { closeAll, executionError, openPosition, ratchetStop } from "../lib/execution/execute";
 import { resolveSymbol } from "../lib/execution/symbol";
 
 const creds: TradeCreds = {
@@ -36,6 +36,8 @@ async function main() {
   if (!creds.apiKey || !creds.apiSecret || !creds.passphrase) throw new Error("BITGET_DEMO_* missing from .env");
   const config = JSON.parse(readFileSync("fixtures/BTC.json", "utf8")) as BotConfig;
   const profile = profileFor(config, "LOW")!; // safe: lev 4, sl 4, be 1, 6 rungs
+  // The rules the position freezes at open — the engine reads these, never the live config.
+  const snapshot = snapshotProfile(config, profile);
 
   const stamp = String(Math.floor(Date.now() / 1000));
   const user = await prisma.user.create({ data: { email: `exec-e2e-${stamp}@invalid.test`, passwordHash: "x" }, select: { id: true } });
@@ -47,7 +49,7 @@ async function main() {
     data: { userId: user.id, botId: bot.id, active: true, allocatedCapital: 1000, capitalPerTrade: 20, allocationType: "FIXED", exchangeSource: "Bitget" },
     select: { id: true },
   });
-  // moveStopToBreakEven re-derives credentials from the database (as the cron will),
+  // ratchetStop re-derives credentials from the database (as the cron will),
   // so the throwaway user needs a real encrypted connection. Exercises decrypt too.
   const aad = `${user.id}:Bitget`;
   await prisma.exchangeConnection.create({
@@ -73,7 +75,7 @@ async function main() {
     try {
       await openPosition({
         signalId: tinySignal.id, userBotId: userBot.id, userId: user.id, exchange: "Bitget", creds, symbol, market,
-        requestedSymbol: requested, substituted, side: "LONG", profile,
+        requestedSymbol: requested, substituted, side: "LONG", profile, snapshot,
         sizing: { allocationType: "FIXED", capitalPerTrade: 3, allocatedCapital: 1000, realizedBalance: 0, compounding: false },
         priceHint, prepared: null,
       });
@@ -88,13 +90,24 @@ async function main() {
     const t0 = performance.now();
     const opened = await openPosition({
       signalId: signal.id, userBotId: userBot.id, userId: user.id, exchange: "Bitget", creds, symbol, market,
-      requestedSymbol: requested, substituted, side: "LONG", profile,
+      requestedSymbol: requested, substituted, side: "LONG", profile, snapshot,
       sizing: { allocationType: "FIXED", capitalPerTrade: 20, allocatedCapital: 1000, realizedBalance: 0, compounding: false },
       priceHint, prepared: null,
     });
     console.log(`  opened in ${(performance.now() - t0).toFixed(0)}ms  size=${opened.size} entry=${opened.entryPrice} stop=${opened.stopPrice}`);
     check("all 6 rungs placed", opened.rungsPlaced === 6, `placed=${opened.rungsPlaced}`);
     check("entry price came from the real fill, not the hint", opened.entryPrice !== priceHint || true, `fill=${opened.entryPrice} hint=${priceHint}`);
+
+    // The movable stop is now a pos_loss (position-family), NOT a {trigger:true} normal_plan:
+    // a reduce-only plan stop is starved by the reduce-only TP ladder and never fires. So the
+    // working stop lists under profit_loss alongside the loss_plan preset — filter by planType.
+    const family = async (planType: "pos_loss" | "loss_plan") =>
+      (await ex.fetchOpenOrders(symbol, undefined, undefined, { planType: "profit_loss" }))
+        .filter((o) => (o.info as { planType?: string } | undefined)?.planType === planType);
+    const workingStops = () => family("pos_loss");
+    const presetStops = () => family("loss_plan");
+    const trigOf = (o: { info?: unknown; triggerPrice?: unknown; stopLossPrice?: unknown } | undefined) =>
+      Number((o?.info as { triggerPrice?: unknown } | undefined)?.triggerPrice ?? o?.triggerPrice ?? o?.stopLossPrice);
 
     const resting = await ex.fetchOpenOrders(symbol);
     check("6 reduce-only limits resting on the venue", resting.length === 6 && resting.every((o) => o.reduceOnly), `n=${resting.length}`);
@@ -106,6 +119,16 @@ async function main() {
     const dbOrders = await prisma.order.findMany({ where: { position: { userBotId: userBot.id } }, select: { kind: true, state: true, rungIndex: true } });
     check("8 order rows persisted (1 entry + 1 stop + 6 tp)", dbOrders.length === 8, `n=${dbOrders.length}`);
     check("every tp rung recorded OPEN", dbOrders.filter((o) => o.kind === "TP" && o.state === "OPEN").length === 6);
+    check("the preset is recorded as stop GENERATION 0", dbOrders.find((o) => o.kind === "STOP")?.rungIndex === 0);
+
+    // The rules are FROZEN onto the position. Without this, an admin editing the bot —
+    // or its risk class — while the trade is open would move the stop underneath it.
+    const frozen = await prisma.position.findUnique({ where: { id: opened.positionId }, select: { profileSnapshot: true, stopStep: true } });
+    const snap = frozen?.profileSnapshot as unknown as { sl: number; tp: number[]; takerFeePct: number } | null;
+    check("the traded profile was frozen onto the position", snap != null && Array.isArray(snap.tp), JSON.stringify(snap)?.slice(0, 70));
+    check("…and it matches what was actually traded", snap?.sl === profile.sl && snap?.tp.length === profile.tp.length, `sl=${snap?.sl} rungs=${snap?.tp?.length}`);
+    check("…including the fee assumption the stop buffer needs", typeof snap?.takerFeePct === "number", `taker=${snap?.takerFeePct}`);
+    check("the stop starts at generation 0 (only the preset)", frozen?.stopStep === 0);
 
     console.log("\n── idempotency: replaying the same signal cannot double-open ──");
     // Pass the stored fingerprint, as the fan-out does. With `prepared: null` the
@@ -117,7 +140,7 @@ async function main() {
     try {
       await openPosition({
         signalId: signal.id, userBotId: userBot.id, userId: user.id, exchange: "Bitget", creds, symbol, market,
-        requestedSymbol: requested, substituted, side: "LONG", profile,
+        requestedSymbol: requested, substituted, side: "LONG", profile, snapshot,
         sizing: { allocationType: "FIXED", capitalPerTrade: 20, allocatedCapital: 1000, realizedBalance: 0, compounding: false },
         priceHint, prepared,
       });
@@ -131,9 +154,10 @@ async function main() {
     // that case deterministically by putting the recorded entry above the market.
     const markBefore = Number((await ex.fetchTicker(symbol)).last);
     await prisma.position.update({ where: { id: opened.positionId }, data: { entryPrice: Number(ex.priceToPrecision(symbol, markBefore * 1.01)) } });
-    const early = await moveStopToBreakEven(opened.positionId);
-    check("wrong-side call is a no-op", early === false);
-    check("no working stop was placed", (await ex.fetchOpenOrders(symbol, undefined, undefined, { trigger: true })).length === 0);
+    // Step 1 at distance 0 == the legacy break-even target: a stop AT the entry.
+    const early = await ratchetStop({ positionId: opened.positionId, step: 1, distancePct: 0 });
+    check("wrong-side call is a no-op", early.moved === false && early.reason === "wrongSide", JSON.stringify(early));
+    check("no working stop was placed", (await workingStops()).length === 0);
     check("position not marked beMoved", (await prisma.position.findUnique({ where: { id: opened.positionId }, select: { beMoved: true } }))?.beMoved === false);
 
     console.log("\n── break-even: arms once price is beyond the entry ──");
@@ -141,28 +165,60 @@ async function main() {
     // stop at the entry is genuinely below the market.
     const mark = Number((await ex.fetchTicker(symbol)).last);
     await prisma.position.update({ where: { id: opened.positionId }, data: { entryPrice: Number(ex.priceToPrecision(symbol, mark * 0.995)) } });
-    const moved = await moveStopToBreakEven(opened.positionId);
-    check("moveStopToBreakEven reported success", moved);
+    const moved = await ratchetStop({ positionId: opened.positionId, step: 1, distancePct: 0 });
+    check("ratchetStop reported success", moved.moved === true, JSON.stringify(moved));
     const after = await prisma.position.findUnique({ where: { id: opened.positionId }, select: { beMoved: true, currentStopPrice: true, entryPrice: true } });
     check("position marked beMoved", after?.beMoved === true);
     check("stop now sits at the entry price", Math.abs((after?.currentStopPrice ?? 0) - (after?.entryPrice ?? -1)) < 1, `stop=${after?.currentStopPrice} entry=${after?.entryPrice}`);
-    const trig = await ex.fetchOpenOrders(symbol, undefined, undefined, { trigger: true });
-    const pres = await ex.fetchOpenOrders(symbol, undefined, undefined, { planType: "profit_loss" });
-    console.log(`    working stop (trigger) → ${trig.map((o) => `${o.id}@${o.triggerPrice}`).join(", ") || "(none)"}`);
-    console.log(`    backstop (preset)      → ${pres.map((o) => `${o.id}@${o.triggerPrice ?? o.stopLossPrice}`).join(", ") || "(none)"}`);
+    const trig = await workingStops();
+    const pres = await presetStops();
+    console.log(`    working stop (pos_loss) → ${trig.map((o) => `${o.id}@${trigOf(o)}`).join(", ") || "(none)"}`);
+    console.log(`    backstop (loss_plan)    → ${pres.map((o) => `${o.id}@${trigOf(o)}`).join(", ") || "(none)"}`);
 
-    check("exactly one movable working stop", trig.length === 1, `n=${trig.length}`);
-    check("working stop sits at the recorded entry", Math.abs(Number(trig[0]?.triggerPrice) - Number(after?.entryPrice)) < 1, `${trig[0]?.triggerPrice} vs ${after?.entryPrice}`);
-    // The preset can't be cancelled through ccxt. It is left as a deeper backstop —
+    check("exactly one movable working stop (a pos_loss)", trig.length === 1, `n=${trig.length}`);
+    check("working stop sits at the recorded entry", Math.abs(trigOf(trig[0]) - Number(after?.entryPrice)) < 1, `${trigOf(trig[0])} vs ${after?.entryPrice}`);
+    // The preset (loss_plan) can't be cancelled through ccxt. It is left as a deeper backstop —
     // strictly further from price than break-even, so it can never fire first.
     check("preset backstop still present", pres.length === 1, `n=${pres.length}`);
-    const backstop = Number(pres[0]?.triggerPrice ?? pres[0]?.stopLossPrice);
-    check("backstop is strictly looser than the working stop (LONG: below it)", backstop < Number(trig[0]?.triggerPrice), `backstop=${backstop} working=${trig[0]?.triggerPrice}`);
+    const backstop = trigOf(pres[0]);
+    check("backstop is strictly looser than the working stop (LONG: below it)", backstop < trigOf(trig[0]), `backstop=${backstop} working=${trigOf(trig[0])}`);
     check("position never left unprotected", trig.length + pres.length >= 1);
 
-    console.log("\n── break-even is idempotent ──");
-    check("a second call does nothing", (await moveStopToBreakEven(opened.positionId)) === false);
-    check("still exactly one working stop", (await ex.fetchOpenOrders(symbol, undefined, undefined, { trigger: true })).length === 1);
+    console.log("\n── the ratchet never re-places a generation ──");
+    // Its clientOid is already burned at the venue: Bitget rejects a duplicate (40786).
+    // So a generation must be recognised as done, never retried.
+    const again = await ratchetStop({ positionId: opened.positionId, step: 1, distancePct: 0 });
+    check("a second call at the same step does nothing", again.moved === false && again.reason === "alreadyAtStep", JSON.stringify(again));
+    check("still exactly one working stop", (await workingStops()).length === 1);
+
+    console.log("\n── the ratchet only ever tightens ──");
+    // Step 2 at +4% would be the ORIGINAL stop — looser than break-even. Refuse it, even
+    // though the step number advanced: an admin swapping the config mid-trade lands here.
+    const looser = await ratchetStop({ positionId: opened.positionId, step: 2, distancePct: 4 });
+    check("a LOOSER target is refused", looser.moved === false && looser.reason === "notTighter", JSON.stringify(looser));
+    check("the working stop did not move", Math.abs(trigOf((await workingStops())[0]) - Number(after?.currentStopPrice)) < 1);
+
+    console.log("\n── generation 2: tighten PAST entry and lock profit ──");
+    // d = −0.35% ⇒ for a LONG the stop prices ABOVE the entry. This is the money case:
+    // the trade can no longer lose. Requires its own clientOid, or 40786 would kill it.
+    const lock = await ratchetStop({ positionId: opened.positionId, step: 2, distancePct: -0.35 });
+    check("generation 2 placed", lock.moved === true, JSON.stringify(lock));
+    if (lock.moved) {
+      const entryNow = Number(after?.entryPrice);
+      check("the stop is now ABOVE the entry — profit is locked", lock.stopPrice > entryNow, `stop=${lock.stopPrice} entry=${entryNow}`);
+      const trig2 = await workingStops();
+      check("still exactly ONE working stop (gen 1 was cancelled)", trig2.length === 1, `n=${trig2.length}`);
+      check("…and the venue agrees it sits above the entry", trigOf(trig2[0]) > entryNow, `${trigOf(trig2[0])} > ${entryNow}`);
+      const pres2 = await presetStops();
+      check("the preset backstop is STILL there, untouched", pres2.length === 1);
+      // One Order row per generation — the old code overwrote a single row and destroyed
+      // the preset's id, which is what makes a closing fill unattributable.
+      const stopRows = await prisma.order.findMany({ where: { positionId: opened.positionId, kind: "STOP" }, select: { rungIndex: true, exchangeOrderId: true, state: true }, orderBy: { rungIndex: "asc" } });
+      check("3 STOP rows: preset(0) + gen1 + gen2", stopRows.length === 3, stopRows.map((r) => `g${r.rungIndex}:${r.state}`).join(" "));
+      check("every generation kept its OWN exchange id", new Set(stopRows.map((r) => r.exchangeOrderId)).size === 3);
+      check("the preset's id survived (attribution intact)", stopRows.find((r) => r.rungIndex === 0)?.exchangeOrderId != null);
+      check("generation 1 is recorded CANCELED, the preset still OPEN", stopRows.find((r) => r.rungIndex === 1)?.state === "CANCELED" && stopRows.find((r) => r.rungIndex === 0)?.state === "OPEN");
+    }
 
     console.log("\n── exit: flatten everything ──");
     const closed = await closeAll(ex, symbol);

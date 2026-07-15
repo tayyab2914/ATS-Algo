@@ -4,7 +4,7 @@
 // never authenticates, so it is safe to run against the live database.
 //   NODE_OPTIONS="--conditions=react-server" npx tsx scripts/verify-prepare.ts
 import "dotenv/config";
-import { preparedKey } from "../lib/execution/prepare";
+import { MARGIN_MODE, preparedKey } from "../lib/execution/prepare";
 import { DEMO_FALLBACK_SYMBOL, resolveSymbol, toSwapSymbol } from "../lib/execution/symbol";
 import { prisma } from "../lib/db";
 
@@ -80,6 +80,18 @@ async function main() {
   check("venue change invalidates", base !== preparedKey("Bybit", true, "BTC/USDT:USDT", 7));
   // The bug the fingerprint exists to prevent: a timestamp cannot tell 4x from 10x.
   check("distinguishes 4x from 10x on the same instrument", preparedKey("Bitget", false, "BTC/USDT:USDT", 4) !== preparedKey("Bitget", false, "BTC/USDT:USDT", 10));
+
+  // The silent-CROSS bug. The `demo|live` segment is the SANDBOX mode, NOT the margin
+  // mode — so before margin mode was a segment, flipping the platform to isolated left
+  // every stored fingerprint still matching: `ensurePrepared` short-circuited,
+  // `setMarginMode` was never re-sent, and every account kept trading on CROSS while
+  // its orders claimed isolated. Nothing else in this suite can catch that.
+  check(
+    "margin-mode change invalidates",
+    preparedKey("Bitget", true, "BTC/USDT:USDT", 7, "cross") !== preparedKey("Bitget", true, "BTC/USDT:USDT", 7, "isolated"),
+  );
+  check("the default margin mode is ISOLATED — cross is never used", base === preparedKey("Bitget", true, "BTC/USDT:USDT", 7, "isolated"), base);
+  check("MARGIN_MODE constant is isolated", MARGIN_MODE === "isolated", MARGIN_MODE);
 
   console.log(failures === 0 ? "\nPASS" : `\nFAIL (${failures})`);
 }

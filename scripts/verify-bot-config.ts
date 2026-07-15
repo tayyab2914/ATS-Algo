@@ -56,6 +56,23 @@ const cases: [string, unknown, RiskClass | undefined, boolean][] = [
   // A malformed profile the bot won't trade is still a real error — the same JSON
   // could later be published at that tier.
   ["a malformed profile the bot won't trade", mutate((c) => (c.profiles.aggressive.w = [2])), "MEDIUM", false],
+
+  // ── the progressive stop ladder ──────────────────────────────────────────
+  // Its PRESENCE is the gate: a config without it keeps the legacy one-shot `be`.
+  ["legacy: no sl_tighten_pct (today's configs) still valid", good, "MEDIUM", true],
+  ["ladder: tighten 25 on 6 rungs is sound", mutate((c) => (c.profiles.balanced.sl_tighten_pct = 25)), "MEDIUM", true],
+  ["ladder: slippage_pct is accepted per ticker", mutate((c) => { c.slippage_pct = 0.08; c.profiles.balanced.sl_tighten_pct = 25; }), "MEDIUM", true],
+  // G2 — too aggressive: after 3 rungs it wants the stop 2% ABOVE entry, but price has
+  // only reached 0.64%. The stop would sit beyond the market and protect nothing.
+  ["G2: tighten 50 puts the stop past the level price reached → rejected", mutate((c) => (c.profiles.balanced.sl_tighten_pct = 50)), "MEDIUM", false],
+  // G3 — too timid: the 6th rung closes the position, so the stop only matters to rung
+  // 5, and by then it is still +2% (a losing stop). It never locks anything in.
+  ["G3: tighten 10 never reaches profit before the last rung → rejected", mutate((c) => (c.profiles.balanced.sl_tighten_pct = 10)), "MEDIUM", false],
+  ["ladder: a negative tighten is nonsense", mutate((c) => (c.profiles.balanced.sl_tighten_pct = -5)), "MEDIUM", false],
+  ["ladder: tighten over 100 jumps past entry on rung 1", mutate((c) => (c.profiles.balanced.sl_tighten_pct = 150)), "MEDIUM", false],
+  // The geometry is checked on every profile present, not just the traded one — the
+  // same JSON could be published at another tier later.
+  ["G2 is checked on a profile the bot doesn't trade", mutate((c) => (c.profiles.aggressive.sl_tighten_pct = 50)), "MEDIUM", false],
 ];
 
 let failures = 0;

@@ -1,5 +1,5 @@
 import "server-only";
-import { profileFor, type BotConfig } from "@/lib/bot-config";
+import { profileFor, snapshotProfile, type BotConfig } from "@/lib/bot-config";
 import { chosenExchange } from "@/lib/bot-exchanges";
 import { prisma } from "@/lib/db";
 import { getDecryptedConnection } from "@/lib/exchanges/connection";
@@ -117,11 +117,15 @@ async function enterAll(signal: LoadedSignal, result: FanOutResult): Promise<Fan
     return result;
   }
 
-  const profile = profileFor(signal.bot.config as unknown as BotConfig, signal.bot.riskClass);
+  const botConfig = signal.bot.config as unknown as BotConfig;
+  const profile = profileFor(botConfig, signal.bot.riskClass);
   if (!profile) {
     await logExec({ level: "error", event: "fanout.noProfile", botId: signal.botId, signalId: signal.id, detail: { riskClass: signal.bot.riskClass } });
     return result;
   }
+  // Freeze the rules every position opened by THIS signal will live by, so an admin
+  // editing the bot mid-trade can never move the stop under an open position.
+  const snapshot = snapshotProfile(botConfig, profile);
 
   const deployments = await prisma.userBot.findMany({
     where: { botId: signal.botId, active: true },
@@ -202,7 +206,7 @@ async function enterAll(signal: LoadedSignal, result: FanOutResult): Promise<Fan
     const opened = await openPosition({
       signalId: signal.id, userBotId: deployment.id, userId: deployment.userId,
       exchange: chosen, creds, symbol, market, requestedSymbol: requested, substituted,
-      side, profile,
+      side, profile, snapshot,
       sizing: {
         allocationType: deployment.allocationType,
         capitalPerTrade: deployment.capitalPerTrade,

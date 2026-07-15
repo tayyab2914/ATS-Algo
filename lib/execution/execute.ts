@@ -1,10 +1,11 @@
 import "server-only";
 import { createHash } from "node:crypto";
 import type { Exchange, MarketInterface } from "ccxt";
-import type { ProfileConfig } from "@/lib/bot-config";
+import type { ProfileConfig, ProfileSnapshot } from "@/lib/bot-config";
 import { beRungIndex } from "@/lib/bot-config";
 import { prisma } from "@/lib/db";
 import { exchangeClient, type TradeCreds } from "./client";
+import { logExec } from "./log";
 import { closingSide, rungSizes, sizeFromMargin, slPrice, tpPrice, tradeMargin, type Side, type SizingInput } from "./pricing";
 import { MARGIN_MODE, ensurePrepared } from "./prepare";
 
@@ -22,24 +23,45 @@ import { MARGIN_MODE, ensurePrepared } from "./prepare";
  *  - `createOrder` returns only an `id`: `average`, `filled` and `status` all come
  *    back undefined. The real fill must be read with `fetchOrder`, and every
  *    take-profit level anchors to it.
- *  - A stop attached to the entry (`stopLoss.triggerPrice`) is a *preset*: a
- *    position-level TPSL, visible only under `planType: "profit_loss"`. It CANNOT
- *    be cancelled through ccxt's unified API — `cancelOrder(id, {stop:true})` and
- *    `cancelAllOrders({trigger:true})` both return OK and do nothing, while
- *    `{planType:"profit_loss"}` returns 43001. It disappears only when the
- *    position closes.
- *  - `params.triggerPrice` creates a `normal_plan` order instead: it has an id,
- *    lists under `{trigger:true}`, and `cancelOrder(id, {trigger:true})` really
- *    removes it. `params.stopLossPrice` does NOT — it makes another uncancellable
- *    position TPSL. Only `triggerPrice` gives a movable stop.
- *  - A plan order and a preset coexist happily.
+ *  - A stop attached to the entry (`stopLoss.triggerPrice`) is the *preset*: a
+ *    position-level TPSL, visible only under `planType: "profit_loss"`, where it lists
+ *    as a `loss_plan`. It CANNOT be cancelled through ccxt's unified API and disappears
+ *    only when the position closes.
+ *  - The preset is SIZED (frozen at the entry size), NOT sizeless — but because a swing
+ *    position only ever shrinks, the preset is always oversized-never-undersized, and on
+ *    trigger Bitget CLAMPS it to the live position (closes exactly what is there, no
+ *    overshoot into a reverse). So it is still a valid full-position backstop, just by
+ *    clamping rather than auto-sizing. All proven on the paper venue, not read from source.
+ *  - The MOVABLE stop is a `pos_loss` (`params.stopLossPrice`), NOT a reduce-only
+ *    `normal_plan` (`params.triggerPrice`). This is load-bearing and was WRONG before:
+ *    the reduce-only TP ladder reserves ~100% of the position, so a reduce-only plan stop
+ *    is STARVED — on trigger it fills 0 and is rejected, and the position stays open. It
+ *    had never fired in production. A `pos_loss` is position-level and ignores those
+ *    reservations, closing the whole position. It CAN be cancelled — via
+ *    `cancelOrder(id, {planType:"pos_loss", trigger:true})` (the earlier "uncancellable"
+ *    verdict used the wrong cancel params) — so the ratchet can move it. It coexists with
+ *    the preset in its own slot (loss_plan and pos_loss are separate slots).
+ *  - Placing a tighter `pos_loss` REPLACES the single slot in place; we still CANCEL-FIRST
+ *    so exactly one movable stop ever rests, regardless of the venue's coexistence rule.
+ *  - When a `pos_loss` triggers it is executed by a CHILD market order whose `clientOid`
+ *    equals the pos_loss plan-order id — that is how a stop-out is attributed (manage.ts).
  *
- * So the stop is two things. The preset placed with the entry is a permanent
- * catastrophic backstop — never naked, not even for one round-trip. The movable
- * working stop is a `triggerPrice` plan order added when break-even arms. Because
- * break-even sits at the entry, between the market and the preset, the working
- * stop is always the tighter of the two and always triggers first; the preset only
- * matters if the working stop is somehow gone.
+ * So the stop is two things, and the asymmetry between them IS the safety model:
+ *
+ *   - The PRESET, placed with the entry, is the full-position backstop at `sl%`. It cannot
+ *     be cancelled, cannot go stale, and dies only with the trade. It clamps to whatever
+ *     the position is. The position is never naked — not for one round-trip, and not after
+ *     any number of partial fills.
+ *   - The WORKING stop is a `pos_loss` that the ratchet moves closer to entry after each
+ *     filled rung, and eventually past entry to lock profit. It only ever tightens, so it
+ *     is always inside the preset and always triggers first.
+ *
+ * The consequence worth internalising: **nothing the ratchet gets wrong can leave a
+ * position unprotected.** A wrong-side target (loudly rejected, 40917), a burned clientOid
+ * (40786), a config that drifted, even a brief gap while cancel-first swaps generations —
+ * every one of them merely means the profit-lock does not happen, and the trade falls back
+ * to the preset, never looser than the original `sl%`. The ratchet optimises; it cannot
+ * endanger.
  */
 
 export type OrderKindName = "ENTRY" | "STOP" | "TP" | "CLOSE";
@@ -111,6 +133,12 @@ export type OpenPositionInput = {
   substituted: boolean;
   side: Side;
   profile: ProfileConfig;
+  /**
+   * The profile + fee/slippage assumptions FROZEN onto the position. Every stop
+   * decision for the life of this trade reads this, never the live bot config — an
+   * admin editing the bot mid-trade must not move the stop under an open position.
+   */
+  snapshot: ProfileSnapshot;
   sizing: SizingInput;
   /** Bar-close price from the signal. Sizes the order; never prices the ladder. */
   priceHint: number;
@@ -223,7 +251,11 @@ export async function openPosition(input: OpenPositionInput): Promise<OpenPositi
   let presetStopId: string | null = null;
   try {
     const presets = await ex.fetchOpenOrders(symbol, undefined, undefined, { planType: "profit_loss" });
-    presetStopId = presets[0]?.id ?? null;
+    // Find the loss_plan explicitly — NEVER `[0]`. This read is unambiguous now (only the
+    // preset exists pre-ratchet), but once a ratchet pos_loss coexists the family holds two
+    // orders in venue order, so `[0]` would be a trap for anyone copying this pattern.
+    presetStopId = presets.find((o) => (o.info as { planType?: string } | undefined)?.planType === "loss_plan")?.id
+      ?? presets[0]?.id ?? null;
   } catch {
     /* the reconcile job will find it */
   }
@@ -274,6 +306,9 @@ async function persistPosition(args: {
       // the fill. `stopPrice` records where it belongs once the fill is known.
       initialStopPrice: args.stopAtHint,
       currentStopPrice: args.stopAtHint,
+      // Freeze the rules this trade lives by. Read for every stop decision from here
+      // on, so an admin editing the bot can never move the stop under an open trade.
+      profileSnapshot: input.snapshot,
       orders: {
         create: [
           {
@@ -287,12 +322,15 @@ async function persistPosition(args: {
             avgFillPrice: args.entryPrice,
           },
           {
-            // The uncancellable preset backstop. Its id comes from a follow-up
-            // read, not the create response.
+            // The uncancellable preset backstop — stop GENERATION 0. Its id comes from
+            // a follow-up read, not the create response. Every later generation gets its
+            // OWN row: this id must survive, or the preset's fills become unattributable
+            // when PnL is booked.
             kind: "STOP",
             state: "OPEN",
             exchangeOrderId: args.presetStopId,
             clientOrderId: clientOrderId(input.signalId, input.userBotId, "STOP"),
+            rungIndex: 0,
             side: exitSide,
             price: args.stopAtHint,
             size: args.filledSize,
@@ -316,24 +354,53 @@ async function persistPosition(args: {
   });
 }
 
+/** Why a ratchet did nothing. Each is a normal outcome, not an error. */
+export type RatchetSkip =
+  | "notOpen"        // settled, or gone
+  | "flat"           // the venue holds nothing — reconcile will close the row
+  | "alreadyAtStep"  // this generation (or a tighter one) is already live
+  | "notTighter"     // the target would LOOSEN the stop; never allowed
+  | "wrongSide"      // the target is beyond the mark — a stop there cannot exist
+  | "noSize";        // the remainder is below the venue's minimum
+
+export type RatchetResult =
+  | { moved: true; step: number; stopPrice: number; orderId: string; canceled: string[] }
+  | { moved: false; reason: RatchetSkip };
+
 /**
- * Move the stop to the entry price once the break-even rung has filled.
+ * Move the working stop to a new generation — the progressive ratchet.
  *
- * Places a standalone reduce-only trigger stop at the entry and cancels any
- * earlier one. The entry's attached preset is deliberately left alone: it cannot
- * be cancelled (see the module header), it sits further from price than
- * break-even does, and so it can only ever act as a backstop.
+ * The stop is TWO things, and only one of them moves. The preset attached to the
+ * entry is a Bitget *position* TPSL: it carries no size, closes the whole position,
+ * cannot be cancelled, and dies with the trade. It is the unconditional backstop and
+ * is never touched here. The working stop is a `normal_plan` trigger order — the only
+ * movable kind, and the only one with a size — and it is what this function replaces.
  *
- * Idempotent — a position already at break-even reports false and does nothing,
- * and the deterministic `clientOid` means a racing second call is rejected by the
- * venue rather than placing a second stop.
+ * That asymmetry is the safety story: **nothing this function can get wrong leaves the
+ * position unprotected.** Every skip below simply leaves the previous stop (or, at
+ * worst, the preset at the original `sl%`) in place. The ratchet optimises; it cannot
+ * endanger.
+ *
+ * Ordering is deliberate: read the stale stops, place the new one, and only then
+ * cancel the stale. There is no instant with no stop on the book.
  */
-export async function moveStopToBreakEven(positionId: string): Promise<boolean> {
+export async function ratchetStop(input: {
+  positionId: string;
+  /** Generation = rungs filled. Never 0 — that is the entry's preset. */
+  step: number;
+  /** Signed distance from entry, %. NEGATIVE ⇒ the stop sits on the PROFIT side. */
+  distancePct: number;
+}): Promise<RatchetResult> {
   const position = await prisma.position.findUnique({
-    where: { id: positionId },
+    where: { id: input.positionId },
     include: { orders: { where: { kind: "STOP" } } },
   });
-  if (!position || position.status !== "OPEN" || position.beMoved) return false;
+  if (!position || position.status !== "OPEN") return { moved: false, reason: "notOpen" };
+
+  // Idempotency. A generation is never re-placed: its clientOid is already burned at
+  // the venue, and Bitget rejects a duplicate with 40786. This also makes the ratchet
+  // strictly monotonic — it can only ever go forwards.
+  if (input.step <= position.stopStep) return { moved: false, reason: "alreadyAtStep" };
 
   const connection = await import("@/lib/exchanges/connection").then((m) => m.getDecryptedConnection(position.userId, position.exchange));
   if (!connection) throw new Error("NO_CONNECTION");
@@ -347,65 +414,176 @@ export async function moveStopToBreakEven(positionId: string): Promise<boolean> 
   const side = position.side as Side;
   const exitSide = closingSide(side);
 
+  // Size from a FRESH read, every time. The working stop is a fixed-size plan order,
+  // and each filled rung shrinks the position underneath it — the DB row still carries
+  // the original entry size, and an arm-time snapshot goes stale the moment the next
+  // rung fills. Read what is actually there.
   const live = (await ex.fetchPositions([position.symbol]))[0];
   const remaining = Number(live?.contracts ?? 0);
-  if (remaining <= 0) return false;
+  if (remaining <= 0) return { moved: false, reason: "flat" };
+  const size = Number(ex.amountToPrecision(position.symbol, remaining));
+  if (!(size > 0)) return { moved: false, reason: "noSize" };
 
-  const bePrice = Number(ex.priceToPrecision(position.symbol, position.entryPrice));
+  const stopPrice = Number(ex.priceToPrecision(position.symbol, slPrice(position.entryPrice, input.distancePct, side)));
+  if (!(stopPrice > 0)) return { moved: false, reason: "wrongSide" };
 
-  // A stop must sit on the far side of the market: "sell at the entry" is only a
-  // stop once price is above the entry. If the break-even rung filled, it is —
-  // but a stale or replayed call could arrive early, and Bitget would quietly file
-  // a wrong-side trigger as something else entirely. Report not-yet and let the
-  // reconcile job try again.
-  const mark = Number(live?.markPrice ?? live?.lastPrice ?? 0) || Number((await ex.fetchTicker(position.symbol)).last);
-  const beyondEntry = side === "LONG" ? mark > bePrice : mark < bePrice;
-  if (!beyondEntry) return false;
+  // Never loosen. The maths already guarantees this, but an admin can swap a config
+  // mid-trade, so the invariant is enforced against what is actually on the book.
+  const tighter = side === "LONG" ? stopPrice > position.currentStopPrice : stopPrice < position.currentStopPrice;
+  if (!tighter) return { moved: false, reason: "notTighter" };
 
-  // Only standalone trigger stops, never the preset — it is uncancellable and is
-  // the backstop. Read before placing, so we can't cancel the new stop.
-  const stale = await standaloneStops(ex, position.symbol);
-  const replacement = await ex.createOrder(position.symbol, "market", exitSide, remaining, undefined, {
-    marginMode: MARGIN_MODE,
-    oneWayMode: true,
-    reduceOnly: true,
-    triggerPrice: bePrice,
-    clientOid: clientOrderId(position.entrySignalId, position.userBotId, "STOP", -1),
-  });
+  // A pos_loss must sit on the FAR side of the MARK. "Sell at X" only stops while the mark
+  // is above X. A wrong-side pos_loss is LOUDLY rejected (40917) — unlike the old normal_plan,
+  // which was silently re-filed — so we guard here to avoid the round-trip, then catch 40917
+  // below for the guard-vs-venue race. Decided against the MARK explicitly (never last/ticker):
+  // the venue evaluates 40917 on the mark, so a `last != mark` fallback could disagree with the
+  // venue at zero elapsed time. Price retracing after a spike-fill lands here — correct.
+  const mark = Number(live?.markPrice ?? 0) || Number((await ex.fetchTicker(position.symbol)).last);
+  const farSide = side === "LONG" ? stopPrice < mark : stopPrice > mark;
+  if (!farSide) return { moved: false, reason: "wrongSide" };
 
-  for (const staleId of stale) {
-    if (staleId === replacement.id) continue;
+  // CANCEL-FIRST. The movable stop is a pos_loss (position-level TPSL). A reduce-only plan
+  // stop is STARVED — the reduce-only TP ladder reserves ~100% of the position, so on trigger
+  // it fills 0 and is rejected; a pos_loss ignores those reservations and closes the whole
+  // position. We cancel the prior generation BEFORE placing the next so exactly ONE movable
+  // pos_loss ever rests, which sidesteps every coexistence case (add / replace-in-place /
+  // reject). The brief gap is backstopped by the uncancellable preset at `sl%` — never naked,
+  // only the profit-lock is deferred at most one sync. A pos_loss cancels ONLY with the
+  // planType, never bare {trigger:true}, and we filter strictly to pos_loss so the loss_plan
+  // PRESET can never enter the stale set and be swept.
+  // A discriminator per generation. Bitget rejects a repeat (40786), which both dedupes a
+  // retried sync and lets us ADOPT an already-placed generation instead of throwing.
+  const oid = clientOrderId(position.entrySignalId, position.userBotId, "STOP", -1 - input.step);
+
+  // Cancel every OLDER generation — but NEVER our own. If a prior attempt placed THIS
+  // generation on the venue and then crashed before recording it, cancelling it here and
+  // re-placing would burn its clientOid (40786) and then fail to re-find it (we just
+  // cancelled it), wedging the step. So adopt our own generation and cancel only the rest.
+  // Reuses the one enumeration; no extra round-trip.
+  const movable = await movablePosLossStops(ex, position.symbol);
+  const alreadyMine = movable.find((o) => o.clientOid === oid)?.id ?? null;
+  const canceled: string[] = [];
+  for (const staleStop of movable) {
+    if (staleStop.id === alreadyMine) continue;
     try {
-      await ex.cancelOrder(staleId, position.symbol, { trigger: true });
+      await ex.cancelOrder(staleStop.id, position.symbol, { planType: "pos_loss", trigger: true });
+      canceled.push(staleStop.id);
     } catch {
       /* already gone — it triggered, or the venue reaped it */
     }
   }
 
+  let stopOrderId: string;
+  if (alreadyMine) {
+    // A crashed prior attempt already placed this exact generation. The price is
+    // deterministic for a step (frozen entry × fixed distance), so it is the right stop.
+    stopOrderId = alreadyMine;
+  } else {
+    try {
+      // `stopLossPrice` mints a pos_loss. NOT `triggerPrice`+`reduceOnly` (starves); NOT the
+      // entry's `stopLoss.triggerPrice` (that is the uncancellable loss_plan preset).
+      const placed = await ex.createOrder(position.symbol, "market", exitSide, size, undefined, {
+        marginMode: MARGIN_MODE,
+        oneWayMode: true,
+        stopLossPrice: stopPrice,
+        clientOid: oid,
+      });
+      // createOrder for a TPSL may not return a usable id — resolve it by our clientOid.
+      stopOrderId = placed.id ?? (await posLossIdByClientOid(ex, position.symbol, oid)) ?? "";
+    } catch (error) {
+      const raw = error instanceof Error ? error.message : String(error);
+      // 40917: the mark ticked across the trigger between our guard and the venue's check. Any
+      // older generation is already cancelled, so only the preset remains — but this coincides
+      // with a favourable move (price ran away from the stop). Let the next sync retry.
+      if (/40917|stop price|mark price/i.test(raw)) {
+        await logExec({ level: "info", event: "stop.workingStopMissing", positionId: position.id, userBotId: position.userBotId, detail: { step: input.step, reason: "wrongSideRace" } });
+        return { moved: false, reason: "wrongSide" };
+      }
+      // 40786: raced with our own just-placed generation (it was not yet visible to the
+      // enumeration above). Adopt it.
+      if (/40786|duplicate/i.test(raw)) {
+        stopOrderId = (await posLossIdByClientOid(ex, position.symbol, oid)) ?? "";
+      } else {
+        throw error;
+      }
+    }
+  }
+  if (!stopOrderId) throw new Error("STOP_NO_ORDER_ID");
+
+  // One row per generation, keyed by clientOid. Every generation keeps its own
+  // exchangeOrderId (the pos_loss plan-order id) — `realizedPnlFor` and the stop-out
+  // attribution both key off these, and losing an id drops PnL into the widening path.
+  // Written only AFTER a confirmed place + id capture, so a crash between cancel and place
+  // never advances stopStep or leaves a fired generation unrecorded.
+  const atOrBeyondEntry = side === "LONG" ? stopPrice >= position.entryPrice : stopPrice <= position.entryPrice;
   await prisma.$transaction([
+    prisma.order.upsert({
+      where: { clientOrderId: oid },
+      create: {
+        positionId: position.id, kind: "STOP", state: "OPEN",
+        exchangeOrderId: stopOrderId, clientOrderId: oid, rungIndex: input.step,
+        side: exitSide, price: stopPrice, size, reduceOnly: false,
+      },
+      update: { exchangeOrderId: stopOrderId, price: stopPrice, size, state: "OPEN" },
+    }),
+    // Retire the generations we just cancelled. Generation 0 (the preset) is left OPEN —
+    // it is still live on the venue and only dies with the position.
+    prisma.order.updateMany({
+      where: { positionId: position.id, kind: "STOP", state: "OPEN", rungIndex: { gt: 0, lt: input.step } },
+      data: { state: "CANCELED" },
+    }),
     prisma.position.update({
       where: { id: position.id },
-      data: { beMoved: true, currentStopPrice: bePrice },
-    }),
-    prisma.order.updateMany({
-      where: { positionId: position.id, kind: "STOP" },
-      data: { exchangeOrderId: replacement.id ?? null, price: bePrice, state: "OPEN" },
+      data: {
+        stopStep: input.step,
+        currentStopPrice: stopPrice,
+        // Monotone: once the stop has reached entry it never reads as un-armed again.
+        beMoved: position.beMoved || atOrBeyondEntry,
+      },
     }),
   ]);
-  return true;
+
+  return { moved: true, step: input.step, stopPrice, orderId: stopOrderId, canceled };
 }
 
 /**
- * Standalone trigger stops only — the movable ones. Attached presets are excluded
- * on purpose: they are uncancellable, and pretending otherwise means swallowing a
- * cancel that silently did nothing.
+ * The movable `pos_loss` stops only — the ones the ratchet places and moves. These live in
+ * the `profit_loss` family ALONGSIDE the entry preset (a `loss_plan`), so we filter STRICTLY
+ * on `planType === "pos_loss"`: the loss_plan preset is the uncancellable full-position
+ * backstop and must NEVER enter the stale set, or a cancel would try to sweep the one stop
+ * that guarantees the position is never naked. Never discriminate by size (the preset carries
+ * the entry size; a pos_loss reports size 0) — only by planType.
  */
-async function standaloneStops(ex: Exchange, symbol: string): Promise<string[]> {
+async function movablePosLossStops(ex: Exchange, symbol: string): Promise<{ id: string; clientOid: string | undefined }[]> {
   try {
-    const orders = await ex.fetchOpenOrders(symbol, undefined, undefined, { trigger: true });
-    return orders.map((order) => order.id).filter((id): id is string => Boolean(id));
+    const orders = await ex.fetchOpenOrders(symbol, undefined, undefined, { planType: "profit_loss" });
+    return orders
+      .filter((order) => Boolean(order.id) && (order.info as { planType?: string } | undefined)?.planType === "pos_loss")
+      .map((order) => ({
+        id: order.id as string,
+        clientOid: order.clientOrderId ?? (order.info as { clientOid?: string } | undefined)?.clientOid,
+      }));
   } catch {
     return [];
+  }
+}
+
+/**
+ * Resolve a just-placed pos_loss's order id by the clientOid we sent — createOrder for a
+ * TPSL can come back without a usable id, and once a pos_loss coexists with the preset in
+ * the `profit_loss` family, `[0]` is a trap. Match on planType AND clientOid.
+ */
+async function posLossIdByClientOid(ex: Exchange, symbol: string, clientOid: string): Promise<string | null> {
+  try {
+    const orders = await ex.fetchOpenOrders(symbol, undefined, undefined, { planType: "profit_loss" });
+    const mine = orders.find(
+      (order) =>
+        (order.info as { planType?: string } | undefined)?.planType === "pos_loss" &&
+        (order.clientOrderId === clientOid || (order.info as { clientOid?: string } | undefined)?.clientOid === clientOid),
+    );
+    return mine?.id ?? null;
+  } catch {
+    return null;
   }
 }
 
@@ -424,6 +602,20 @@ export async function closeAll(ex: Exchange, symbol: string, clientOid?: string)
     } catch {
       /* 22001 "No order to cancel" — nothing of this kind was resting */
     }
+  }
+
+  // A movable pos_loss lives in the profit_loss family and SURVIVES both sweeps above. Cancel
+  // it by id BEFORE the market close: being position-level, a stray pos_loss can otherwise bind
+  // to a freshly-reversed same-symbol position and stop it out at a dead trigger. Leave the
+  // loss_plan preset (uncancellable, and it dies with the position anyway).
+  try {
+    for (const order of await ex.fetchOpenOrders(symbol, undefined, undefined, { planType: "profit_loss" })) {
+      if ((order.info as { planType?: string } | undefined)?.planType === "pos_loss" && order.id) {
+        await ex.cancelOrder(order.id, symbol, { planType: "pos_loss", trigger: true }).catch(() => {});
+      }
+    }
+  } catch {
+    /* nothing resting */
   }
 
   const positions = await ex.fetchPositions([symbol]);

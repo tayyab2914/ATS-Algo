@@ -1,6 +1,16 @@
 import { z } from "zod";
 import { EXCHANGES } from "@/lib/account";
-import { RISK_TO_PROFILE, type RiskClass, type RiskKey } from "@/lib/bot-config";
+import {
+  DEFAULT_SLIPPAGE_PCT,
+  minDistancePct,
+  nthNearestTp,
+  ratchetDistancePct,
+  ratchetPct,
+  RISK_TO_PROFILE,
+  stopBufferPct,
+  type RiskClass,
+  type RiskKey,
+} from "@/lib/bot-config";
 import { exchangeRequiresPassphrase } from "@/lib/bot-exchanges";
 
 /** Shared field rules. */
@@ -131,6 +141,16 @@ function profileConfigSchema(label: string) {
           .lt(100, `${label}: a stop-loss of 100% or more would put the stop at or below zero`),
         // 1-based rung INDEX that arms break-even; null/0 means never.
         be: z.number().int(`${label}: be must be a whole rung number`).min(0).nullable().optional(),
+        // The progressive ratchet. Its PRESENCE switches the engine off the one-shot
+        // `be` and onto the ladder — so a bot only gets the ladder once the simulator
+        // emits this field. Geometry (G2/G3) is checked on the whole config, where the
+        // fee and slippage assumptions live.
+        sl_tighten_pct: z
+          .number()
+          .positive(`${label}: sl_tighten_pct must be a positive percentage of the original stop distance`)
+          .max(100, `${label}: sl_tighten_pct above 100 would jump the stop past entry on the very first rung`)
+          .nullable()
+          .optional(),
         lev: z
           .number()
           .min(1, `${label}: leverage must be at least 1`)
@@ -189,6 +209,14 @@ export const botConfigSchema = z
         },
         { error: "Config JSON needs a `fees` block with maker_fee_pct and taker_fee_pct." },
       ),
+      // Assumed adverse fill on a market stop — an INSTRUMENT property, so it lives
+      // per ticker rather than as a platform constant. Feeds the stop buffer that the
+      // ladder's geometry is validated against.
+      slippage_pct: z
+        .number()
+        .min(0, "slippage_pct must be zero or greater")
+        .max(10, "slippage_pct above 10% is not a plausible market-stop assumption")
+        .optional(),
       // A bot trades exactly ONE profile — the one its `riskClass` selects (see
       // `profileFor`). The live executor, the backtest columns, and both detail
       // pages all read only that profile; the other two are never surfaced. So
@@ -212,7 +240,65 @@ export const botConfigSchema = z
     },
     { error: "Config JSON must be an object." },
   )
-  .loose();
+  .loose()
+  // ── The stop ladder's GEOMETRY ────────────────────────────────────────────
+  // Checked here, not per-profile, because it needs the fee and slippage
+  // assumptions that live at the top of the config.
+  //
+  // The engine NEVER silently corrects an unsound ladder at runtime — it logs and
+  // refuses to move the stop. So the config must be right before it is stored: this
+  // is the only place a bad ladder can be caught.
+  .superRefine((cfg, ctx) => {
+    const buffer = stopBufferPct(Number(cfg.fees?.taker_fee_pct ?? 0), Number(cfg.slippage_pct ?? DEFAULT_SLIPPAGE_PCT));
+
+    for (const [key, profile] of Object.entries(cfg.profiles ?? {})) {
+      if (!profile) continue;
+      const p = profile as { tp: number[]; w: number[]; sl: number; sl_tighten_pct?: number | null };
+      const tighten = ratchetPct(p);
+      if (tighten === null) continue; // legacy `be` config — no ladder to check
+      if (!Array.isArray(p.tp) || p.tp.length < 2) continue; // caught by the profile schema
+
+      // G2 — SOUNDNESS. After n rungs, price has touched the n-th NEAREST take-profit.
+      // The stop must stay `buffer` inside that level: any tighter and it sits above
+      // the market (Bitget silently re-files a wrong-side trigger, with no error) or
+      // exits giving the whole gain back in fees. G2 holding is also exactly what makes
+      // the PnL-if-stopped rise with every rung.
+      for (let n = 1; n <= p.tp.length - 1; n++) {
+        const d = ratchetDistancePct(p.sl, tighten, n);
+        const nearest = nthNearestTp(p.tp, n)!;
+        for (const side of ["LONG", "SHORT"] as const) {
+          const floor = minDistancePct(nearest, buffer, side);
+          if (d < floor) {
+            ctx.addIssue({
+              code: "custom",
+              path: ["profiles", key, "sl_tighten_pct"],
+              message:
+                `${key} profile: sl_tighten_pct=${tighten} is too aggressive. After ${n} rung(s) it puts the stop at ${d.toFixed(2)}% from entry, ` +
+                `but price has only reached the ${n}${n === 1 ? "st" : n === 2 ? "nd" : n === 3 ? "rd" : "th"}-nearest take-profit (${nearest}%) — on a ${side} the stop may be no tighter than ` +
+                `${floor.toFixed(2)}% once fees and slippage (${buffer.toFixed(3)}%) are covered. It would sit beyond the market and never protect anything. Lower sl_tighten_pct.`,
+            });
+            return; // one clear reason beats a cascade
+          }
+        }
+      }
+
+      // G3 — CONFORMANCE. The weights sum to 1, so the FINAL rung closes the position
+      // outright. A ladder that only reaches profit at or after it can never lock
+      // anything in: the stop is dead config.
+      const locksProfit = Array.from({ length: p.tp.length - 1 }, (_, i) => ratchetDistancePct(p.sl, tighten, i + 1)).some((d) => d <= -buffer);
+      if (!locksProfit) {
+        const needed = (100 / (p.tp.length - 1)) * (1 + buffer / p.sl);
+        ctx.addIssue({
+          code: "custom",
+          path: ["profiles", key, "sl_tighten_pct"],
+          message:
+            `${key} profile: sl_tighten_pct=${tighten} never locks in profit. The last of the ${p.tp.length} rungs closes the position outright (the weights sum to 1), ` +
+            `so the stop only ever matters up to rung ${p.tp.length - 1} — and by then it is still ${ratchetDistancePct(p.sl, tighten, p.tp.length - 1).toFixed(2)}% from entry, a losing stop. ` +
+            `Use at least ~${needed.toFixed(1)} to move it past break-even while the trade is still open.`,
+        });
+      }
+    }
+  });
 
 /**
  * First readable validation error for a bot config, or null when it's valid.
