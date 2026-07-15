@@ -64,3 +64,6 @@ next-env.d.ts
 
 # os
 Thumbs.db
+
+# spec handed to the quant — not product code
+/STOP-LADDER-SPEC.md

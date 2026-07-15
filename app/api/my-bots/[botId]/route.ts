@@ -123,7 +123,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   });
   if (result.count === 0) return fail("Bot not in your list", 404);
 
-  // Warm the exchange account (one-way mode, cross margin, profile leverage) once
+  // Warm the exchange account (one-way mode, ISOLATED margin, profile leverage) once
   // the response has gone out, so the deployment's first order doesn't pay three
   // REST round-trips ahead of its entry. Never blocks activation: the executor
   // re-checks the fingerprint and prepares itself if this didn't land.
