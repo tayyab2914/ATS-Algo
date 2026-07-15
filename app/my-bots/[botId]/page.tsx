@@ -4,6 +4,9 @@ import { notFound } from "next/navigation";
 import { AppShell } from "@/components/app/AppShell";
 import { ArmLiveToggle } from "@/components/my-bots/ArmLiveToggle";
 import { BotDetailActions } from "@/components/my-bots/BotDetailActions";
+import { MonthlyBreakdown } from "@/components/my-bots/MonthlyBreakdown";
+import { TradeHistory } from "@/components/my-bots/TradeHistory";
+import { MultiLineChart } from "@/components/dashboard/MultiLineChart";
 import { blockExpiredGuest, getPageAccess } from "@/lib/auth/guards";
 import type { BotConfig } from "@/lib/bot-config";
 import { chosenExchange } from "@/lib/bot-exchanges";
@@ -80,8 +83,15 @@ export default async function MyBotDetailPage({ params }: PageProps<"/my-bots/[b
 
   // Everything below comes from the positions and orders the engine actually placed.
   const view = await loadLiveView(userBot.id, bot.config as unknown as BotConfig, bot.riskClass);
-  const { profile, open, performance, timeline } = view;
-  const signed = (n: number) => `${n >= 0 ? "+" : ""}$${n.toFixed(2)}`;
+  const { profile, open, performance, trades, monthly, timeline } = view;
+  const signed = (n: number) => `${n < 0 ? "-" : "+"}$${Math.abs(n).toFixed(2)}`;
+  // The ratchet walks the stop past entry to lock profit — a strictly-beyond-entry stop is
+  // more than "break-even", so it earns its own label.
+  const stopBeyondEntry = open
+    ? open.side === "LONG"
+      ? open.stopPrice > open.entryPrice
+      : open.stopPrice < open.entryPrice
+    : false;
 
   return (
     <AppShell>
@@ -128,11 +138,24 @@ export default async function MyBotDetailPage({ params }: PageProps<"/my-bots/[b
             <StatCard label="Position" value={`${open.side === "LONG" ? "Long" : "Short"} ${open.symbol}`} />
             <StatCard label="Entry Price" value={`$${open.entryPrice.toLocaleString("en-US")}`} />
             <StatCard
-              label={open.beMoved ? "Stop (break-even)" : "Stop Loss"}
+              label={stopBeyondEntry ? "Stop (profit locked)" : open.beMoved ? "Stop (break-even)" : "Stop Loss"}
               value={`$${open.stopPrice.toLocaleString("en-US")}`}
               tone={open.beMoved ? "success" : "danger"}
             />
+            <StatCard
+              label="Unrealized PnL"
+              value={open.unrealizedPnl != null ? signed(open.unrealizedPnl) : "—"}
+              tone={open.unrealizedPnl == null ? "default" : open.unrealizedPnl >= 0 ? "success" : "danger"}
+            />
+            {open.markPrice != null && (
+              <StatCard label="Mark Price" value={`$${open.markPrice.toLocaleString("en-US")}`} />
+            )}
           </div>
+          {open.markedAt ? (
+            <p className="text-xs text-muted">Live figures updated {relativeTime(open.markedAt)}, on each sync.</p>
+          ) : (
+            <p className="text-xs text-muted">Unrealized PnL fills in on the next sync (within a minute of opening).</p>
+          )}
         </>
       ) : (
         <div className="rounded-2xl border border-line bg-surface p-6 text-sm text-muted">
@@ -183,7 +206,11 @@ export default async function MyBotDetailPage({ params }: PageProps<"/my-bots/[b
       {/* Live metrics — the bot's own risk settings plus this deployment's real record. */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <StatCard label="Stop Loss" value={profile ? `${profile.sl}%` : "—"} tone="danger" />
-        <StatCard label="SL to BE" value={profile?.be ? `TP${profile.be}` : "Never"} />
+        {profile?.sl_tighten_pct ? (
+          <StatCard label="Stop ratchet" value={`${profile.sl_tighten_pct}%/TP`} tone="success" />
+        ) : (
+          <StatCard label="SL to BE" value={profile?.be ? `TP${profile.be}` : "Never"} />
+        )}
         <StatCard label="Leverage" value={profile ? `${profile.lev}x` : "—"} />
         <StatCard label="Trades Closed" value={String(performance.trades)} />
         <StatCard
@@ -231,6 +258,26 @@ export default async function MyBotDetailPage({ params }: PageProps<"/my-bots/[b
           </div>
         )}
       </section>
+
+      {/* Equity Curve — cumulative realized PnL after each closed trade. */}
+      {performance.trades > 0 && (
+        <section className="flex flex-col gap-4">
+          <h2 className="text-base font-semibold text-white">Equity Curve</h2>
+          <div className="rounded-2xl border border-line bg-surface p-4 sm:p-6">
+            <MultiLineChart
+              series={[{ label: "Cumulative PnL", color: "#28B8D5", points: [0, ...performance.equity] }]}
+              height={220}
+            />
+            <p className="mt-3 text-xs text-muted">Cumulative realized PnL (USDT) after each closed trade.</p>
+          </div>
+        </section>
+      )}
+
+      {/* Trade History — each closed trade with the engine's own outcome. */}
+      <TradeHistory trades={trades} />
+
+      {/* Monthly Breakdown — realized PnL grouped by calendar month. */}
+      <MonthlyBreakdown months={monthly} />
 
       {/* Selected Profile */}
       <section className="rounded-2xl border border-line bg-surface p-4 sm:p-6">

@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { AdminCard } from "@/components/admin/AdminCard";
 import { BacktestResults } from "@/components/admin/BacktestResults";
+import { LadderPreview } from "@/components/admin/LadderPreview";
 import { CheckIcon } from "@/components/admin/admin-icons";
 import { ExchangeMultiSelect } from "@/components/admin/ExchangeMultiSelect";
 import { Notice, type NoticeData } from "@/components/ui/Notice";
@@ -281,6 +282,9 @@ export function BotEditor({ bot, categories }: { bot: BotEditorData; categories:
             <p className="text-xs text-muted">Run the backtest to preview the updated metrics before saving.</p>
           )}
         </div>
+
+        {/* Progressive stop ladder — reflects the loaded config for the selected risk class */}
+        <LadderPreview config={config} riskClass={riskClass} />
 
         {/* Change message */}
         <label className="flex flex-col gap-2">

@@ -134,7 +134,7 @@ export default async function ViewBotPage({ params }: { params: Promise<{ id: st
             hasSecret={bot.signalSecretEnc !== null}
             // Straight from the profile this bot trades, so the alert it tells you to
             // paste always describes the ladder the executor will actually place.
-            profile={profile ? { tp: profile.tp, sl: profile.sl, be: profile.be, lev: profile.lev } : null}
+            profile={profile ? { tp: profile.tp, sl: profile.sl, be: profile.be, lev: profile.lev, sl_tighten_pct: profile.sl_tighten_pct } : null}
             riskLabel={RISK_LABEL[bot.riskClass]}
           />
         </div>

@@ -23,7 +23,7 @@ export type TradingViewSetupProps = {
   webhookUrl: string;
   hasSecret: boolean;
   /** The profile this bot actually trades, selected by its risk class. */
-  profile: { tp: number[]; sl: number; be: number | null; lev: number } | null;
+  profile: { tp: number[]; sl: number; be: number | null; lev: number; sl_tighten_pct?: number | null } | null;
   riskLabel: string;
 };
 
@@ -136,8 +136,14 @@ export function TradingViewSetup({ botId, webhookUrl, hasSecret, profile, riskLa
             </div>
             <div className="text-[#D2031E]">Enable ATR Trailing Stop = OFF</div>
             <div className="mt-1 text-muted">
-              Break-even after rung {profile.be ?? "—"} and {profile.lev}x leverage are applied by the platform, not the
-              indicator.
+              {profile.sl_tighten_pct ? (
+                <>
+                  Progressive stop ladder (tighten {profile.sl_tighten_pct}% per take-profit)
+                </>
+              ) : (
+                <>Break-even after rung {profile.be ?? "—"}</>
+              )}{" "}
+              and {profile.lev}x leverage are applied by the platform, not the indicator.
             </div>
           </div>
         </div>

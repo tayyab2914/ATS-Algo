@@ -99,7 +99,9 @@ export default async function BotDetailPage({ params }: PageProps<"/bot-library/
 
   const metrics: Stat[] = [
     { label: "Stop Loss", value: profile?.sl != null ? `${profile.sl}%` : "—", tone: "danger" },
-    { label: "SL to BE", value: profile?.be ? `TP${profile.be}` : "—" },
+    profile?.sl_tighten_pct
+      ? { label: "Stop ratchet", value: `${profile.sl_tighten_pct}%/TP`, tone: "success" }
+      : { label: "SL to BE", value: profile?.be ? `TP${profile.be}` : "—" },
     { label: "Leverage", value: profile?.lev != null ? `${profile.lev}x` : "—" },
     { label: "Trade Count", value: bot.trades.toLocaleString("en-US") },
     { label: "Winrate", value: `${bot.winRate.toFixed(1)}%`, tone: "success" },

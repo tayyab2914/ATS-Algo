@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { AdminCard } from "@/components/admin/AdminCard";
 import { BacktestResults } from "@/components/admin/BacktestResults";
+import { LadderPreview } from "@/components/admin/LadderPreview";
 import { CheckIcon } from "@/components/admin/admin-icons";
 import { ExchangeMultiSelect } from "@/components/admin/ExchangeMultiSelect";
 import { Notice, type NoticeData } from "@/components/ui/Notice";
@@ -199,6 +200,8 @@ export function BotWizard({ categories }: { categories: string[] }) {
         {step === 3 && result && (
           <BacktestResults name={name} timeframe={timeframe} riskClass={riskClass} result={result} />
         )}
+
+        {step === 3 && config && <LadderPreview config={config} riskClass={riskClass} />}
 
         {/* Nav */}
         <div className="flex items-center justify-between border-t border-line pt-4">
