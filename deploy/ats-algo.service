@@ -18,9 +18,10 @@ Group=ats
 WorkingDirectory=/srv/ats-algo
 EnvironmentFile=/etc/ats-algo/env
 Environment=NODE_ENV=production
-Environment=PORT=3000
-Environment=HOSTNAME=127.0.0.1
-ExecStart=/usr/bin/node node_modules/next/dist/bin/next start
+; -H is required, not decorative: `next start` defaults to 0.0.0.0, and the
+; HOSTNAME env var does not override it. Binding to loopback means the security
+; group is the second line of defence rather than the only one.
+ExecStart=/usr/bin/node node_modules/next/dist/bin/next start -H 127.0.0.1 -p 3000
 Restart=always
 RestartSec=3
 KillSignal=SIGTERM
