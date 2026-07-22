@@ -5,21 +5,24 @@ import { PrismaClient } from "@/lib/generated/prisma/client";
  * Prisma client singleton.
  *
  * Prisma 7 ships without the Rust query engine, so it connects through a driver
- * adapter — `@prisma/adapter-pg` over Supabase's Supavisor pooler.
+ * adapter — `@prisma/adapter-pg` straight to RDS Postgres.
  *
- * IMPORTANT: `DATABASE_URL` must point at the TRANSACTION pooler (port 6543),
- * NOT the session pooler (5432). Session mode hands each client its own Postgres
- * connection for the whole session and caps the project at ~15, which a pool of
- * any size plus `prisma studio` plus a migration can exhaust — surfacing as
- * `(EMAXCONNSESSION) max clients reached in session mode ... pool_size: 15` and
- * making pages fail to load. Transaction mode multiplexes many clients over
- * those connections, releasing one back after each query. Migrations keep using
- * the direct `DIRECT_URL` (session/direct), configured in `prisma.config.ts`.
+ * There is no connection pooler in front of the database and none is needed.
+ * The old Supabase setup required one because serverless meant many short-lived
+ * clients competing for ~15 session connections; here a single long-lived
+ * server owns exactly one pg pool for the life of the process. `DATABASE_URL`
+ * and `DIRECT_URL` are therefore the same endpoint — the split only survives
+ * because `prisma.config.ts` wants a migration URL.
  *
- * `max` caps how many upstream connections this process opens. One long-lived
- * server owns exactly one pool, so this can be generous — 10 is the deployed
- * value (deploy/README.md); the default of 5 is only the dev fallback. The
- * client is cached on `globalThis` so dev HMR reuses one pool.
+ * `max` caps how many upstream connections this process opens. db.t4g.micro
+ * allows ~112, so the deployed value of 10 (deploy/README.md) leaves ample
+ * headroom for migrations and `prisma studio` alongside; the default of 5 is
+ * only the dev fallback. The client is cached on `globalThis` so dev HMR reuses
+ * one pool.
+ *
+ * The instance sits in the same AZ as the app with no public endpoint, so a
+ * query round-trip is well under a millisecond and reachable only from the
+ * app's security group.
  */
 const POOL_MAX = Number(process.env.DATABASE_POOL_MAX ?? 5);
 

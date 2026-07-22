@@ -1,8 +1,24 @@
 # Deploying ATS-ALGO to EC2 (no Docker)
 
 A single EC2 instance running `next start` behind nginx, with systemd owning the
-process and the schedules. Postgres stays on Supabase. This is the only
-supported deployment target — the app has no platform-specific code left.
+process and the schedules, and RDS PostgreSQL in the same availability zone.
+This is the only supported deployment target — the app has no platform-specific
+code left.
+
+## Infrastructure
+
+| | |
+| --- | --- |
+| Region / AZ | `eu-central-1` / `eu-central-1a` (app and database co-located) |
+| App | `t3.small`, Ubuntu 24.04, Elastic IP `18.197.98.119` |
+| Database | RDS PostgreSQL 17, `db.t4g.micro`, encrypted, 7-day backups |
+| App security group | `sg-0ca94ca5f2fbd8698` — 80/443 public, 22 from the admin IP |
+| DB security group | `sg-04969e05896145a6a` — 5432 from the app's group only |
+
+The database has **no public endpoint**. It is reachable only from the app's
+security group, so there is no internet-facing surface to brute-force and no
+route in that does not go through the app server first. Deletion protection is
+on; removing the instance requires disabling that first, deliberately.
 
 ## 1. Instance
 
