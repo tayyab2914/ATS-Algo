@@ -30,7 +30,11 @@ echo "==> Fetching"
 git pull --ff-only
 
 echo "==> Installing (postinstall runs prisma generate)"
-npm ci
+# --include=dev is load-bearing: the env file we just sourced sets
+# NODE_ENV=production, which on its own makes npm skip devDependencies. The
+# build needs them — tailwind and typescript are both dev deps — so without
+# this the build dies on `Cannot find module '@tailwindcss/postcss'`.
+npm ci --include=dev
 
 echo "==> Applying migrations"
 npx prisma migrate deploy

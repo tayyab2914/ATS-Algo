@@ -49,19 +49,30 @@ file has to be sourced for the build, not just for the running service.
 
 ## 4. First deploy
 
+`/srv/ats-algo` is the `ats` user's home and already contains skel dotfiles, so
+`git clone` into it fails. Initialize in place:
+
 ```bash
-sudo -u ats -H git clone <repo-url> /srv/ats-algo
 sudo -u ats -H bash -c '
+  set -euo pipefail
   cd /srv/ats-algo
+  git init -q -b master
+  git remote add origin https://github.com/tayyab2914/ATS-Algo.git
+  git fetch -q origin master
+  git checkout -q -f -b master FETCH_HEAD
+  git branch --set-upstream-to=origin/master master
+
   set -a; . /etc/ats-algo/env; set +a
-  npm ci                      # postinstall runs prisma generate
+  npm ci --include=dev        # postinstall runs prisma generate
   npx prisma migrate deploy   # uses DIRECT_URL via prisma.config.ts
   npm run build
 '
 ```
 
-`npm ci` installs devDependencies too — tailwind and typescript are needed to
-build. Don't use `--omit=dev`.
+**`--include=dev` is not optional.** The env file sets `NODE_ENV=production`,
+and sourcing it before `npm ci` makes npm skip devDependencies on its own — no
+`--omit=dev` needed. The build needs them (tailwind, typescript), and fails with
+`Cannot find module '@tailwindcss/postcss'` without it.
 
 ## 5. systemd
 
