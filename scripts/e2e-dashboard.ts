@@ -23,18 +23,23 @@ async function main() {
   const html = await res.text();
   console.log("• /dashboard:", res.status);
 
-  const markers = [
-    "Dashboard Overview",
-    "Performance Metrics",
-    "Active Bots",
-    "Top Active Bots",
-    "My Bots Performance",
-    "Portfolio Balance",
-    "Spot Holdings Overview",
-    "Top Assets Performance",
-    "Binance API",
+  // A brand-new account has deployed nothing, so the bots section renders its
+  // fallback heading. Match either — the section is what's being smoke-tested,
+  // not which of its three states a fresh user happens to land in.
+  const markers: [string, string[]][] = [
+    ["Dashboard Overview", ["Dashboard Overview"]],
+    ["Performance Metrics", ["Performance Metrics"]],
+    ["Active Bots", ["Active Bots"]],
+    ["bots section", ["Your Top Active Bots", "Your Bots", "Top Published Bots"]],
+    ["My Bots Performance", ["My Bots Performance"]],
+    ["Portfolio Balance", ["Portfolio Balance"]],
+    ["Spot Holdings Overview", ["Spot Holdings Overview"]],
+    ["Top Assets Performance", ["Top Assets Performance"]],
+    ["Binance API", ["Binance API"]],
   ];
-  for (const m of markers) console.log(`   ${html.includes(m) ? "✓" : "✗"} ${m}`);
+  for (const [label, any] of markers) {
+    console.log(`   ${any.some((m) => html.includes(m)) ? "✓" : "✗"} ${label}`);
+  }
 
   process.exit(0);
 }

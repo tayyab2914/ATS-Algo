@@ -5,19 +5,22 @@ import { cn } from "@/lib/cn";
 import { format, type TopBot } from "@/lib/dashboard/metrics";
 
 /**
- * The best-returning bots that are actually RUNNING — deployed by a member and
- * switched on. When nobody is running anything we fall back to the published
- * catalogue, and say so rather than implying those bots are live.
+ * The member's own best-returning bots that are actually RUNNING — deployed and
+ * switched on. When they're running nothing we fall back to their idle
+ * deployments, and only for a member with none at all to the published library —
+ * saying so either way rather than implying those bots are live.
  */
-export function TopActiveBots({ bots, running }: { bots: TopBot[]; running: boolean }) {
+export function TopActiveBots({ bots, running, deployed }: { bots: TopBot[]; running: boolean; deployed: boolean }) {
   return (
     <section className="flex flex-col gap-4">
       <SectionHeading
-        title={running ? "Top Active Bots" : "Top Published Bots"}
+        title={running ? "Your Top Active Bots" : deployed ? "Your Bots" : "Top Published Bots"}
         subtitle={
           running
-            ? "Best performing bots currently running across the platform."
-            : "No bots are running yet — showing the best published bots by backtest."
+            ? "Your best performing bots that are currently running."
+            : deployed
+              ? "None of your bots are switched on — showing your deployments by backtest."
+              : "You haven't deployed a bot yet — showing the best published bots by backtest."
         }
       />
 

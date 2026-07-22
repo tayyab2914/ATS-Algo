@@ -16,6 +16,20 @@ import { PERIOD_DAYS, type Period, periodColumn, periodStart, windowStart, type 
  * Live figures win whenever live data exists in the window; otherwise the
  * catalogue stands in, labelled as such.
  *
+ * ── EVERY panel here is the signed-in member's own ──
+ *
+ * This screen sits above a personal portfolio and a personal My Bots table, so
+ * every number on it answers "how are MY bots doing". Nothing aggregates other
+ * members. An earlier version ran the Performance Metrics grid unscoped, which
+ * summed every account on the platform into cards that read as personal — a
+ * member with one idle deployment saw somebody else's win rate and trade count.
+ *
+ * The one thing that isn't member-scoped is the *backtest fallback*, and only
+ * when the member has deployed nothing at all: with no bots of their own to
+ * describe, the cards fall back to the published library so a fresh dashboard
+ * isn't eight dashes. That set is labelled `source: "backtest"` and the section
+ * header says so. Once they deploy anything, the fallback narrows to their bots.
+ *
  * ── "active" means two different things, and conflating them is a lie ──
  *
  *   Bot.status === "ACTIVE"   the bot is PUBLISHED — visible in the library.
@@ -24,7 +38,7 @@ import { PERIOD_DAYS, type Period, periodColumn, periodStart, windowStart, type 
  *                             switched it on. This is what "active bot" means
  *                             to a member looking at My Bots.
  *
- * "Active Bots" on this dashboard counts the second. Counting the first told
+ * "Active Bots" counts the second, for this member only. Counting the first told
  * members that 7 bots were active while not a single one was running.
  */
 
@@ -57,14 +71,15 @@ export type DashboardData = {
   myBots: MyBotRow[];
   portfolio: { balance: number; windowPnl: number; months: string[]; curve: number[]; allocation: AllocationSlice[] };
   topPerformers: TopPerformer[];
-  /** True when at least one real trade has closed platform-wide in the window. */
+  /** True when at least one of THIS MEMBER's trades closed in the window. */
   hasLive: boolean;
+  /** True once the member has deployed anything — also what narrows the backtest fallback. */
   hasDeployments: boolean;
-  /** Bots a member has deployed AND switched on. What "active bot" means to them. */
+  /** Bots this member has deployed AND switched on. What "active bot" means to them. */
   runningBots: number;
-  /** Bots an admin has published to the library. Not the same thing. */
-  publishedBots: number;
-  /** False when `topBots` had to fall back to published bots because none are running. */
+  /** Bots this member has deployed, running or not. */
+  deployedBots: number;
+  /** False when `topBots` had to fall back to the library because none of theirs are running. */
   topBotsAreRunning: boolean;
 };
 
@@ -252,26 +267,49 @@ export async function loadDashboard(
   const column = periodColumn(period);
   const periodDays = PERIOD_DAYS[period];
 
-  const [publishedBots, closedInWindow, openPositions, runningDeployments] = await Promise.all([
-    // Published = listed in the library. The catalogue's advertised performance.
+  const [libraryBots, deployments, closedInWindow, openPositions] = await Promise.all([
+    // The library, PLUS anything this member runs that an admin has since
+    // unpublished — their own bot must not drop out of their own numbers.
     prisma.bot.findMany({
-      where: { status: "ACTIVE" },
+      where: userId ? { OR: [{ status: "ACTIVE" }, { userBots: { some: { userId } } }] } : { status: "ACTIVE" },
       select: { id: true, name: true, ticker: true, timeframe: true, riskClass: true, trades: true, winRate: true, profitFactor: true, d30: true, d90: true, d180: true, d360: true },
     }),
-    prisma.position.findMany({
-      where: { status: "CLOSED", closedAt: { gte: periodFrom } },
-      select: { realizedPnl: true, marginUsed: true },
-      take: 5000,
-    }),
-    prisma.position.count({ where: { status: "OPEN" } }),
-    // Running = a member deployed it and switched it on. This is "active".
-    prisma.userBot.findMany({ where: { active: true }, select: { botId: true }, distinct: ["botId"] }),
+    // Every panel below hangs off these. One row per bot (UserBot is unique on
+    // [userId, botId]), so a deployment count IS a bot count.
+    userId
+      ? prisma.userBot.findMany({
+          where: { userId },
+          select: {
+            id: true,
+            active: true,
+            allocatedCapital: true,
+            realizedBalance: true,
+            bot: { select: { id: true, name: true, riskClass: true } },
+            positions: { where: { status: "CLOSED" }, select: { realizedPnl: true, closedAt: true } },
+          },
+        })
+      : Promise.resolve([]),
+    // `Position.userId` is denormalized, so scoping costs no join.
+    userId
+      ? prisma.position.findMany({
+          where: { userId, status: "CLOSED", closedAt: { gte: periodFrom } },
+          select: { realizedPnl: true, marginUsed: true },
+          take: 5000,
+        })
+      : Promise.resolve([]),
+    userId ? prisma.position.count({ where: { userId, status: "OPEN" } }) : Promise.resolve(0),
   ]);
 
-  const runningBotIds = new Set(runningDeployments.map((deployment) => deployment.botId));
+  const runningBotIds = new Set(deployments.filter((d) => d.active).map((d) => d.bot.id));
   const running = activeBotCount(runningBotIds);
+  const deployedBotIds = new Set(deployments.map((d) => d.bot.id));
+  const deployedBots = libraryBots.filter((bot) => deployedBotIds.has(bot.id));
+  const hasDeployments = deployments.length > 0;
+
   const live = aggregateLive(closedInWindow);
-  const catalogue = aggregateCatalogue(publishedBots, column);
+  // Their bots' backtests once they have any; the library only for an empty
+  // dashboard, where there is nothing of their own to describe.
+  const catalogue = aggregateCatalogue(hasDeployments ? deployedBots : libraryBots, column);
   const hasLive = live.trades > 0;
   // Only the d-columns move with the period. Win rate, trade count and profit
   // factor are lifetime backtest figures and must never look windowed.
@@ -283,10 +321,10 @@ export async function loadDashboard(
       id: "active-bots",
       label: "Active Bots",
       icon: "bot",
-      // Bots that are RUNNING, not bots that are published. A member checking this
-      // against My Bots must see the same number.
+      // Bots THIS MEMBER is running, not bots that are published and not the
+      // platform's. A member checking this against My Bots must see the same number.
       value: String(running),
-      delta: `of ${catalogue.bots} published`,
+      delta: hasDeployments ? `of ${deployments.length} deployed` : "nothing deployed yet",
       source: "live",
       tone: running > 0 ? "success" : undefined,
     },
@@ -358,11 +396,13 @@ export async function loadDashboard(
     },
   ];
 
-  // Rank the bots that are actually running. Only when nobody is running anything
-  // do we fall back to the published catalogue — and the page says so.
-  const runningBotRows = publishedBots.filter((bot) => runningBotIds.has(bot.id));
+  // Rank the member's own running bots, then their idle ones, and only for a
+  // member who has deployed nothing at all do we fall back to the published
+  // library — where the page stops calling them active and says why.
+  const runningBotRows = libraryBots.filter((bot) => runningBotIds.has(bot.id));
   const topBotsAreRunning = runningBotRows.length > 0;
-  const topBots: TopBot[] = (topBotsAreRunning ? runningBotRows : publishedBots)
+  const rankPool = topBotsAreRunning ? runningBotRows : hasDeployments ? deployedBots : libraryBots;
+  const topBots: TopBot[] = rankPool
     .slice()
     .sort((a, b) => b[column] - a[column])
     .slice(0, 3)
@@ -375,8 +415,8 @@ export async function loadDashboard(
       returnPct: bot[column],
     }));
 
-  // ── Member-scoped ──────────────────────────────────────────────────────────
-  const empty: DashboardData = {
+  // ── The lower panels ───────────────────────────────────────────────────────
+  const base: DashboardData = {
     timeframe,
     period,
     windowStart: start,
@@ -386,25 +426,12 @@ export async function loadDashboard(
     portfolio: { balance: 0, windowPnl: 0, months: [], curve: [], allocation: [] },
     topPerformers: [],
     hasLive,
-    hasDeployments: false,
+    hasDeployments,
     runningBots: running,
-    publishedBots: catalogue.bots,
+    deployedBots: deployments.length,
     topBotsAreRunning,
   };
-  if (!userId) return empty;
-
-  const deployments = await prisma.userBot.findMany({
-    where: { userId },
-    select: {
-      id: true,
-      active: true,
-      allocatedCapital: true,
-      realizedBalance: true,
-      bot: { select: { id: true, name: true, riskClass: true } },
-      positions: { where: { status: "CLOSED" }, select: { realizedPnl: true, closedAt: true } },
-    },
-  });
-  if (deployments.length === 0) return empty;
+  if (!hasDeployments) return base;
 
   const windowPnlFor = (positions: { realizedPnl: number; closedAt: Date | null }[]) =>
     positions.reduce((sum, p) => (p.closedAt && p.closedAt >= start ? sum + p.realizedPnl : sum), 0);
@@ -453,11 +480,10 @@ export async function loadDashboard(
     .slice(0, 5);
 
   return {
-    ...empty,
+    ...base,
     myBots,
     portfolio: { balance, windowPnl: windowPnlFor(allClosed), months: labels, curve, allocation },
     topPerformers,
-    hasDeployments: true,
   };
 }
 

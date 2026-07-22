@@ -13,8 +13,10 @@ export function PerformanceMetrics({ data }: { data: DashboardData }) {
           <h2 className="text-base font-semibold leading-6 text-white">Performance Metrics</h2>
           <p className="text-xs text-muted">
             {data.hasLive
-              ? `Realized across trades closed in the last ${days} days.`
-              : `No trades closed in the last ${days} days — showing the catalogue's backtested figures.`}{" "}
+              ? `Realized across your trades closed in the last ${days} days.`
+              : data.hasDeployments
+                ? `None of your trades closed in the last ${days} days — showing your bots' backtested figures.`
+                : `You haven't deployed a bot yet — showing the library's backtested figures.`}{" "}
             Windows are UTC+2.
           </p>
         </div>

@@ -27,14 +27,15 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
   const period = parsePeriod(params.p);
   const timeframe = parseTimeframe(params.tf);
 
-  // A visitor has no deployments, so the member panels load empty — and the guest
-  // gate blurs them regardless. Platform metrics are identical for everyone.
+  // Every panel is this member's own. A visitor has no deployments, so the whole
+  // screen falls back to the library's backtested figures — and the guest gate
+  // blurs it regardless.
   const data = await loadDashboard(session?.sub ?? null, period, timeframe);
 
   const content = (
     <>
       <PerformanceMetrics data={data} />
-      <TopActiveBots bots={data.topBots} running={data.topBotsAreRunning} />
+      <TopActiveBots bots={data.topBots} running={data.topBotsAreRunning} deployed={data.hasDeployments} />
       <MyBotsPerformance bots={data.myBots} timeframe={data.timeframe} period={data.period} />
       <PortfolioAndHoldings data={data} />
       <TopAssets performers={data.topPerformers} />
@@ -46,7 +47,7 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
       <header className="flex flex-col gap-1">
         <h1 className="text-2xl font-semibold leading-[31px] text-white">Dashboard Overview</h1>
         <p className="text-sm leading-[21px] text-muted">
-          Monitor all trading bots, portfolio balance, and performance metrics.
+          Monitor your trading bots, portfolio balance, and performance metrics.
         </p>
       </header>
 
