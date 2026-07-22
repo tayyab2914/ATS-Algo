@@ -42,7 +42,6 @@ export default async function BotManagementPage() {
         d90: true,
         d180: true,
         d360: true,
-        avgTrade: true,
       },
     }),
     getCategoryNames(),

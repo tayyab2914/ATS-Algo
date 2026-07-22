@@ -1,14 +1,16 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { AdminCard } from "@/components/admin/AdminCard";
 import { BacktestResults } from "@/components/admin/BacktestResults";
 import { LadderPreview } from "@/components/admin/LadderPreview";
+import { parseTightenInput, StopLadderField } from "@/components/admin/StopLadderField";
 import { CheckIcon } from "@/components/admin/admin-icons";
 import { ExchangeMultiSelect } from "@/components/admin/ExchangeMultiSelect";
 import { Notice, type NoticeData } from "@/components/ui/Notice";
 import { Switch } from "@/components/ui/Switch";
+import { configRatchetPct, withRatchetPct } from "@/lib/bot-config";
 import { runBacktest, type BacktestResult, type BotConfig, type RiskClass } from "@/lib/backtest/engine";
 import { cn } from "@/lib/cn";
 import { botConfigError } from "@/lib/validation";
@@ -33,7 +35,12 @@ export type BotEditorData = {
   status: "ACTIVE" | "DISABLED";
   csvFilename: string | null;
   config: BotConfig;
-  csvText: string;
+  /**
+   * The metrics already stored on the bot row. Shown on mount instead of
+   * re-simulating the CSV — they're the output of the same backtest, saved by
+   * the route that last touched the config or signals, so they can't drift.
+   */
+  initialResult: BacktestResult | null;
 };
 
 export function BotEditor({ bot, categories }: { bot: BotEditorData; categories: string[] }) {
@@ -52,24 +59,37 @@ export function BotEditor({ bot, categories }: { bot: BotEditorData; categories:
   const [statusPending, setStatusPending] = useState(false);
 
   const [config, setConfig] = useState<BotConfig>(bot.config);
-  const [csvText, setCsvText] = useState(bot.csvText);
+  // Empty until the admin picks a new file or a re-run pulls the stored one —
+  // the bot's CSV is no longer shipped with the page. See `loadCsv`.
+  const [csvText, setCsvText] = useState("");
   const [csvFilename, setCsvFilename] = useState(bot.csvFilename ?? "");
   const [configChanged, setConfigChanged] = useState(false);
   const [csvChanged, setCsvChanged] = useState(false);
+  // Editable on its own, without re-uploading the JSON — the whole point of moving
+  // the ladder out of the file.
+  const [tightenPct, setTightenPct] = useState(() => String(configRatchetPct(bot.config) ?? ""));
 
-  // Show the current bot's metrics on load (lazy init) so changes are easy to
-  // compare; the user re-runs after swapping a file.
-  const [result, setResult] = useState<BacktestResult | null>(() => {
-    try {
-      return bot.csvText ? runBacktest(bot.config, bot.csvText) : null;
-    } catch {
-      return null;
-    }
-  });
+  // Show the current bot's metrics on load so changes are easy to compare; the
+  // user re-runs after swapping a file. These come straight off the row — the
+  // editor used to re-run the whole backtest here during render, which blocked
+  // hydration and duplicated work the save route had already done.
+  const [result, setResult] = useState<BacktestResult | null>(bot.initialResult);
+  const [previewPending, setPreviewPending] = useState(false);
   const [message, setMessage] = useState("");
 
   const jsonRef = useRef<HTMLInputElement>(null);
   const csvRef = useRef<HTMLInputElement>(null);
+
+  const tighten = useMemo(() => parseTightenInput(tightenPct), [tightenPct]);
+  // Everything below reads the config WITH the ladder written in — preview,
+  // validation and PATCH must all judge the same object. Memoised because these
+  // ran on every keystroke in any field, not just the ladder's.
+  const effectiveConfig = useMemo(() => withRatchetPct(config, tighten.value), [config, tighten.value]);
+  const ladderError = useMemo(
+    () => tighten.error ?? botConfigError(effectiveConfig, riskClass),
+    [tighten.error, effectiveConfig, riskClass],
+  );
+  const tightenChanged = tighten.value !== configRatchetPct(bot.config);
 
   // Any edited field counts as a change — including metadata-only edits like
   // switching the category, which previously left Save disabled with no reason.
@@ -81,21 +101,27 @@ export function BotEditor({ bot, categories }: { bot: BotEditorData; categories:
     exchanges.some((e) => !bot.exchanges.includes(e)) ||
     riskClass !== bot.riskClass ||
     configChanged ||
+    tightenChanged ||
     csvChanged;
   // A fresh backtest is only required when the config or CSV changed; a
   // metadata-only edit can save against the existing (mount-time) metrics.
+  // `tightenChanged` is deliberately NOT here: the backtest doesn't model the stop
+  // ladder at all, so a re-run would return byte-identical metrics and the prompt
+  // would be a lie. Change that the day `simulateTrade` reads `sl_tighten_pct`.
   const needsRerun = (configChanged || csvChanged) && !result;
-  const saveDisabled = pending || !dirty || needsRerun || !message.trim();
+  const saveDisabled = pending || !dirty || needsRerun || Boolean(ladderError) || !message.trim();
   // Tell the admin exactly why Save is unavailable instead of showing a dead button.
   const saveHint = pending
     ? null
     : !dirty
       ? "No changes to save yet"
-      : needsRerun
-        ? "Re-run the backtest before saving"
-        : !message.trim()
-          ? "Add a change note to save"
-          : null;
+      : ladderError
+        ? "Fix the stop ladder to save"
+        : needsRerun
+          ? "Re-run the backtest before saving"
+          : !message.trim()
+            ? "Add a change note to save"
+            : null;
 
   async function onJsonPicked(file: File) {
     setNotice(null);
@@ -108,6 +134,9 @@ export function BotEditor({ bot, categories }: { bot: BotEditorData; categories:
         return;
       }
       setConfig(parsed);
+      // Follow the new file's ladder if it carries one, so a replacement config's
+      // own tuning wins over whatever was left in the box from the old one.
+      setTightenPct(String(configRatchetPct(parsed) ?? ""));
       setConfigChanged(true);
       setResult(null); // force a re-run before saving
     } catch {
@@ -128,12 +157,44 @@ export function BotEditor({ bot, categories }: { bot: BotEditorData; categories:
     setResult(null); // force a re-run before saving
   }
 
-  function runPreview() {
+  /**
+   * The bot's signals aren't in the page payload — pull them the first time a
+   * re-run needs them, and keep them for subsequent runs. A freshly picked file
+   * is already in state, so this only ever hits the network for the stored CSV.
+   */
+  async function loadCsv(): Promise<string> {
+    if (csvText) return csvText;
+    const res = await fetch(`/api/admin/bots/${bot.id}/csv`);
+    if (!res.ok) {
+      const data = (await res.json().catch(() => null)) as { error?: string } | null;
+      throw new Error(data?.error ?? "Couldn't load this bot's signal CSV.");
+    }
+    const text = await res.text();
+    setCsvText(text);
+    return text;
+  }
+
+  async function runPreview() {
     setNotice(null);
+    setPreviewPending(true);
     try {
-      setResult(runBacktest(config, csvText));
-    } catch {
-      setNotice({ type: "error", message: "Backtest failed — check the CSV signal format." });
+      let csv: string;
+      try {
+        csv = await loadCsv();
+      } catch (error) {
+        setNotice({
+          type: "error",
+          message: error instanceof Error ? error.message : "Couldn't load this bot's signal CSV.",
+        });
+        return;
+      }
+      try {
+        setResult(runBacktest(effectiveConfig, csv));
+      } catch {
+        setNotice({ type: "error", message: "Backtest failed — check the CSV signal format." });
+      }
+    } finally {
+      setPreviewPending(false);
     }
   }
 
@@ -170,6 +231,10 @@ export function BotEditor({ bot, categories }: { bot: BotEditorData; categories:
       setNotice({ type: "error", message: "Add a short note describing what changed." });
       return;
     }
+    if (ladderError) {
+      setNotice({ type: "error", message: ladderError });
+      return;
+    }
     setPending(true);
     setNotice(null);
     try {
@@ -183,7 +248,8 @@ export function BotEditor({ bot, categories }: { bot: BotEditorData; categories:
           exchanges,
           riskClass,
           message: message.trim(),
-          ...(configChanged ? { config } : {}),
+          // Retuning the ladder alone still rewrites the config — it lives inside it.
+          ...(configChanged || tightenChanged ? { config: effectiveConfig } : {}),
           ...(csvChanged ? { csvText, csvFilename } : {}),
         }),
       });
@@ -192,8 +258,9 @@ export function BotEditor({ bot, categories }: { bot: BotEditorData; categories:
         setNotice({ type: "error", message: data?.error ?? "Couldn't save the bot." });
         return;
       }
+      // `push` already refetches the list route's RSC payload — a `refresh` here
+      // rendered the whole page a second time for nothing.
       router.push("/admin/bots");
-      router.refresh();
     } catch {
       setNotice({ type: "error", message: "Network error. Please try again." });
     } finally {
@@ -272,9 +339,10 @@ export function BotEditor({ bot, categories }: { bot: BotEditorData; categories:
           <button
             type="button"
             onClick={runPreview}
-            className="self-start rounded-2xl border border-accent px-5 py-2 text-sm font-semibold text-accent transition-colors hover:bg-accent/10"
+            disabled={previewPending}
+            className="self-start rounded-2xl border border-accent px-5 py-2 text-sm font-semibold text-accent transition-colors hover:bg-accent/10 disabled:opacity-50"
           >
-            Run Backtest
+            {previewPending ? "Running…" : "Run Backtest"}
           </button>
           {result ? (
             <BacktestResults name={name} timeframe={timeframe} riskClass={riskClass} result={result} />
@@ -283,8 +351,11 @@ export function BotEditor({ bot, categories }: { bot: BotEditorData; categories:
           )}
         </div>
 
-        {/* Progressive stop ladder — reflects the loaded config for the selected risk class */}
-        <LadderPreview config={config} riskClass={riskClass} />
+        {/* Progressive stop ladder — the field is the source of truth; the table is its consequence. */}
+        <div className="flex flex-col gap-4 border-t border-line pt-6">
+          <StopLadderField value={tightenPct} onChange={setTightenPct} error={ladderError} />
+          <LadderPreview config={effectiveConfig} riskClass={riskClass} />
+        </div>
 
         {/* Change message */}
         <label className="flex flex-col gap-2">

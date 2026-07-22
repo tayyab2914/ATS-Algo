@@ -74,6 +74,9 @@ export function BotsBrowser({ bots, categories }: { bots: BotTableRow[]; categor
 
       <BotsTable
         bots={rows}
+        showStatus={false}
+        showUsers={false}
+        botHref={(b) => `/admin/bots/${b.id}`}
         emptyLabel={filtered ? "No bots match your filter." : "No bots yet. Use “Add New Bot” to create one."}
       />
     </div>

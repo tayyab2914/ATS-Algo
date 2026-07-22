@@ -46,7 +46,6 @@ export default async function BotLibraryPage() {
       d90: true,
       d180: true,
       d360: true,
-      avgTrade: true,
       },
     }),
     deploymentCounts(),

@@ -3,7 +3,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { AdminSidebar } from "@/components/admin/AdminSidebar";
 import { BotEditor, type BotEditorData } from "@/components/admin/BotEditor";
-import { type BotConfig } from "@/lib/backtest/engine";
+import { type BacktestResult, type BotConfig } from "@/lib/backtest/engine";
 import { getCategoryNames } from "@/lib/categories";
 import { getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
@@ -18,10 +18,31 @@ export default async function EditBotPage({ params }: { params: Promise<{ id: st
   if (session.role !== "ADMIN") redirect("/dashboard");
 
   const { id } = await params;
-  const bot = await prisma.bot.findUnique({ where: { id } });
+  // Deliberately no `csvData` — it can be megabytes per bot, and handing it to a
+  // client component put the whole file in the RSC payload on every load. The
+  // editor fetches it from /api/admin/bots/[id]/csv only when a re-run needs it.
+  // `results` carries the stored metrics so the editor can show them on mount
+  // without re-simulating the CSV it no longer has.
+  const [bot, categories] = await Promise.all([
+    prisma.bot.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        name: true,
+        category: true,
+        timeframe: true,
+        exchange: true,
+        exchanges: true,
+        riskClass: true,
+        status: true,
+        csvFilename: true,
+        config: true,
+        results: true,
+      },
+    }),
+    getCategoryNames(),
+  ]);
   if (!bot) notFound();
-
-  const categories = await getCategoryNames();
 
   const data: BotEditorData = {
     id: bot.id,
@@ -33,7 +54,7 @@ export default async function EditBotPage({ params }: { params: Promise<{ id: st
     status: bot.status,
     csvFilename: bot.csvFilename,
     config: bot.config as unknown as BotConfig,
-    csvText: bot.csvData ?? "",
+    initialResult: (bot.results as unknown as BacktestResult | null) ?? null,
   };
 
   return (

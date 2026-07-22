@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { type ReactNode, useMemo, useState } from "react";
 import { AdminCard } from "@/components/admin/AdminCard";
 import { BotRowActions } from "@/components/admin/BotRowActions";
@@ -24,7 +25,6 @@ export type BotTableRow = {
   d90: number;
   d180: number;
   d360: number;
-  avgTrade: number;
   /** How many members have deployed this bot, and how many are running it. */
   users: number;
   running: number;
@@ -42,7 +42,6 @@ type SortKey =
   | "d90"
   | "d180"
   | "d360"
-  | "avgTrade"
   | "users"
   | "status";
 
@@ -57,7 +56,6 @@ const COLUMNS: { label: string; sort: SortKey | null }[] = [
   { label: "90 Days", sort: "d90" },
   { label: "180 Days", sort: "d180" },
   { label: "360 Days", sort: "d360" },
-  { label: "Avg. Trade", sort: "avgTrade" },
   { label: "Users", sort: "users" },
   { label: "Status", sort: "status" },
   { label: "Action", sort: null },
@@ -101,6 +99,8 @@ export function BotsTable({
   title = "Bots",
   subtitle = "Every bot you've created, with its latest backtest metrics.",
   showStatus = true,
+  showUsers = true,
+  botHref,
   renderAction,
 }: {
   bots: BotTableRow[];
@@ -109,12 +109,19 @@ export function BotsTable({
   subtitle?: string;
   /** Show the admin-only Status column (active/disabled). Hidden on public surfaces. */
   showStatus?: boolean;
+  /** Show the adoption ("Users" / running) column. */
+  showUsers?: boolean;
+  /** Link target for the bot name. Rendered as plain text when omitted. */
+  botHref?: (bot: BotTableRow) => string;
   /** Render the per-row Action cell. Defaults to the admin kebab menu. */
   renderAction?: (bot: BotTableRow) => ReactNode;
 }) {
   const [sort, setSort] = useState<SortState | null>(null);
   const action = renderAction ?? ((b: BotTableRow) => <BotRowActions botId={b.id} botName={b.name} />);
-  const columns = showStatus ? COLUMNS : COLUMNS.filter((c) => c.sort !== "status");
+  const hidden = new Set<SortKey>();
+  if (!showStatus) hidden.add("status");
+  if (!showUsers) hidden.add("users");
+  const columns = COLUMNS.filter((c) => !(c.sort && hidden.has(c.sort)));
 
   // Clicking a header sorts by it ascending (alphabetical / low→high); clicking
   // the same header again flips to descending.
@@ -178,7 +185,15 @@ export function BotsTable({
             ) : (
               rows.map((b) => (
                 <tr key={b.id} className="border-b border-line/60 last:border-0">
-                  <td className="px-4 py-4 text-sm font-semibold text-white">{b.name}</td>
+                  <td className="px-4 py-4 text-sm font-semibold text-white">
+                    {botHref ? (
+                      <Link href={botHref(b)} className="transition-colors hover:text-accent">
+                        {b.name}
+                      </Link>
+                    ) : (
+                      b.name
+                    )}
+                  </td>
                   <td className="px-4 py-4">
                     <span className="flex justify-center"><ExchangeCluster exchanges={b.exchanges} /></span>
                   </td>
@@ -194,14 +209,16 @@ export function BotsTable({
                   <td className="px-4 py-4 text-center text-sm"><Perf value={b.d90} /></td>
                   <td className="px-4 py-4 text-center text-sm"><Perf value={b.d180} /></td>
                   <td className="px-4 py-4 text-center text-sm"><Perf value={b.d360} /></td>
-                  <td className="px-4 py-4 text-center text-sm">
-                    <span className="text-white">{b.users}</span>
-                    {b.running > 0 && (
-                      <span className="ml-1.5 rounded-full bg-success/10 px-1.5 py-0.5 text-[10px] font-semibold text-success">
-                        {b.running} running
-                      </span>
-                    )}
-                  </td>
+                  {showUsers && (
+                    <td className="px-4 py-4 text-center text-sm">
+                      <span className="text-white">{b.users}</span>
+                      {b.running > 0 && (
+                        <span className="ml-1.5 rounded-full bg-success/10 px-1.5 py-0.5 text-[10px] font-semibold text-success">
+                          {b.running} running
+                        </span>
+                      )}
+                    </td>
+                  )}
                   {showStatus && (
                     <td className="px-4 py-4 text-center">
                       <span

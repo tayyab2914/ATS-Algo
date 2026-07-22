@@ -37,7 +37,13 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   const { name, category, timeframe, exchanges, exchange, riskClass, config, csvText, csvFilename, message } =
     parsed.data;
 
-  const existing = await prisma.bot.findUnique({ where: { id } });
+  // Deliberately narrow: an unscoped read pulled `csvData` (megabytes) and the
+  // `results` blob on every edit, including metadata-only ones that never touch
+  // them. The CSV is fetched below only when a re-run actually needs it.
+  const existing = await prisma.bot.findUnique({
+    where: { id },
+    select: { riskClass: true, config: true, csvFilename: true },
+  });
   if (!existing) return fail("Bot not found", 404);
 
   // Admin-allowed exchange set is authoritative (over any config-derived exchange).
@@ -73,7 +79,12 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       if (configError) return fail(configError, 422);
     }
     const cfg = (configProvided ? config : existing.config) as BotConfig;
-    const csv = csvText ?? existing.csvData;
+    // Only reach for the stored signals when the request didn't bring its own —
+    // a config or risk-class edit re-runs against the CSV already on file.
+    const csv =
+      csvText ??
+      (await prisma.bot.findUnique({ where: { id }, select: { csvData: true } }))?.csvData ??
+      null;
     if (!csv) return fail("This bot has no signal CSV — upload one to re-run the backtest.", 422);
     // Switching an existing bot to a risk tier its (possibly legacy) config never
     // defined would publish a bot that can never open a position. Block just that

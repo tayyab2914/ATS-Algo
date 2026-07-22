@@ -152,6 +152,45 @@ export function ratchetPct(p: { sl_tighten_pct?: number | null }): number | null
   return typeof t === "number" && Number.isFinite(t) && t > 0 ? t : null;
 }
 
+/**
+ * The ratchet a whole config carries — the first profile that has one.
+ *
+ * `withRatchetPct` writes the field to every profile at once, so they agree by
+ * construction and the first is the answer. Reading them all anyway means a config
+ * hand-edited before the admin field existed still reports its ladder.
+ */
+export function configRatchetPct(config: BotConfig): number | null {
+  for (const profile of Object.values(config.profiles ?? {})) {
+    if (!profile) continue;
+    const pct = ratchetPct(profile);
+    if (pct !== null) return pct;
+  }
+  return null;
+}
+
+/**
+ * Set — or clear — the ratchet on EVERY profile the config carries.
+ *
+ * `sl_tighten_pct` is stored per profile, but it is tuned per BOT: an admin types one
+ * percentage on the wizard's last step and it lands on safe, balanced and aggressive
+ * alike. One number stays coherent across all three because it is a percentage of
+ * EACH PROFILE'S OWN `sl` — aggressive just has a wider stop to eat into — and writing
+ * all three means changing a bot's risk class later can never strand it on the legacy
+ * `be` rule with no ladder.
+ *
+ * `null` CLEARS the field, which is the gate in reverse: a profile without it runs the
+ * one-shot `be` move. Pure — the caller's config is never mutated.
+ */
+export function withRatchetPct(config: BotConfig, pct: number | null): BotConfig {
+  const profiles = Object.fromEntries(
+    Object.entries(config.profiles ?? {}).map(([key, profile]) => [
+      key,
+      profile ? { ...profile, sl_tighten_pct: pct } : profile,
+    ]),
+  ) as BotConfig["profiles"];
+  return { ...config, profiles };
+}
+
 /** LINEAR ratchet distance after `n` filled rungs. Negative ⇒ the stop locks profit. */
 export const ratchetDistancePct = (sl: number, tightenPct: number, n: number): number =>
   sl * (1 - (n * tightenPct) / 100);

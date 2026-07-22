@@ -5,9 +5,11 @@ import { useRef, useState } from "react";
 import { AdminCard } from "@/components/admin/AdminCard";
 import { BacktestResults } from "@/components/admin/BacktestResults";
 import { LadderPreview } from "@/components/admin/LadderPreview";
+import { parseTightenInput, StopLadderField } from "@/components/admin/StopLadderField";
 import { CheckIcon } from "@/components/admin/admin-icons";
 import { ExchangeMultiSelect } from "@/components/admin/ExchangeMultiSelect";
 import { Notice, type NoticeData } from "@/components/ui/Notice";
+import { configRatchetPct, withRatchetPct } from "@/lib/bot-config";
 import { matchBotExchange } from "@/lib/bot-exchanges";
 import { runBacktest, type BacktestResult, type BotConfig, type RiskClass } from "@/lib/backtest/engine";
 import { cn } from "@/lib/cn";
@@ -51,9 +53,20 @@ export function BotWizard({ categories }: { categories: string[] }) {
   const [csvText, setCsvText] = useState("");
   const [csvFilename, setCsvFilename] = useState("");
   const [result, setResult] = useState<BacktestResult | null>(null);
+  // The stop ladder, as typed on the last step. Prefilled from the JSON when it
+  // carries one, so an existing config's ladder is edited rather than silently
+  // dropped — but from here on this box, not the file, decides.
+  const [tightenPct, setTightenPct] = useState("");
 
   const jsonRef = useRef<HTMLInputElement>(null);
   const csvRef = useRef<HTMLInputElement>(null);
+
+  const tighten = parseTightenInput(tightenPct);
+  // What actually gets saved: the uploaded config with this bot's ladder written
+  // onto every profile. Everything on the last step reads THIS, never `config` —
+  // the preview, the validation and the POST must all judge the same object.
+  const effectiveConfig = config ? withRatchetPct(config, tighten.value) : null;
+  const ladderError = tighten.error ?? (effectiveConfig ? botConfigError(effectiveConfig, riskClass) : null);
 
   async function onJsonPicked(file: File) {
     setNotice(null);
@@ -66,6 +79,7 @@ export function BotWizard({ categories }: { categories: string[] }) {
         return;
       }
       setConfig(parsed);
+      setTightenPct(String(configRatchetPct(parsed) ?? ""));
       setName((n) => n || (parsed.name ? cleanBotName(parsed.name) : ""));
       setTimeframe((t) => t || (parsed.timeframe ? `${parsed.timeframe}m` : ""));
       setExchanges((xs) => {
@@ -93,10 +107,10 @@ export function BotWizard({ categories }: { categories: string[] }) {
   }
 
   function runPreview() {
-    if (!config) return;
+    if (!effectiveConfig) return;
     setNotice(null);
     try {
-      setResult(runBacktest(config, csvText));
+      setResult(runBacktest(effectiveConfig, csvText));
       setStep(3);
     } catch {
       setNotice({ type: "error", message: "Backtest failed — check the CSV signal format." });
@@ -104,22 +118,29 @@ export function BotWizard({ categories }: { categories: string[] }) {
   }
 
   async function save() {
-    if (!config) return;
+    if (!effectiveConfig) return;
+    // The API rejects an unsound ladder anyway; failing here turns a 400 into a
+    // message next to the box that caused it.
+    if (ladderError) {
+      setNotice({ type: "error", message: ladderError });
+      return;
+    }
     setPending(true);
     setNotice(null);
     try {
       const res = await fetch("/api/admin/bots", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, category, timeframe, exchanges, riskClass, config, csvText, csvFilename }),
+        body: JSON.stringify({ name, category, timeframe, exchanges, riskClass, config: effectiveConfig, csvText, csvFilename }),
       });
       const data = (await res.json().catch(() => null)) as { error?: string } | null;
       if (!res.ok) {
         setNotice({ type: "error", message: data?.error ?? "Couldn't save the bot." });
         return;
       }
+      // `push` already refetches the list route's RSC payload — a `refresh` here
+      // rendered the whole page a second time for nothing.
       router.push("/admin/bots");
-      router.refresh();
     } catch {
       setNotice({ type: "error", message: "Network error. Please try again." });
     } finally {
@@ -201,7 +222,12 @@ export function BotWizard({ categories }: { categories: string[] }) {
           <BacktestResults name={name} timeframe={timeframe} riskClass={riskClass} result={result} />
         )}
 
-        {step === 3 && config && <LadderPreview config={config} riskClass={riskClass} />}
+        {step === 3 && effectiveConfig && (
+          <div className="flex flex-col gap-4 border-t border-line pt-6">
+            <StopLadderField value={tightenPct} onChange={setTightenPct} error={ladderError} />
+            <LadderPreview config={effectiveConfig} riskClass={riskClass} />
+          </div>
+        )}
 
         {/* Nav */}
         <div className="flex items-center justify-between border-t border-line pt-4">
@@ -235,14 +261,17 @@ export function BotWizard({ categories }: { categories: string[] }) {
             </button>
           )}
           {step === 3 && (
-            <button
-              type="button"
-              disabled={pending}
-              onClick={save}
-              className="rounded-2xl bg-accent px-5 py-2 text-sm font-semibold text-[#121212] transition-transform hover:-translate-y-0.5 disabled:opacity-60"
-            >
-              {pending ? "Saving…" : "Save Bot"}
-            </button>
+            <div className="flex items-center gap-3">
+              {ladderError && !pending ? <span className="text-xs text-muted">Fix the stop ladder to save</span> : null}
+              <button
+                type="button"
+                disabled={pending || Boolean(ladderError)}
+                onClick={save}
+                className="rounded-2xl bg-accent px-5 py-2 text-sm font-semibold text-[#121212] transition-transform hover:-translate-y-0.5 disabled:opacity-60"
+              >
+                {pending ? "Saving…" : "Save Bot"}
+              </button>
+            </div>
           )}
         </div>
       </div>

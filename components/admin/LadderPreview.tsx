@@ -27,22 +27,22 @@ export function LadderPreview({ config, riskClass }: { config: BotConfig; riskCl
   const tighten = ratchetPct(profile);
   const rows = ladderPreview(profile, takerFeePct, slippagePct);
 
-  // Legacy config — no ladder. The stop uses the one-shot break-even at TP{be}.
+  // No ladder. The stop uses the one-shot break-even at TP{be} — every bot created
+  // before the ladder existed behaves this way, and an empty field asks for it.
   if (tighten === null || rows.length === 0) {
     return (
       <div className="rounded-2xl border border-line p-4">
-        <p className="text-xs font-semibold text-muted">Progressive stop ladder</p>
+        <p className="text-xs font-semibold text-muted">Progressive stop ladder — off</p>
         <p className="mt-1 text-sm text-muted">
-          This config has no <span className="text-white">sl_tighten_pct</span> — the stop uses the legacy
-          break-even move
+          The stop stays at the fixed stop-loss and only moves once, to break-even
           {profile.be ? (
             <>
               {" "}
-              (to entry after <span className="text-white">TP{profile.be}</span>)
+              after <span className="text-white">TP{profile.be}</span>
             </>
           ) : null}
-          . Add <span className="text-white">sl_tighten_pct</span> to the <span className="text-white">{RISK_KEY[riskClass]}</span>{" "}
-          profile to enable the per-take-profit ladder.
+          {profile.be ? "" : " — and this profile never arms it, so the stop never moves at all"}. Set a stop tightening
+          percentage above to tighten it after every take-profit instead.
         </p>
       </div>
     );
@@ -122,5 +122,3 @@ export function LadderPreview({ config, riskClass }: { config: BotConfig; riskCl
     </div>
   );
 }
-
-const RISK_KEY: Record<RiskClass, string> = { LOW: "safe", MEDIUM: "balanced", HIGH: "aggressive" };
