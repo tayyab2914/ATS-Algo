@@ -20,6 +20,28 @@ security group, so there is no internet-facing surface to brute-force and no
 route in that does not go through the app server first. Deletion protection is
 on; removing the instance requires disabling that first, deliberately.
 
+### The connection string must request TLS
+
+`DATABASE_URL` and `DIRECT_URL` both end in
+`?sslmode=verify-full&sslrootcert=/etc/ats-algo/rds-ca.pem`.
+
+This is required for the app to work at all, not just good practice. RDS refuses
+unencrypted connections and node-postgres does not negotiate TLS on its own.
+Omit it and every runtime query fails with Prisma's P1010, *"User was denied
+access on the database"* — which reads like wrong credentials and is not.
+
+The trap: **`prisma migrate deploy` succeeds against a URL the app cannot use**,
+because Prisma's migrate engine negotiates TLS by default. A clean migration is
+not evidence the running app can connect. Check the service log instead.
+
+The CA bundle is fetched per region:
+
+```bash
+sudo curl -fsS -o /etc/ats-algo/rds-ca.pem \
+  https://truststore.pki.rds.amazonaws.com/eu-central-1/eu-central-1-bundle.pem
+sudo chown ats:ats /etc/ats-algo/rds-ca.pem && sudo chmod 644 /etc/ats-algo/rds-ca.pem
+```
+
 ## 1. Instance
 
 - **t3.small minimum, t3.medium recommended.** `next build` OOMs on a 1 GB

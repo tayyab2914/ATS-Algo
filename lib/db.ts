@@ -23,6 +23,14 @@ import { PrismaClient } from "@/lib/generated/prisma/client";
  * The instance sits in the same AZ as the app with no public endpoint, so a
  * query round-trip is well under a millisecond and reachable only from the
  * app's security group.
+ *
+ * `DATABASE_URL` must carry `?sslmode=verify-full&sslrootcert=…`. RDS rejects
+ * unencrypted connections and node-postgres does not negotiate TLS on its own,
+ * so without it every query here fails as P1010 "denied access on the database"
+ * — which reads like a credentials problem and is not one. Prisma's migrate
+ * engine negotiates TLS by default, so migrations pass against a URL this
+ * client cannot use; do not take a successful `migrate deploy` as proof the
+ * runtime connection works. See .env.example.
  */
 const POOL_MAX = Number(process.env.DATABASE_POOL_MAX ?? 5);
 
