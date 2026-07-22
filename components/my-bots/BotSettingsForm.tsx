@@ -185,13 +185,16 @@ export function BotSettingsForm({
             aria-checked={compounding}
             onClick={() => setCompounding((c) => !c)}
             className={cn(
-              "relative h-6 w-11 shrink-0 rounded-full transition-colors",
+              "relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full transition-colors",
               compounding ? "bg-accent" : "bg-line",
             )}
           >
+            {/* In-flow knob: the track centers it, so translate-x measures from
+                the track's left edge. Absolute-without-`left` would instead start
+                from the button's centered static position and overshoot. */}
             <span
               className={cn(
-                "absolute top-0.5 size-5 rounded-full bg-white transition-transform",
+                "pointer-events-none inline-block size-5 rounded-full bg-white transition-transform",
                 compounding ? "translate-x-[22px]" : "translate-x-0.5",
               )}
             />
