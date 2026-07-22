@@ -1,5 +1,6 @@
 import { revalidatePath } from "next/cache";
 import { NextResponse, type NextRequest } from "next/server";
+import { appBaseUrl } from "@/lib/app-url";
 import { getSession } from "@/lib/auth/session";
 import { reconcileCheckoutSession } from "@/lib/billing";
 
@@ -39,5 +40,11 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  return NextResponse.redirect(new URL("/billing?status=success", request.url), 303);
+  // Resolve against APP_URL, never `request.url`. Behind nginx the app is
+  // reached on 127.0.0.1:3000, and Next builds request.url from that socket
+  // rather than the forwarded Host — so `new URL(..., request.url)` sent
+  // everyone returning from Stripe to https://localhost:3000/billing. Using
+  // appBaseUrl() also keeps this consistent with the rest of the codebase and
+  // immune to Host-header spoofing; see lib/app-url.ts.
+  return NextResponse.redirect(new URL("/billing?status=success", appBaseUrl()), 303);
 }
