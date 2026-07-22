@@ -1,0 +1,12 @@
+; /etc/systemd/system/ats-reconcile-deep.timer — hourly, on the hour.
+
+[Unit]
+Description=ATS-ALGO deep reconcile hourly
+
+[Timer]
+OnCalendar=hourly
+AccuracySec=1s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

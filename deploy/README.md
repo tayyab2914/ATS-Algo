@@ -1,0 +1,142 @@
+# Deploying ATS-ALGO to EC2 (no Docker)
+
+A single EC2 instance running `next start` behind nginx, with systemd owning the
+process and the schedules. Postgres stays on Supabase. This is the only
+supported deployment target — the app has no platform-specific code left.
+
+## 1. Instance
+
+- **t3.small minimum, t3.medium recommended.** `next build` OOMs on a 1 GB
+  t3.micro. On t3.small add 2 GB of swap first.
+- Attach an **Elastic IP**. This becomes the address members whitelist on their
+  exchange API keys — if it changes, their keys start rejecting our calls.
+- Security group: 443 and 80 open, 22 from your address only.
+  **Never open 3000** — the app binds to loopback and only nginx reaches it.
+
+## 2. Base packages (Ubuntu 24.04)
+
+```bash
+sudo apt update && sudo apt install -y nginx git curl
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+sudo apt install -y nodejs           # Next 16 requires Node >= 20.9
+sudo useradd -r -m -d /srv/ats-algo -s /bin/bash ats
+```
+
+## 3. Environment file
+
+Secrets live at `/etc/ats-algo/env`, outside the repo directory, `0600` and
+owned by `ats`. Start from `.env.example` — it has an EC2 section at the bottom
+covering everything below.
+
+```bash
+sudo install -d -m 0755 /etc/ats-algo
+sudo install -o ats -g ats -m 0600 /dev/null /etc/ats-algo/env
+sudo -e /etc/ats-algo/env
+```
+
+The four that are deployment-specific:
+
+```bash
+APP_URL="https://yourdomain.com"        # the server refuses to boot without it
+CRON_SECRET="<openssl rand -base64 32>" # authorizeCron fails closed without it
+STATIC_EGRESS_IP="<your Elastic IP>"    # what members whitelist on their keys
+DATABASE_POOL_MAX="10"
+```
+
+`NEXT_PUBLIC_*` are inlined into the client bundle at **build** time, so this
+file has to be sourced for the build, not just for the running service.
+`update.sh` does that.
+
+## 4. First deploy
+
+```bash
+sudo -u ats -H git clone <repo-url> /srv/ats-algo
+sudo -u ats -H bash -c '
+  cd /srv/ats-algo
+  set -a; . /etc/ats-algo/env; set +a
+  npm ci                      # postinstall runs prisma generate
+  npx prisma migrate deploy   # uses DIRECT_URL via prisma.config.ts
+  npm run build
+'
+```
+
+`npm ci` installs devDependencies too — tailwind and typescript are needed to
+build. Don't use `--omit=dev`.
+
+## 5. systemd
+
+```bash
+sudo install -m 0755 /srv/ats-algo/deploy/ats-cron /usr/local/bin/ats-cron
+sudo install -m 0644 /srv/ats-algo/deploy/ats-*.service /etc/systemd/system/
+sudo install -m 0644 /srv/ats-algo/deploy/ats-*.timer   /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now ats-algo
+sudo systemctl enable --now ats-reconcile.timer ats-reconcile-deep.timer
+```
+
+Check: `systemctl list-timers 'ats-*'` and `journalctl -u ats-reconcile -f`.
+
+`update.sh` restarts the service, so let the `ats` user do that one thing:
+
+```bash
+echo 'ats ALL=(root) NOPASSWD: /bin/systemctl restart ats-algo' \
+  | sudo install -m 0440 /dev/stdin /etc/sudoers.d/ats-algo
+```
+
+### Why timers and not crontab
+
+`Type=oneshot` plus systemd's rule that a unit can't start while it's still
+active gives overlap protection for free. At a one-minute reconcile cadence a
+slow exchange round-trip would otherwise stack passes on top of each other.
+
+### There is no keep-warm timer
+
+ccxt is imported once at server boot by `instrumentation.ts`, so no member's
+order pays the ~679 ms import and nothing needs pinging to stay warm. Boot logs
+`[boot] ccxt warm via bitget-only in NNNms` — if you don't see that line, the
+warm failed and the first trade will be slow (it still works).
+
+## 6. nginx + TLS
+
+```bash
+sudo install -m 0644 /srv/ats-algo/deploy/nginx.conf /etc/nginx/sites-available/ats-algo
+sudo sed -i 's/yourdomain.com/<your real domain>/g' /etc/nginx/sites-available/ats-algo
+sudo ln -sf /etc/nginx/sites-available/ats-algo /etc/nginx/sites-enabled/ats-algo
+sudo rm -f /etc/nginx/sites-enabled/default
+sudo nginx -t && sudo systemctl reload nginx
+sudo certbot --nginx -d <your real domain>
+```
+
+certbot rewrites the server block in place to add the 443 listener and the
+80 → 443 redirect. Run it **after** the file is installed, not before.
+
+## 7. Cutover checklist
+
+- [ ] Stripe: point the webhook at `https://yourdomain.com/api/stripe/webhook`
+      and swap `STRIPE_WEBHOOK_SECRET` — the signing secret is per-endpoint, the
+      old one will not verify.
+- [ ] Tell existing members the whitelist IP changed to the Elastic IP, or their
+      IP-restricted exchange keys start failing auth.
+- [ ] Confirm `STATIC_EGRESS_IP` matches real egress:
+      `sudo -u ats -H npx tsx scripts/verify-egress.ts` (run from `/srv/ats-algo`).
+- [ ] DNS A record → Elastic IP.
+- [ ] Cancel any static-IP egress proxy subscription (QuotaGuard/Fixie) — the
+      Elastic IP replaces it and the app has no proxy support left.
+
+## Routine deploys
+
+```bash
+sudo -u ats -H /srv/ats-algo/deploy/update.sh
+```
+
+## Notes
+
+- **Database URL.** Keep `DATABASE_URL` on Supabase's transaction pooler (6543);
+  `lib/db.ts` documents why. Migrations keep using `DIRECT_URL`.
+- **Boot failures.** `instrumentation.ts` throws if `APP_URL` is unset or
+  localhost in production, so the unit won't start. That's deliberate — the
+  alternative is days of verification emails linking to localhost.
+- **Sandboxing.** `ats-algo.service` runs with `ProtectSystem=strict` and only
+  `.next` writable. If you add anything that writes elsewhere on disk you'll see
+  `EROFS`; add a `ReadWritePaths=` line rather than loosening `ProtectSystem`.
+- **Logs.** Everything goes to the journal: `journalctl -u ats-algo -f`.

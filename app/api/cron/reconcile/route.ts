@@ -12,12 +12,14 @@ import { reconcileOpenPositions, refreshCachedMarkets, scanForOrphans } from "@/
  * stays `OPEN` forever and every future entry for that member is skipped with
  * `positionAlreadyOpen`: the bot quietly stops trading.
  *
- * Schedule (vercel.json):
- *   * * * * *   the fast pass — one `fetchPositions` per open position
- *   0 * * * *   `?deep=1` — orphan scan + market descriptor refresh
+ * Schedule — systemd timers, see deploy/ats-reconcile{,-deep}.timer:
+ *   every minute   the fast pass — one `fetchPositions` per open position
+ *   hourly         `?deep=1` — orphan scan + market descriptor refresh
  *
- * Vercel Cron sends `Authorization: Bearer $CRON_SECRET`. With no secret set the
- * route is closed, not open: it reads every member's positions.
+ * The caller sends `Authorization: Bearer $CRON_SECRET` via `ats-cron`. With no
+ * secret set the route is closed, not open: it reads every member's positions.
+ * nginx also refuses `/api/cron/` from the internet; the timers reach it over
+ * loopback.
  */
 export const runtime = "nodejs";
 export const maxDuration = 60;

@@ -9,15 +9,17 @@ import { PrismaClient } from "@/lib/generated/prisma/client";
  *
  * IMPORTANT: `DATABASE_URL` must point at the TRANSACTION pooler (port 6543),
  * NOT the session pooler (5432). Session mode hands each client its own Postgres
- * connection for the whole session and caps the project at ~15, so a handful of
- * serverless instances (each holding a pg pool) exhaust it — which surfaces as
+ * connection for the whole session and caps the project at ~15, which a pool of
+ * any size plus `prisma studio` plus a migration can exhaust — surfacing as
  * `(EMAXCONNSESSION) max clients reached in session mode ... pool_size: 15` and
- * makes pages fail to load. Transaction mode multiplexes many clients over those
- * connections, releasing one back after each query. Migrations keep using the
- * direct `DIRECT_URL` (session/direct), configured in `prisma.config.ts`.
+ * making pages fail to load. Transaction mode multiplexes many clients over
+ * those connections, releasing one back after each query. Migrations keep using
+ * the direct `DIRECT_URL` (session/direct), configured in `prisma.config.ts`.
  *
- * `max` additionally caps how many upstream connections a single warm instance
- * can open, and the client is cached on `globalThis` so dev HMR reuses one pool.
+ * `max` caps how many upstream connections this process opens. One long-lived
+ * server owns exactly one pool, so this can be generous — 10 is the deployed
+ * value (deploy/README.md); the default of 5 is only the dev fallback. The
+ * client is cached on `globalThis` so dev HMR reuses one pool.
  */
 const POOL_MAX = Number(process.env.DATABASE_POOL_MAX ?? 5);
 

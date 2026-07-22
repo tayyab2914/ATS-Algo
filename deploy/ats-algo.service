@@ -1,0 +1,37 @@
+; /etc/systemd/system/ats-algo.service
+;
+; The Next.js server. Bound to loopback only — nginx terminates TLS and proxies
+; in, so port 3000 is never reachable from the security group.
+;
+; ExecStart calls the `next` bin directly rather than `npm start`: npm forks the
+; real process, swallows SIGTERM, and systemd ends up killing the wrapper while
+; the Node process lingers holding its Postgres pool.
+
+[Unit]
+Description=ATS-ALGO (Next.js)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=ats
+Group=ats
+WorkingDirectory=/srv/ats-algo
+EnvironmentFile=/etc/ats-algo/env
+Environment=NODE_ENV=production
+Environment=PORT=3000
+Environment=HOSTNAME=127.0.0.1
+ExecStart=/usr/bin/node node_modules/next/dist/bin/next start
+Restart=always
+RestartSec=3
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+; The app writes nothing outside .next/cache; everything else can be read-only.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/ats-algo/.next
+
+[Install]
+WantedBy=multi-user.target

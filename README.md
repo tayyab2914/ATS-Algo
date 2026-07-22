@@ -1,36 +1,56 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# ATS-ALGO
 
-## Getting Started
+Next.js 16 (App Router) + Prisma 7 on Supabase Postgres, with an execution
+engine that places orders on Bitget through ccxt.
 
-First, run the development server:
+## Local development
 
 ```bash
+cp .env.example .env.local     # fill in — DATABASE_URL, JWT_SECRET, ENCRYPTION_KEY at minimum
+npm install                    # postinstall runs prisma generate
+npm run db:migrate
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [https://ats-algo.vercel.app](https://ats-algo.vercel.app) with your browser to see the result.
+Open http://localhost:3000.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+The scheduled reconcile pass does not run on its own in dev. Start it in a
+second terminal once the server is up:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm run cron:local
+```
 
-## Learn More
+## Deployment
 
-To learn more about Next.js, take a look at the following resources:
+Single EC2 instance, no Docker: `next start` behind nginx, with systemd owning
+the process and the schedules. Postgres stays on Supabase.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+**[deploy/README.md](deploy/README.md)** is the runbook — instance sizing through
+cutover checklist. Routine deploys are `sudo -u ats -H /srv/ats-algo/deploy/update.sh`.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Two things that bite if missed:
 
-## Deploy on Vercel
+- `APP_URL` must be the real public origin. The server refuses to boot without
+  it in production ([lib/app-url.ts](lib/app-url.ts)) because every emailed
+  verification and reset link is built from it.
+- `STATIC_EGRESS_IP` must equal the Elastic IP the box actually egresses from —
+  it's what members whitelist on their exchange API keys. Verify with
+  `npx tsx scripts/verify-egress.ts` after any infrastructure change.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Layout
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+| Path | What's there |
+| --- | --- |
+| `app/` | Routes, server components, API handlers |
+| `lib/execution/` | The order path: dispatch, ccxt client, reconcile, stop ladder |
+| `lib/exchanges/` | Per-venue key validation |
+| `prisma/` | Schema and migrations |
+| `scripts/` | `verify-*` proofs and `e2e-*` walkthroughs (point at `APP_URL`) |
+| `deploy/` | systemd units, nginx config, update script, runbook |
+
+## Notes for contributors
+
+This repo tracks a Next.js version newer than most training data — read the
+relevant guide under `node_modules/next/dist/docs/` before writing code. See
+[AGENTS.md](AGENTS.md).

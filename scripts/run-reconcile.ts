@@ -1,9 +1,9 @@
 /**
- * Local stand-in for Vercel Cron.
+ * Local stand-in for the production systemd timers (deploy/ats-reconcile*.timer).
  *
- * Pings the reconcile and keep-warm routes over HTTP on the same schedule Vercel
- * would. It deliberately calls the routes rather than importing the reconciler,
- * so it exercises the exact code path production runs — and so it doesn't need to
+ * Pings the reconcile route over HTTP on the same schedule they do. It
+ * deliberately calls the route rather than importing the reconciler, so it
+ * exercises the exact code path production runs — and so it doesn't need to
  * satisfy the `server-only` guard.
  *
  *   npm run dev            (or: npm run build && npm start)
@@ -39,11 +39,7 @@ async function run() {
   } catch (error) {
     console.log(`[${stamp}] reconcile: unreachable (${error instanceof Error ? error.message : String(error)})`);
   }
-  try {
-    console.log(`[${stamp}] warm     : ${await ping("/api/signals/warm")}`);
-  } catch {
-    /* the server is down; the next tick will say so */
-  }
+  // No keep-warm ping: instrumentation.ts imports ccxt at server boot.
   tick++;
 }
 

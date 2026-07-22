@@ -1,0 +1,19 @@
+; /etc/systemd/system/ats-reconcile.service
+;
+; The fast reconcile pass — one fetchPositions per open position. Four of the
+; five ways a position can end are silent, so a missed pass leaves positions
+; stuck OPEN and the member's bot stops entering.
+;
+; Type=oneshot plus systemd's own rule that a unit cannot start while it is
+; still active gives overlap protection for free: at a one-minute cadence a slow
+; exchange round-trip would otherwise stack passes on top of each other.
+
+[Unit]
+Description=ATS-ALGO reconcile (fast pass)
+After=ats-algo.service
+Requires=ats-algo.service
+
+[Service]
+Type=oneshot
+User=ats
+ExecStart=/usr/local/bin/ats-cron /api/cron/reconcile

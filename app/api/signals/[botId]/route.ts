@@ -1,8 +1,6 @@
 import { after, type NextRequest } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
-import { warmCcxt } from "@/lib/execution/client";
-import { authorizeCron } from "@/lib/execution/cron";
 import { fanOut, killSwitchOn } from "@/lib/execution/dispatch";
 import { errorDetail, logExec } from "@/lib/execution/log";
 import { signalSecretMatches } from "@/lib/execution/signal-secret";
@@ -70,18 +68,8 @@ const reject = (message: string, status: number) =>
 const accept = (body: Record<string, unknown>) =>
   new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
 
-/**
- * Keep-warm. On Vercel each route handler is its own lambda, so warming a generic
- * health endpoint would warm the wrong function — the ping has to land here, on
- * the route that places orders, or an entry pays the 679 ms ccxt import.
- *
- * Reads nothing and writes nothing. `botId` is ignored; point the cron at any path,
- * e.g. `/api/signals/warm`.
- */
-export async function GET(request: NextRequest) {
-  if (!authorizeCron(request)) return new Response("Unauthorized", { status: 401 });
-  return accept({ warm: true, ...(await warmCcxt()) });
-}
+// No GET keep-warm handler: ccxt is imported once at server boot by
+// instrumentation.ts and stays resident, so an entry never pays the import.
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ botId: string }> }) {
   const { botId } = await params;

@@ -2,7 +2,7 @@ import "dotenv/config";
 import { hashPassword } from "../lib/auth/password";
 import { prisma } from "../lib/db";
 
-const BASE = "https://ats-algo.vercel.app";
+const BASE = process.env.APP_URL ?? "http://localhost:3000";
 const ADMIN_EMAIL = (process.env.ADMIN_EMAIL ?? "").toLowerCase();
 const log = (label: string, ...rest: unknown[]) => console.log(`• ${label}`, ...rest);
 

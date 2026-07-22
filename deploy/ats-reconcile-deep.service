@@ -1,0 +1,15 @@
+; /etc/systemd/system/ats-reconcile-deep.service
+;
+; The hourly deep pass: orphan scan + market-descriptor refresh. Expensive —
+; one fetchPositions per idle deployment plus a full loadMarkets per venue —
+; which is why it never rides on the per-minute pass.
+
+[Unit]
+Description=ATS-ALGO reconcile (deep pass)
+After=ats-algo.service
+Requires=ats-algo.service
+
+[Service]
+Type=oneshot
+User=ats
+ExecStart=/usr/local/bin/ats-cron /api/cron/reconcile?deep=1

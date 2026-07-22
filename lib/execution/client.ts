@@ -4,20 +4,20 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { Exchange, MarketInterface } from "ccxt";
 import { prisma } from "@/lib/db";
-import { applyEgress } from "./egress";
 
 /**
  * A ccxt client built for the order path, where every avoided round-trip is a
  * better fill. Measured against Bitget:
  *
- *   import("ccxt")   1462 ms   →  import bitget only        679 ms  (cold start only)
+ *   import("ccxt")   1462 ms   →  import bitget only        679 ms  (boot only)
  *   loadMarkets()    2703 ms   →  setMarkets([cached])        0 ms  (1950 markets vs 1.3 KB)
  *                               (and 1091 ms when it must load, see loadAllMarkets)
  *
- * Two things are cached in module scope, which on a warm lambda costs nothing:
- * the exchange constructor and the market descriptors. **Credentials are never
- * cached** — building a client costs only ~8 ms, far cheaper than keeping
- * decrypted API secrets resident in memory between requests.
+ * Two things are cached in module scope, and on a single long-lived server they
+ * stay cached for the life of the process: the exchange constructor and the
+ * market descriptors. **Credentials are never cached** — building a client costs
+ * only ~8 ms, far cheaper than keeping decrypted API secrets resident in memory
+ * between requests.
  *
  * Node runtime only (`serverExternalPackages: ["ccxt"]` in next.config.ts).
  */
@@ -39,11 +39,8 @@ let importSource: "bitget-only" | "full-ccxt" | null = null;
 export const ccxtImportSource = () => importSource;
 
 /**
- * Force the ccxt import now, so an order doesn't pay for it later.
- *
- * On Vercel every route handler is its own lambda, so this only warms the
- * function it is called from — a keep-alive ping must therefore hit the route
- * that places orders, not some generic health endpoint.
+ * Force the ccxt import now, so an order doesn't pay for it later. Called once
+ * at server boot from instrumentation.ts; the module-scope cache does the rest.
  */
 export async function warmCcxt(): Promise<{ importSource: string; ms: number }> {
   const started = Date.now();
@@ -57,9 +54,9 @@ export async function warmCcxt(): Promise<{ importSource: string; ms: number }> 
  * ccxt's `exports` map exposes only ".", so `import("ccxt/js/src/bitget.js")` is
  * an ERR_PACKAGE_PATH_NOT_EXPORTED. We resolve the package root and import the
  * file by absolute URL instead, hidden from the bundlers so they leave it as a
- * runtime import. Vercel's file tracing cannot see a computed path, so the deep
- * module may simply be absent in production — hence the fallback, which is
- * correct, just slower to cold-start.
+ * runtime import. A computed path is invisible to file tracing, so the deep
+ * module can be absent if the build is ever pruned — hence the fallback, which
+ * is correct, just slower to boot.
  */
 async function importBitget(): Promise<ExchangeCtor> {
   try {
@@ -94,8 +91,9 @@ function bitgetCtor(): Promise<ExchangeCtor> {
 }
 
 // ── Market descriptors ───────────────────────────────────────────────────────
-// Warm-lambda memos. `missMemo` matters as much as `marketMemo`: without it, a
-// symbol the paper venue doesn't list would re-pay loadMarkets() on every trade.
+// Process-lifetime memos. `missMemo` matters as much as `marketMemo`: without
+// it, a symbol the paper venue doesn't list would re-pay loadMarkets() on every
+// trade.
 
 const marketMemo = new Map<string, MarketInterface>();
 const missMemo = new Set<string>();
@@ -115,8 +113,8 @@ const toJson = (market: MarketInterface): any => JSON.parse(JSON.stringify(marke
  * ~2.7 s `loadMarkets()`.
  *
  * Concurrent callers for the same symbol share one in-flight resolution: a
- * fan-out opens the same instrument for many users at once, and a cold lambda
- * must not run loadMarkets() once per user.
+ * fan-out opens the same instrument for many users at once, and a cold memo must
+ * not run loadMarkets() once per user.
  */
 export async function getMarket(exchange: string, symbol: string, sandbox: boolean): Promise<MarketInterface | null> {
   const key = memoKey(exchange, symbol, sandbox);
@@ -175,7 +173,7 @@ function loadAllMarkets(exchange: string, sandbox: boolean): Promise<Record<stri
 
     let lastError: unknown;
     for (let attempt = 0; attempt < 2; attempt++) {
-      const ex = applyEgress(new Ctor({ enableRateLimit: true, timeout: 15_000, options: { defaultType: "swap" } }));
+      const ex = new Ctor({ enableRateLimit: true, timeout: 15_000, options: { defaultType: "swap" } });
       ex.has["fetchCurrencies"] = false;
       ex.setSandboxMode(sandbox);
       try {
@@ -262,16 +260,14 @@ export async function publicPrice(exchange: string, symbol: string): Promise<num
 export async function exchangeClient(exchange: string, creds: TradeCreds, markets: MarketInterface[]): Promise<Exchange> {
   if (exchange !== "Bitget") throw new Error(`UNSUPPORTED_EXCHANGE:${exchange}`);
   const Ctor = await bitgetCtor();
-  const ex = applyEgress(
-    new Ctor({
-      apiKey: creds.apiKey,
-      secret: creds.apiSecret,
-      password: creds.passphrase, // ccxt calls Bitget's passphrase "password"
-      enableRateLimit: true,
-      timeout: 10_000,
-      options: { defaultType: "swap" },
-    }),
-  );
+  const ex = new Ctor({
+    apiKey: creds.apiKey,
+    secret: creds.apiSecret,
+    password: creds.passphrase, // ccxt calls Bitget's passphrase "password"
+    enableRateLimit: true,
+    timeout: 10_000,
+    options: { defaultType: "swap" },
+  });
   ex.setSandboxMode(creds.sandbox);
   ex.setMarkets(markets);
   return ex;

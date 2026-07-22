@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# /usr/local/bin/ats-cron — scheduled-route caller.
+#
+# Replaces Vercel Cron. `authorizeCron` (lib/execution/cron.ts) fails closed, so
+# every call must carry `Authorization: Bearer $CRON_SECRET`; sourcing the same
+# env file the server uses keeps the secret in exactly one place.
+#
+#   ats-cron /api/cron/reconcile
+#   ats-cron '/api/cron/reconcile?deep=1'
+set -euo pipefail
+
+if [[ $# -ne 1 ]]; then
+  echo "usage: ats-cron <path>" >&2
+  exit 2
+fi
+
+# shellcheck disable=SC1091
+. /etc/ats-algo/env
+
+if [[ -z "${CRON_SECRET:-}" ]]; then
+  echo "CRON_SECRET is unset — the cron routes answer 401 and nothing reconciles." >&2
+  exit 1
+fi
+
+# -m 50 stays under the route's maxDuration of 60s. -f turns the route's own 5xx
+# into a non-zero exit so the failure lands in the journal rather than passing
+# silently as a 500 body.
+exec curl -fsS -m 50 \
+  -H "Authorization: Bearer ${CRON_SECRET}" \
+  "http://127.0.0.1:3000${1}" \
+  -o /dev/null

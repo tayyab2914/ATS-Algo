@@ -1,6 +1,5 @@
 import type { Exchange } from "ccxt";
 import { ccxtIdFor, exchangeRequiresPassphrase } from "@/lib/bot-exchanges";
-import { applyEgress } from "@/lib/execution/egress";
 
 export type ValidateInput = { apiKey: string; apiSecret: string; passphrase?: string };
 
@@ -38,18 +37,17 @@ export async function validateExchangeKey(
   if (!Ctor) return { ok: false, status: 400, message: `Exchange not available: ${exchange}` };
 
   const build = (sandbox: boolean) => {
-    // Validation must leave from the same egress IP as trading: a member who
-    // already whitelisted our published IP would otherwise fail right here.
-    const ex = applyEgress(
-      new Ctor({
-        apiKey: creds.apiKey,
-        secret: creds.apiSecret,
-        password: creds.passphrase, // ccxt names the passphrase "password"
-        timeout: 8000,
-        enableRateLimit: true,
-        options: { defaultType: "swap" },
-      }),
-    );
+    // Validation leaves from the same address as trading — the instance's
+    // Elastic IP — so a member who already whitelisted our published IP passes
+    // here exactly as they will when the bot trades.
+    const ex = new Ctor({
+      apiKey: creds.apiKey,
+      secret: creds.apiSecret,
+      password: creds.passphrase, // ccxt names the passphrase "password"
+      timeout: 8000,
+      enableRateLimit: true,
+      options: { defaultType: "swap" },
+    });
     if (sandbox) ex.setSandboxMode(true);
     return ex;
   };

@@ -1,0 +1,14 @@
+; /etc/systemd/system/ats-reconcile.timer — every minute, on the minute.
+
+[Unit]
+Description=ATS-ALGO reconcile every minute
+
+[Timer]
+OnCalendar=*:0/1
+AccuracySec=1s
+; Don't fire a catch-up burst after a reboot or a long stop; the next tick is
+; never more than 60s away and reconcile is not a backlog worth replaying.
+Persistent=false
+
+[Install]
+WantedBy=timers.target

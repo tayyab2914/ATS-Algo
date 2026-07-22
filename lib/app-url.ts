@@ -1,34 +1,35 @@
 /**
  * Resolve the public base URL for links we email to users (account verification,
- * password reset). These must never resolve to a localhost URL once deployed, or
- * recipients receive dead links that only open on the developer's machine.
+ * password reset).
  *
- * Resolution order:
- *  1. APP_URL — explicit override, but IGNORED when it points at localhost so a
- *     stray local value (e.g. copied into a deployment's env) can't leak out.
- *  2. VERCEL_PROJECT_PRODUCTION_URL — the project's canonical production domain,
- *     injected automatically by Vercel at build and runtime.
- *  3. VERCEL_URL — the per-deployment URL (preview / non-production deployments).
- *  4. APP_URL as-is (covers local dev, where localhost is the correct target),
- *     else http://localhost:3000.
+ * `APP_URL` is the single source of truth and is REQUIRED in production — there
+ * is no platform-injected domain to fall back to when self-hosting, so leaving
+ * it unset sends every recipient a localhost link that only opens on the box.
+ * deploy/README.md calls this out; `assertAppUrl()` below turns a miss into a
+ * loud failure rather than a batch of dead emails.
  *
  * We deliberately do NOT derive this from the request's Host header: that header
  * is attacker-controllable, and a forged value would point a password-reset link
- * at a domain the attacker controls (host-header injection).
+ * at a domain the attacker controls (host-header injection). nginx passes the
+ * client's Host through untouched, so that risk is live here.
  */
 const stripTrailingSlashes = (url: string) => url.replace(/\/+$/, "");
 
-const isLocalhost = (url: string) => /\/\/(localhost|127\.0\.0\.1)(:|\/|$)/i.test(url);
-
 export function appBaseUrl(): string {
   const explicit = process.env.APP_URL?.trim();
-  if (explicit && !isLocalhost(explicit)) return stripTrailingSlashes(explicit);
-
-  const productionDomain = process.env.VERCEL_PROJECT_PRODUCTION_URL?.trim();
-  if (productionDomain) return `https://${stripTrailingSlashes(productionDomain)}`;
-
-  const deploymentDomain = process.env.VERCEL_URL?.trim();
-  if (deploymentDomain) return `https://${stripTrailingSlashes(deploymentDomain)}`;
-
   return stripTrailingSlashes(explicit || "http://localhost:3000");
+}
+
+/**
+ * Fail loudly at boot when a production server has no APP_URL, instead of
+ * quietly emailing localhost links for days. Called from instrumentation.ts.
+ */
+export function assertAppUrl(): void {
+  if (process.env.NODE_ENV !== "production") return;
+
+  const explicit = process.env.APP_URL?.trim();
+  if (!explicit) throw new Error("APP_URL is not set — verification and password-reset emails would link to localhost.");
+  if (/\/\/(localhost|127\.0\.0\.1)(:|\/|$)/i.test(explicit)) {
+    throw new Error(`APP_URL points at localhost (${explicit}) — emailed links would be dead for every recipient.`);
+  }
 }
