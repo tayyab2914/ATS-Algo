@@ -1,20 +1,23 @@
 /**
- * The per-bot signal secret: minting, rotation, and that rotation really does
- * invalidate the old value.
+ * The shared signal secret: one value in `SIGNAL_SECRET` gates every bot.
  *
- * Places no orders — the throwaway bot has no deployments, so the fan-out finds
+ * There is nothing per-bot left to mint — the secret is entered once in the ATS
+ * indicator's settings, so the old admin rotate endpoint is gone and this asserts
+ * that it stays gone.
+ *
+ * Places no orders — the throwaway bots have no deployments, so the fan-out finds
  * nobody to trade for.
  *
- *   1. npm run build && PORT=3100 npm run start
- *   2. NODE_OPTIONS="--conditions=react-server" SIGNALS_BASE=http://localhost:3100 npx tsx scripts/verify-signal-secret.ts
+ *   1. npm run dev  (or npm run build && PORT=3100 npm run start)
+ *   2. NODE_OPTIONS="--conditions=react-server" npx tsx --env-file=.env.local scripts/verify-signal-secret.ts
  */
-import "dotenv/config";
 import { readFileSync } from "node:fs";
 import type { BotConfig } from "../lib/bot-config";
 import { SESSION_COOKIE, createToken } from "../lib/auth/jwt";
 import { prisma } from "../lib/db";
+import { signalSecret } from "../lib/execution/signal-secret";
 
-const BASE = process.env.SIGNALS_BASE ?? "http://localhost:3100";
+const BASE = process.env.SIGNALS_BASE ?? "http://localhost:3000";
 
 let failures = 0;
 const check = (label: string, pass: boolean, detail = "") => {
@@ -23,6 +26,12 @@ const check = (label: string, pass: boolean, detail = "") => {
 };
 
 async function main() {
+  const secret = signalSecret();
+  if (!secret) {
+    console.error("SIGNAL_SECRET is not set — nothing to verify. Set it in .env.local and restart the server.");
+    process.exit(1);
+  }
+
   const config = JSON.parse(readFileSync("fixtures/BTC.json", "utf8")) as BotConfig;
   const stamp = Date.now();
 
@@ -30,75 +39,53 @@ async function main() {
     data: { email: `sec-admin-${stamp}@invalid.test`, passwordHash: "x", role: "ADMIN", status: "ACTIVE", emailVerified: new Date(), policyAcceptedAt: new Date() },
     select: { id: true, email: true },
   });
-  const member = await prisma.user.create({
-    data: { email: `sec-user-${stamp}@invalid.test`, passwordHash: "x", status: "ACTIVE", emailVerified: new Date(), policyAcceptedAt: new Date() },
-    select: { id: true, email: true },
-  });
   const adminCookie = `${SESSION_COOKIE}=${await createToken({ sub: admin.id, email: admin.email, role: "ADMIN", emailVerified: true, policyAccepted: true })}`;
-  const memberCookie = `${SESSION_COOKIE}=${await createToken({ sub: member.id, email: member.email, role: "USER", emailVerified: true, policyAccepted: true })}`;
 
-  const bot = await prisma.bot.create({
-    data: { name: `SEC ${stamp}`, category: "Crypto", timeframe: "150m", riskClass: "LOW", ticker: "BTC", exchange: "Bitget", exchanges: ["Bitget"], config: config as object, status: "ACTIVE" },
-    select: { id: true },
-  });
-
-  const rotate = async (cookie?: string) => {
-    const res = await fetch(`${BASE}/api/admin/bots/${bot.id}/signal-secret`, { method: "POST", headers: cookie ? { cookie } : {} });
-    return { status: res.status, body: (await res.json().catch(() => ({}))) as Record<string, unknown> };
-  };
-  const fire = async (secret: string, ts: number) => {
-    const res = await fetch(`${BASE}/api/signals/${bot.id}`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ action: "exit", ts: String(ts), secret }),
+  const mkBot = (tag: string) =>
+    prisma.bot.create({
+      data: { name: `SEC ${tag} ${stamp}`, category: "Crypto", timeframe: "150m", riskClass: "LOW", ticker: "BTC", exchange: "Bitget", exchanges: ["Bitget"], config: config as object, status: "ACTIVE" },
+      select: { id: true },
     });
-    return res.status;
+  const botA = await mkBot("A");
+  const botB = await mkBot("B");
+
+  const fire = async (botId: string, body: Record<string, unknown>) => {
+    const res = await fetch(`${BASE}/api/signals/${botId}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    return { status: res.status, body: (await res.json().catch(() => ({}))) as Record<string, unknown> };
   };
 
   try {
-    console.log("── a bot with no secret rejects everything ──");
-    check("bot starts with no secret", (await prisma.bot.findUnique({ where: { id: bot.id }, select: { signalSecretEnc: true } }))?.signalSecretEnc === null);
-    check("any secret is refused → 401", (await fire("anything", stamp)) === 401);
+    console.log("── the shared secret gates the endpoint ──");
+    check("missing secret → 400 (the schema catches the absent field first)", (await fire(botA.id, { action: "exit" })).status === 400);
+    check("wrong secret → 401", (await fire(botA.id, { action: "exit", secret: "not-the-secret" })).status === 401);
+    const accepted = await fire(botA.id, { action: "exit", secret });
+    check("the configured secret works", accepted.status === 200 && accepted.body.received === true, JSON.stringify(accepted.body));
 
-    console.log("\n── only an admin can mint one ──");
-    check("no session → 403", (await rotate()).status === 403);
-    check("a member → 403", (await rotate(memberCookie)).status === 403);
+    console.log("\n── one secret, every bot ──");
+    const onB = await fire(botB.id, { action: "exit", secret });
+    check("the same secret works on a different bot", onB.status === 200 && onB.body.received === true, JSON.stringify(onB.body));
+    check("an unknown bot id is still refused → 401", (await fire("does-not-exist", { action: "exit", secret })).status === 401);
+    check("…and gives nothing away: same body as a bad secret", (await fire("does-not-exist", { action: "exit", secret })).body.error === "Invalid signal credentials");
 
-    console.log("\n── minting ──");
-    const first = await rotate(adminCookie);
-    check("admin → 200 with a secret", first.status === 200 && typeof first.body.secret === "string", String(first.body.secret).slice(0, 12) + "…");
-    check("reported as new, not a replacement", first.body.replacedExisting === false);
-    const secretA = first.body.secret as string;
-    check("secret is long and url-safe", secretA.length >= 40 && /^[A-Za-z0-9_-]+$/.test(secretA), `len=${secretA.length}`);
-    check("stored encrypted, not in the clear", (await prisma.bot.findUnique({ where: { id: bot.id }, select: { signalSecretEnc: true } }))!.signalSecretEnc!.includes(secretA) === false);
-    check("it works", (await fire(secretA, stamp + 1)) === 200);
+    console.log("\n── per-bot minting is gone ──");
+    const rotate = await fetch(`${BASE}/api/admin/bots/${botA.id}/signal-secret`, { method: "POST", headers: { cookie: adminCookie } });
+    check("the old rotate endpoint 404s even for an admin", rotate.status === 404, String(rotate.status));
+    check("no bot column holds a secret", !("signalSecretEnc" in ((await prisma.bot.findUnique({ where: { id: botA.id } })) ?? {})));
 
-    console.log("\n── rotation invalidates the old secret at once ──");
-    const second = await rotate(adminCookie);
-    check("admin → 200", second.status === 200);
-    check("reported as replacing an existing secret", second.body.replacedExisting === true);
-    const secretB = second.body.secret as string;
-    check("a different value", secretB !== secretA);
-    check("the OLD secret is now rejected → 401", (await fire(secretA, stamp + 2)) === 401);
-    check("the NEW secret works", (await fire(secretB, stamp + 3)) === 200);
-
-    console.log("\n── a secret is bound to its own bot ──");
-    const other = await prisma.bot.create({
-      data: { name: `SEC2 ${stamp}`, category: "Crypto", timeframe: "150m", riskClass: "LOW", ticker: "BTC", exchange: "Bitget", exchanges: ["Bitget"], config: config as object, status: "ACTIVE" },
-      select: { id: true },
-    });
-    await prisma.bot.update({ where: { id: other.id }, data: { signalSecretEnc: (await prisma.bot.findUnique({ where: { id: bot.id }, select: { signalSecretEnc: true } }))!.signalSecretEnc } });
-    // The ciphertext is bound to the bot id as AAD, so copying it to another bot
-    // cannot make it decrypt there.
-    const res = await fetch(`${BASE}/api/signals/${other.id}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "exit", ts: String(stamp + 4), secret: secretB }) });
-    check("a stolen ciphertext can't be transplanted to another bot → 401", res.status === 401);
-    await prisma.bot.delete({ where: { id: other.id } });
+    console.log("\n── the secret never reaches the database ──");
+    const logs = await prisma.executionLog.findMany({ where: { botId: { in: [botA.id, botB.id] } }, select: { detail: true } });
+    check("no execution log contains it", !JSON.stringify(logs).includes(secret));
+    const signals = await prisma.signal.findMany({ where: { botId: { in: [botA.id, botB.id] } }, select: { raw: true } });
+    check("no accepted signal's audit copy contains it", signals.length > 0 && !JSON.stringify(signals).includes(secret), `${signals.length} signals`);
+    check("…the audit copy keeps a fingerprint instead", JSON.stringify(signals).includes("chars #"), JSON.stringify(signals[0]?.raw));
   } finally {
     console.log("\n── cleanup ──");
-    await prisma.executionLog.deleteMany({ where: { botId: bot.id } }).catch(() => {});
-    await prisma.bot.delete({ where: { id: bot.id } }).catch(() => {});
-    for (const u of [admin.id, member.id]) await prisma.user.delete({ where: { id: u } }).catch(() => {});
-    console.log("  temp admin + member + bots deleted");
+    for (const id of [botA.id, botB.id]) {
+      await prisma.executionLog.deleteMany({ where: { botId: id } }).catch(() => {});
+      await prisma.bot.delete({ where: { id } }).catch(() => {});
+    }
+    await prisma.user.delete({ where: { id: admin.id } }).catch(() => {});
+    console.log("  temp admin + bots deleted");
   }
 
   console.log(failures === 0 ? "\nPASS" : `\nFAIL (${failures})`);

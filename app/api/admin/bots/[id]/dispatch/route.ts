@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { NextRequest } from "next/server";
 import { z } from "zod";
 import { fail, ok, zodFail } from "@/lib/api";
@@ -83,7 +84,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         botId,
         action: action === "enter" ? "ENTER" : "EXIT",
         side: side === "long" ? "LONG" : side === "short" ? "SHORT" : null,
-        ts: String(Date.now()),
+        // Never deduped: an admin firing the same signal twice means it twice, and
+        // the confirmation dialog has already asked whether they are sure.
+        dedupeKey: `admin:${randomUUID()}`,
         source: "admin",
         raw,
       },

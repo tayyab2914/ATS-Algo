@@ -16,7 +16,7 @@ import { encryptSecret } from "../lib/crypto/secrets";
 import { prisma } from "../lib/db";
 import { exchangeClient, getMarket } from "../lib/execution/client";
 import { closeAll } from "../lib/execution/execute";
-import { rotateSignalSecret } from "../lib/execution/signal-secret";
+import { signalSecret } from "../lib/execution/signal-secret";
 
 const BASE = process.env.SIGNALS_BASE ?? "http://localhost:3100";
 const demo = { key: process.env.BITGET_DEMO_KEY!, secret: process.env.BITGET_DEMO_SECRET!, pass: process.env.BITGET_DEMO_PASSPHRASE! };
@@ -40,6 +40,12 @@ async function waitFor<T>(what: string, fn: () => Promise<T | null>, ms = 45_000
 }
 
 async function main() {
+  const secret = signalSecret();
+  if (!secret) {
+    console.error("SIGNAL_SECRET is not set — the receiver would reject everything. Set it and restart the server.");
+    process.exit(1);
+  }
+
   const config = JSON.parse(readFileSync("fixtures/BTC.json", "utf8")) as BotConfig;
   const stamp = Date.now();
 
@@ -47,7 +53,6 @@ async function main() {
     data: { name: `SIG ${stamp}`, category: "Crypto", timeframe: "150m", riskClass: "LOW", ticker: "BTC", exchange: "Bitget", exchanges: ["Bitget"], config: config as object, status: "ACTIVE" },
     select: { id: true },
   });
-  const secret = await rotateSignalSecret(bot.id);
 
   const mkUser = async (tag: string, opts: { sandbox: boolean; connect: boolean; liveArmed: boolean }) => {
     const user = await prisma.user.create({ data: { email: `sig-${tag}-${stamp}@invalid.test`, passwordHash: "x" }, select: { id: true } });
@@ -74,31 +79,30 @@ async function main() {
     const res = await fetch(`${BASE}/api/signals/${bot.id}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
     return { status: res.status, body: (await res.json().catch(() => ({}))) as Record<string, unknown> };
   };
-  const enter = (ts: number, extra: Record<string, unknown> = {}) => post({ action: "enter", side: "long", ts: String(ts), price: "64400", secret, ...extra });
+  // No `price`: nothing in a TradingView webhook body is substituted, so the
+  // fan-out reads the venue's last trade instead.
+  const enter = (extra: Record<string, unknown> = {}) => post({ action: "enter_long", secret, ...extra });
 
   try {
     console.log("── rejects what it should ──");
     const badJson = await fetch(`${BASE}/api/signals/${bot.id}`, { method: "POST", headers: { "content-type": "application/json" }, body: "{oops" });
     check("malformed JSON → 400", badJson.status === 400, String(badJson.status));
-    check("missing secret → 400", (await post({ action: "enter", side: "long", ts: `${stamp}`, price: "1" })).status === 400);
-    check("wrong secret → 401", (await enter(stamp, { secret: "not-the-secret" })).status === 401);
-    check("unknown bot id → 401 (no enumeration)", (await fetch(`${BASE}/api/signals/does-not-exist`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "enter", side: "long", ts: `${stamp}`, price: "1", secret }) })).status === 401);
-    check("unknown action → 400", (await post({ action: "frobnicate", ts: `${stamp}`, secret })).status === 400);
-    check("enter without side → 400", (await post({ action: "enter", ts: `${stamp}`, price: "1", secret })).status === 400);
-    check("enter without price → 400", (await post({ action: "enter", side: "long", ts: `${stamp}`, secret })).status === 400);
-    check("ts far in the future → 400", (await enter(stamp + 3 * 60 * 60 * 1000)).status === 400);
-    check("ts older than a week → 400", (await enter(stamp - 8 * 24 * 3600 * 1000)).status === 400);
+    check("missing secret → 400", (await post({ action: "enter_long", price: "1" })).status === 400);
+    check("wrong secret → 401", (await enter({ secret: "not-the-secret" })).status === 401);
+    check("unknown bot id → 401 (no enumeration)", (await fetch(`${BASE}/api/signals/does-not-exist`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "enter_long", price: "1", secret }) })).status === 401);
+    check("unknown action → 400", (await post({ action: "frobnicate", secret })).status === 400);
+    check("the retired bare `enter` → 400", (await post({ action: "enter", side: "long", price: "1", secret })).status === 400);
     check("no signal rows written by any rejection", (await prisma.signal.count({ where: { botId: bot.id } })) === 0);
 
     console.log("\n── accepts a valid entry, fast ──");
     const t0 = performance.now();
-    const ok = await enter(stamp);
+    const ok = await enter();
     const ackMs = performance.now() - t0;
     check("200 received", ok.status === 200 && ok.body.received === true, JSON.stringify(ok.body));
     check("acknowledged quickly (fan-out happens after the response)", ackMs < 3000, `${ackMs.toFixed(0)}ms`);
 
-    console.log("\n── replay is dropped by the unique index ──");
-    const replay = await enter(stamp);
+    console.log("\n── replay is dropped by the dedupe window ──");
+    const replay = await enter();
     check("200 duplicate", replay.status === 200 && replay.body.duplicate === true, JSON.stringify(replay.body));
     check("still exactly one signal row", (await prisma.signal.count({ where: { botId: bot.id, action: "ENTER" } })) === 1);
 
@@ -120,14 +124,15 @@ async function main() {
     check("preset stop id captured", Boolean(stop?.exchangeOrderId), String(stop?.exchangeOrderId));
 
     console.log("\n── rate limiting ──");
-    await prisma.signal.createMany({ data: Array.from({ length: 20 }, (_, i) => ({ botId: bot.id, action: "TP9" as const, ts: `${stamp + 1000 + i}`, raw: {} })) });
-    // A numeric, fresh, unused ts — so it reaches the rate limiter rather than
-    // being rejected earlier by the timestamp or duplicate checks.
-    check("flood → 429", (await post({ action: "tp9", ts: `${stamp + 5000}`, secret })).status === 429);
+    // Padding rows only: the flood counter reads every recent signal for the bot,
+    // while the request that must be rejected uses an action of its own so it
+    // reaches the rate limiter rather than the duplicate check ahead of it.
+    await prisma.signal.createMany({ data: Array.from({ length: 20 }, (_, i) => ({ botId: bot.id, action: "TP9" as const, dedupeKey: `pad:${stamp}:${i}`, raw: {} })) });
+    check("flood → 429", (await post({ action: "tp8", secret })).status === 429);
     await prisma.signal.deleteMany({ where: { botId: bot.id, action: "TP9" } });
 
     console.log("\n── exit flattens and books realized PnL ──");
-    const exitRes = await post({ action: "exit", ts: `${stamp + 1}`, secret });
+    const exitRes = await post({ action: "exit", secret });
     check("exit accepted", exitRes.status === 200, JSON.stringify(exitRes.body));
     const closed = await waitFor("close", async () => {
       const p = await prisma.position.findFirst({ where: { userBotId: paper.userBotId, status: "CLOSED" }, select: { id: true, realizedPnl: true, closedReason: true } });

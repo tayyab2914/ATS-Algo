@@ -271,12 +271,9 @@ model Bot {
 
   results Json? // full per-profile metrics from the backtest
 
-  /// Shared secret the TradingView alert embeds in its JSON payload, proving the
-  /// signal came from this bot's alert. AES-256-GCM, AAD = the bot id (a bot fans
-  /// out to many users, so there is no single userId to bind to).
-  signalSecretEnc  String?
-  /// Which ENCRYPTION_KEY version encrypted `signalSecretEnc` (supports rotation).
-  signalKeyVersion Int     @default(1)
+  /// The signal secret is not stored here: it is one shared value for every bot,
+  /// set as `SIGNAL_SECRET` in the environment, because it lives in the ATS
+  /// indicator's own settings rather than in a per-bot alert.
 
   revisions BotRevision[]
   userBots  UserBot[]
@@ -427,10 +424,13 @@ model Signal {
   botId  String
   bot    Bot          @relation(fields: [botId], references: [id], onDelete: Cascade)
   action SignalAction
-  /// Set on ENTER only; TP/EXIT act on whatever position is currently open.
+  /// Derived from the action (`enter_long` / `enter_short`); TP/EXIT act on
+  /// whatever position is currently open.
   side   PositionSide?
-  /// Indicator bar-open timestamp (epoch ms, as sent). Part of the dedupe key.
-  ts     String
+  /// Idempotency key, derived by the receiver — the payload carries no timestamp.
+  /// "<ACTION>[:<SIDE>]:<window>" for a webhook, a unique "admin:<uuid>" for a
+  /// manual dispatch, which is deliberate and must never be deduped away.
+  dedupeKey String
   /// Where it came from: "tradingview" or "admin".
   source String       @default("tradingview")
   /// The verified payload, kept for audit.
@@ -438,7 +438,7 @@ model Signal {
 
   createdAt DateTime @default(now())
 
-  @@unique([botId, action, ts])
+  @@unique([botId, dedupeKey])
   @@index([botId, createdAt])
   @@map("signals")
 }

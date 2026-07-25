@@ -12,6 +12,7 @@ import { buildBotEquity } from "@/lib/backtest/equity-view";
 import { getSession } from "@/lib/auth/session";
 import { cn } from "@/lib/cn";
 import { prisma } from "@/lib/db";
+import { signalSecret } from "@/lib/execution/signal-secret";
 import { RISK_LABEL, RISK_TEXT_CLASS, riskBadgeClass } from "@/lib/risk";
 
 export const metadata: Metadata = {
@@ -42,7 +43,6 @@ export default async function ViewBotPage({ params }: { params: Promise<{ id: st
       riskClass: true,
       timeframe: true,
       config: true,
-      signalSecretEnc: true,
       csvData: true,
       trades: true,
       winRate: true,
@@ -129,9 +129,11 @@ export default async function ViewBotPage({ params }: { params: Promise<{ id: st
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
           <BotExecutionPanel botId={bot.id} botName={bot.name} />
           <TradingViewSetup
-            botId={bot.id}
             webhookUrl={`${process.env.APP_URL ?? ""}/api/signals/${bot.id}`}
-            hasSecret={bot.signalSecretEnc !== null}
+            // One value for every bot, read straight from the server environment:
+            // it is entered once in the indicator's settings, not per alert. This
+            // page is admin-only, which is the only reason it can be shown at all.
+            secret={signalSecret()}
             // Straight from the profile this bot trades, so the alert it tells you to
             // paste always describes the ladder the executor will actually place.
             profile={profile ? { tp: profile.tp, sl: profile.sl, be: profile.be, lev: profile.lev, sl_tighten_pct: profile.sl_tighten_pct } : null}

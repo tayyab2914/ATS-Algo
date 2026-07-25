@@ -4,7 +4,7 @@ import { chosenExchange } from "@/lib/bot-exchanges";
 import { prisma } from "@/lib/db";
 import { getDecryptedConnection } from "@/lib/exchanges/connection";
 import { botReadiness } from "@/lib/my-bots/readiness";
-import type { TradeCreds } from "./client";
+import { publicPrice, type TradeCreds } from "./client";
 import { executionError, openPosition } from "./execute";
 import { errorDetail, logExec } from "./log";
 import { openPositionsForBot, syncPosition } from "./manage";
@@ -110,11 +110,23 @@ export async function fanOut(signalId: string): Promise<FanOutResult> {
 
 async function enterAll(signal: LoadedSignal, result: FanOutResult): Promise<FanOutResult> {
   const side = (signal.side ?? "LONG") as Side;
+
+  // The alert carries no price. TradingView substitutes nothing into an
+  // indicator's webhook body — not even its own `{{close}}` — so asking for one
+  // only ever produced a literal placeholder and a rejected entry. Read the
+  // venue's last trade instead, exactly as an admin dispatch does. A payload that
+  // does carry a usable number still wins: the admin panel sends one.
   const raw = signal.raw as { price?: string | number } | null;
-  const priceHint = Number(raw?.price);
+  let priceHint = Number(raw?.price);
   if (!Number.isFinite(priceHint) || priceHint <= 0) {
-    await logExec({ level: "error", event: "fanout.noPrice", botId: signal.botId, signalId: signal.id });
-    return result;
+    try {
+      const { symbol } = await resolveSymbol("Bitget", signal.bot.ticker, false);
+      priceHint = await publicPrice("Bitget", symbol);
+      await logExec({ level: "info", event: "fanout.pricedFromVenue", botId: signal.botId, signalId: signal.id, detail: { symbol, price: priceHint } });
+    } catch (error) {
+      await logExec({ level: "error", event: "fanout.noPrice", botId: signal.botId, signalId: signal.id, detail: errorDetail(error) });
+      return result;
+    }
   }
 
   const botConfig = signal.bot.config as unknown as BotConfig;
