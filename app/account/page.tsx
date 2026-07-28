@@ -1,4 +1,3 @@
-import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { AppShell } from "@/components/app/AppShell";
 import { GuestGate } from "@/components/app/GuestGate";
@@ -12,10 +11,6 @@ import type { ExchangeName } from "@/lib/account";
 import { blockExpiredGuest, getPageAccess } from "@/lib/auth/guards";
 import { prisma } from "@/lib/db";
 import { staticEgressIp } from "@/lib/execution/egress";
-
-export const metadata: Metadata = {
-  title: "Account Settings · ATS-ALGO",
-};
 
 function AccountHeader() {
   return (

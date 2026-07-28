@@ -271,6 +271,20 @@ model Bot {
 
   results Json? // full per-profile metrics from the backtest
 
+  /// How this bot's TradingView alert bodies name their commands, when they don't
+  /// use the built-in vocabulary. Shape: `{ field?: string, actions?: { enter_long:
+  /// string[], … } }` — see lib/execution/signal-map.ts.
+  ///
+  /// The ATS indicator is normally wired through "Any alert() function call", which
+  /// posts the indicator's OWN message verbatim, and that message's wording is an
+  /// indicator setting rather than something this platform chooses. So the receiver
+  /// has to be taught the wording instead of dictating it. Null = the built-in
+  /// vocabulary only (`enter_long` / `enter_short` / `exit` / `tp1`…`tp10`), which
+  /// is also always accepted ON TOP of anything configured here: a custom mapping
+  /// only ever ADDS words, so re-wording a bot can never silence an alert that
+  /// already works.
+  signalMap Json?
+
   /// The signal secret is not stored here: it is one shared value for every bot,
   /// set as `SIGNAL_SECRET` in the environment, because it lives in the ATS
   /// indicator's own settings rather than in a per-bot alert.

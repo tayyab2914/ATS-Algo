@@ -1,4 +1,3 @@
-import type { Metadata } from "next";
 import Link from "next/link";
 import { AppShell } from "@/components/app/AppShell";
 import { GuestGate } from "@/components/app/GuestGate";
@@ -9,10 +8,6 @@ import { blockExpiredGuest, getPageAccess } from "@/lib/auth/guards";
 import { profileFor, type BotConfig } from "@/lib/bot-config";
 import { chosenExchange } from "@/lib/bot-exchanges";
 import { prisma } from "@/lib/db";
-
-export const metadata: Metadata = {
-  title: "My Bots · ATS-ALGO",
-};
 
 export default async function MyBotsPage() {
   const { session, tier, entitled } = await getPageAccess();

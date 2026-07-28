@@ -1,4 +1,3 @@
-import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { AppShell } from "@/components/app/AppShell";
@@ -15,12 +14,6 @@ const RISK_EXPOSURE: Record<"LOW" | "MEDIUM" | "HIGH", string> = {
   MEDIUM: "Medium",
   HIGH: "High",
 };
-
-export async function generateMetadata({ params }: PageProps<"/my-bots/[botId]/settings">): Promise<Metadata> {
-  const { botId } = await params;
-  const bot = await prisma.bot.findUnique({ where: { id: botId }, select: { name: true } });
-  return { title: bot ? `${bot.name} Settings · My Bots` : "Bot Settings" };
-}
 
 export default async function BotSettingsPage({ params }: PageProps<"/my-bots/[botId]/settings">) {
   const { botId } = await params;

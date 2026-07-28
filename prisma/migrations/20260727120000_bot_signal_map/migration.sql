@@ -1,0 +1,13 @@
+-- Per-bot JSON signal vocabulary.
+--
+-- The ATS indicator is wired through TradingView's "Any alert() function call",
+-- which posts the indicator's OWN message verbatim. That message's wording — the
+-- key the command sits under, and the word used for a long entry vs a short entry —
+-- is an indicator setting, not something this platform gets to choose. So the
+-- receiver has to be taught it per bot.
+--
+-- Nullable with no default and no backfill: null means "built-in vocabulary only",
+-- which is exactly how every existing bot already behaves. Nothing changes for a
+-- bot until an admin fills the panel in, and the built-in words keep working even
+-- after they do.
+ALTER TABLE "bots" ADD COLUMN "signalMap" JSONB;

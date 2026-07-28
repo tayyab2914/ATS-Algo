@@ -4,7 +4,15 @@ import { prisma } from "@/lib/db";
 import { fanOut, killSwitchOn } from "@/lib/execution/dispatch";
 import { errorDetail, logExec } from "@/lib/execution/log";
 import { secretFingerprint, signalSecret, signalSecretMatches } from "@/lib/execution/signal-secret";
-import type { PositionSide, SignalAction } from "@/lib/generated/prisma/enums";
+import {
+  acceptedWords,
+  actionFieldOf,
+  parseSignalMap,
+  readCommandWord,
+  resolveCommand,
+  type ResolvedCommand,
+  type SignalMap,
+} from "@/lib/execution/signal-map";
 
 /**
  * TradingView signal receiver.
@@ -31,6 +39,13 @@ import type { PositionSide, SignalAction } from "@/lib/generated/prisma/enums";
  * each of them arrived as a literal and killed the entry. The entry price is read
  * from the venue at fan-out instead (dispatch.ts), which is closer to the fill
  * than a bar close anyway.
+ *
+ * The WORDS above are this platform's defaults, not a requirement. Wired through
+ * TradingView's "Any alert() function call", the body is the indicator's own
+ * `alert()` message, whose wording is an indicator setting — so each bot can carry
+ * its own vocabulary (`bots.signalMap`, edited from the JSON signal settings panel)
+ * and the receiver resolves against that. Defaults stay accepted on every bot, so
+ * an alert that works today keeps working: see lib/execution/signal-map.ts.
  *
  * Dropping `ts` costs the old `(botId, action, ts)` replay guard, so the receiver
  * derives its own idempotency key instead — see `dedupeKeyFor`. That guard is not
@@ -61,34 +76,22 @@ const RATE_MAX = 20;
  */
 const DEDUPE_WINDOW_MS = 5 * 60 * 1000;
 
+/**
+ * Only the secret is required up front. The COMMAND is read afterwards, using the
+ * bot's own vocabulary (`lib/execution/signal-map.ts`) — which key it sits under
+ * and what word it uses are both per-bot settings, so neither can be asserted
+ * before the bot is known. Resolving it after the secret check is also the safer
+ * order: a body that never had a chance of being authentic tells the sender
+ * nothing about which bots exist.
+ */
 const payloadSchema = z
   .object({
-    action: z.string().min(1),
     secret: z.string().min(1, "Missing secret"),
     price: z.union([z.string(), z.number()]).optional(),
   })
   .loose();
 
-const TP_ACTIONS: Record<string, SignalAction> = Object.fromEntries(
-  Array.from({ length: 10 }, (_, i) => [`tp${i + 1}`, `TP${i + 1}` as SignalAction]),
-);
-
-type Normalized = { action: SignalAction; side: PositionSide | null };
-
-/**
- * The direction lives in the action, not a separate field: TradingView substitutes
- * nothing into `side`, so an alert that had to name its own direction could only
- * ever be written by a patched indicator. `buy`/`sell` stay as aliases for the
- * reference templates that already use them.
- */
-function normalizeAction(action: string): Normalized | null {
-  const a = action.trim().toLowerCase();
-  if (a === "enter_long" || a === "buy") return { action: "ENTER", side: "LONG" };
-  if (a === "enter_short" || a === "sell") return { action: "ENTER", side: "SHORT" };
-  if (a === "exit") return { action: "EXIT", side: null };
-  const tp = TP_ACTIONS[a];
-  return tp ? { action: tp, side: null } : null;
-}
+type Normalized = Pick<ResolvedCommand, "action" | "side">;
 
 /**
  * The idempotency key for a webhook signal, unique per bot via the index on
@@ -262,17 +265,35 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
   // Only after the secret: an unknown bot id must not be distinguishable from a bad
   // secret by anyone who cannot already fire signals, or this enumerates bot ids.
-  const bot = await prisma.bot.findUnique({ where: { id: botId }, select: { id: true } });
+  const bot = await prisma.bot.findUnique({ where: { id: botId }, select: { id: true, signalMap: true } });
   if (!bot) return reject("Invalid signal credentials", 401, "unknownBot");
 
-  const normalized = normalizeAction(parsed.data.action);
-  if (!normalized) {
-    return reject(`Unrecognised action "${parsed.data.action}" — expected enter_long, enter_short, exit or tp1…tp10`, 400, "badAction", {
-      ...(looksLikePlaceholder(parsed.data.action) ? { hint: "the alert body still holds an unsubstituted placeholder — copy a fresh one from the bot's setup card" } : {}),
+  // The vocabulary this bot's indicator speaks. Built-in words are always accepted
+  // on top of it, so a bot with no mapping behaves exactly as it always has.
+  const signalMap: SignalMap = parseSignalMap(bot.signalMap);
+  const field = actionFieldOf(signalMap);
+
+  const word = readCommandWord(payload as Record<string, unknown>, signalMap);
+  if (!word) {
+    return reject(`Alert body has no "${field}" — that's the key this bot's command travels under`, 400, "missingAction", {
+      field,
+      keys: Object.keys(payload as Record<string, unknown>).slice(0, 10),
     });
   }
 
-  const stale = LEGACY_FIELDS.filter((field) => field in (payload as Record<string, unknown>));
+  const resolved = resolveCommand(word, signalMap);
+  if (!resolved) {
+    return reject(`Unrecognised ${field} "${word}" — this bot accepts ${acceptedWords(signalMap).join(", ")}`, 400, "badAction", {
+      field,
+      word,
+      ...(looksLikePlaceholder(word) ? { hint: "the alert body still holds an unsubstituted placeholder — copy a fresh one from the bot's JSON signal settings" } : {}),
+    });
+  }
+  const normalized: Normalized = { action: resolved.action, side: resolved.side };
+
+  // A bot whose command travels under one of these names hasn't got a stale
+  // template — that key is doing a job, so exclude it from the check.
+  const stale = LEGACY_FIELDS.filter((name) => name !== field && name in (payload as Record<string, unknown>));
   if (stale.length > 0) {
     // Ignored, not rejected — they do no harm and refusing would strand a live
     // alert. But an old body is worth knowing about before it drifts further.

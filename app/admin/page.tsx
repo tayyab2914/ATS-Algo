@@ -4,7 +4,6 @@ import { AdminBrand } from "@/components/brand/AdminBrand";
 import { SplitScreen } from "@/components/layout/SplitScreen";
 
 export const metadata: Metadata = {
-  title: "Admin Access · ATS-ALGO",
   description: "Enter your PIN to access the admin dashboard.",
 };
 

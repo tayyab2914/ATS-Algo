@@ -191,6 +191,34 @@ export function withRatchetPct(config: BotConfig, pct: number | null): BotConfig
   return { ...config, profiles };
 }
 
+// ── Leverage ─────────────────────────────────────────────────────────────────
+
+/**
+ * The leverage the bot actually trades — `profiles[<risk>].lev`.
+ *
+ * Unlike the stop ladder, leverage is stored and edited PER PROFILE: safe,
+ * balanced and aggressive are different risk appetites and are meant to carry
+ * different multipliers (the reference config ships 4× / 7× / 10×). So the admin
+ * field edits the one profile this bot's risk class selects, and the other two are
+ * left exactly as the simulator emitted them.
+ */
+export function profileLeverage(config: BotConfig, riskClass: RiskClass): number | null {
+  const lev = config.profiles?.[RISK_TO_PROFILE[riskClass]]?.lev;
+  return typeof lev === "number" && Number.isFinite(lev) ? lev : null;
+}
+
+/**
+ * Set the leverage on the ONE profile `riskClass` selects. Pure — the caller's
+ * config is never mutated. A config with no such profile comes back untouched;
+ * the "this bot can't run at that risk" case is caught by validation, not here.
+ */
+export function withLeverage(config: BotConfig, riskClass: RiskClass, lev: number): BotConfig {
+  const key = RISK_TO_PROFILE[riskClass];
+  const profile = config.profiles?.[key];
+  if (!profile) return config;
+  return { ...config, profiles: { ...config.profiles, [key]: { ...profile, lev } } };
+}
+
 /** LINEAR ratchet distance after `n` filled rungs. Negative ⇒ the stop locks profit. */
 export const ratchetDistancePct = (sl: number, tightenPct: number, n: number): number =>
   sl * (1 - (n * tightenPct) / 100);

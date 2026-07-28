@@ -1,10 +1,10 @@
-import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { AdminSidebar } from "@/components/admin/AdminSidebar";
 import { PencilIcon } from "@/components/admin/admin-icons";
 import { BotExecutionPanel } from "@/components/admin/BotExecutionPanel";
 import { ExchangePills } from "@/components/admin/ExchangePills";
+import { SignalSettings } from "@/components/admin/SignalSettings";
 import { TradingViewSetup } from "@/components/admin/TradingViewSetup";
 import { EquityChart } from "@/components/bot-library/EquityChart";
 import { RISK_TO_PROFILE, type BotConfig } from "@/lib/backtest/engine";
@@ -12,12 +12,9 @@ import { buildBotEquity } from "@/lib/backtest/equity-view";
 import { getSession } from "@/lib/auth/session";
 import { cn } from "@/lib/cn";
 import { prisma } from "@/lib/db";
+import { parseSignalMap } from "@/lib/execution/signal-map";
 import { signalSecret } from "@/lib/execution/signal-secret";
 import { RISK_LABEL, RISK_TEXT_CLASS, riskBadgeClass } from "@/lib/risk";
-
-export const metadata: Metadata = {
-  title: "Bot Details · ATS-ALGO",
-};
 
 const signedPct = (x: number) => `${x >= 0 ? "+" : ""}${x.toFixed(2)}%`;
 const tone = (x: number): Tone => (x >= 0 ? "success" : "danger");
@@ -43,6 +40,7 @@ export default async function ViewBotPage({ params }: { params: Promise<{ id: st
       riskClass: true,
       timeframe: true,
       config: true,
+      signalMap: true,
       csvData: true,
       trades: true,
       winRate: true,
@@ -140,6 +138,14 @@ export default async function ViewBotPage({ params }: { params: Promise<{ id: st
             riskLabel={RISK_LABEL[bot.riskClass]}
           />
         </div>
+
+        {/* The words this bot's alerts use — and the bodies to paste, generated from them. */}
+        <SignalSettings
+          botId={bot.id}
+          secret={signalSecret()}
+          initial={parseSignalMap(bot.signalMap)}
+          tpRungs={tps.length}
+        />
 
 
         {/* equity */}

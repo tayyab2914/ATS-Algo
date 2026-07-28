@@ -1,4 +1,3 @@
-import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { AdminSidebar } from "@/components/admin/AdminSidebar";
@@ -9,10 +8,6 @@ import { countFor, deploymentCounts } from "@/lib/bots/deployment-counts";
 import { getCategoryNames } from "@/lib/categories";
 import { getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
-
-export const metadata: Metadata = {
-  title: "Bot Management · ATS-ALGO",
-};
 
 export default async function BotManagementPage() {
   const session = await getSession();

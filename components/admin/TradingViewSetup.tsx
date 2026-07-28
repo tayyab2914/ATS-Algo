@@ -1,23 +1,18 @@
-"use client";
-
-import { useState } from "react";
 import { AdminCard } from "@/components/admin/AdminCard";
+import { CopyField } from "@/components/admin/CopyField";
 import { Notice } from "@/components/ui/Notice";
-import { cn } from "@/lib/cn";
 
 /**
- * Everything needed to wire this bot's TradingView alert, generated from the bot's
- * own config so the two cannot drift.
+ * Where this bot's alerts go, and how the indicator must be set up to match.
  *
  * That matters: the indicator decides WHEN a rung is touched, but the ladder we
  * actually place comes from the config JSON. If the indicator's tp1..tp6 and
  * stop-loss don't match the bot's profile, the alerts describe a different trade
  * than the one being executed.
  *
- * Every payload here is a constant string. Nothing in a webhook body is
- * substituted — not the indicator's own `{TIME}`/`{SIDE}`/`{PRICE}`, and not even
- * TradingView's documented `{{close}}`; all of them arrive literally and get the
- * alert rejected. The entry price comes from the venue at execution time instead.
+ * The alert BODIES are not here — they live in the JSON signal settings panel,
+ * which is where the words they use are chosen. Printing them in two places is how
+ * a bot ends up wired to a body its receiver was never taught.
  *
  * The secret is one shared value for all bots (`SIGNAL_SECRET`), since it is
  * entered once in the indicator's settings. It is shown in full because this page
@@ -33,43 +28,7 @@ export type TradingViewSetupProps = {
   riskLabel: string;
 };
 
-const PLACEHOLDER = "<set-SIGNAL_SECRET-on-the-server>";
-
-function CopyButton({ value, label = "Copy" }: { value: string; label?: string }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <button
-      type="button"
-      onClick={async () => {
-        await navigator.clipboard.writeText(value);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1500);
-      }}
-      className="shrink-0 rounded-lg border border-line px-2.5 py-1 text-[11px] font-semibold text-white transition-colors hover:bg-white/5"
-    >
-      {copied ? "Copied" : label}
-    </button>
-  );
-}
-
-function Field({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex flex-col gap-1.5">
-      <span className="text-xs font-semibold text-muted">{label}</span>
-      <div className="flex items-start gap-2">
-        <code className="min-w-0 flex-1 overflow-x-auto whitespace-pre rounded-lg border border-line bg-background px-3 py-2 text-[11px] leading-5 text-white">
-          {value}
-        </code>
-        <CopyButton value={value} />
-      </div>
-    </div>
-  );
-}
-
 export function TradingViewSetup({ webhookUrl, secret, profile, riskLabel }: TradingViewSetupProps) {
-  const token = secret ?? PLACEHOLDER;
-  const json = (action: string) => JSON.stringify({ action, secret: token });
-
   return (
     <AdminCard
       title="TradingView alert"
@@ -84,8 +43,8 @@ export function TradingViewSetup({ webhookUrl, secret, profile, riskLabel }: Tra
         />
       )}
 
-      <Field label="Webhook URL" value={webhookUrl} />
-      {secret && <Field label="Signal secret (shared by every bot — set once in the indicator's settings)" value={secret} />}
+      <CopyField label="Webhook URL" value={webhookUrl} />
+      {secret && <CopyField label="Signal secret (shared by every bot — set once in the indicator's settings)" value={secret} />}
 
       {profile && (
         <div className="flex flex-col gap-1.5">
@@ -114,19 +73,10 @@ export function TradingViewSetup({ webhookUrl, secret, profile, riskLabel }: Tra
         </div>
       )}
 
-      <div className="flex flex-col gap-3">
-        <Field label="Long Entry JSON" value={json("enter_long")} />
-        <Field label="Short Entry JSON" value={json("enter_short")} />
-        <Field label="Stoploss / ATR exit JSON" value={json("exit")} />
-        {[1, 2, 3, 4, 5, 6].map((n) => (
-          <Field key={n} label={`TP ${n} JSON`} value={json(`tp${n}`)} />
-        ))}
-      </div>
-
-      <p className={cn("text-[11px] leading-4", secret ? "text-muted" : "text-[#D2031E]")}>
-        Paste each of these verbatim — there is nothing to fill in and no placeholder to substitute. Long and short are separate alerts,
-        so the direction rides in the action; the entry price is read from the exchange when the order is placed. A redelivered alert is
-        dropped for five minutes, so a retry cannot reverse an open position.
+      <p className="text-[11px] leading-4 text-muted">
+        Set the alert&apos;s condition to <span className="text-white">Any alert() function call</span> so the indicator&apos;s own
+        message is what reaches the webhook, then paste the bodies from{" "}
+        <span className="text-white">JSON signal settings</span> below into the indicator&apos;s Long and Short fields.
       </p>
     </AdminCard>
   );

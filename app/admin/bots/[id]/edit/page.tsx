@@ -1,4 +1,3 @@
-import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { AdminSidebar } from "@/components/admin/AdminSidebar";
@@ -7,10 +6,6 @@ import { type BacktestResult, type BotConfig } from "@/lib/backtest/engine";
 import { getCategoryNames } from "@/lib/categories";
 import { getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
-
-export const metadata: Metadata = {
-  title: "Edit Bot · ATS-ALGO",
-};
 
 export default async function EditBotPage({ params }: { params: Promise<{ id: string }> }) {
   const session = await getSession();

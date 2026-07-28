@@ -1,4 +1,3 @@
-import type { Metadata } from "next";
 import Link from "next/link";
 import { AppShell } from "@/components/app/AppShell";
 import { GuestGate } from "@/components/app/GuestGate";
@@ -7,6 +6,7 @@ import { TabPreviewSkeleton } from "@/components/app/TabPreviewSkeleton";
 import { AreaChart } from "@/components/dashboard/AreaChart";
 import { BarChart } from "@/components/dashboard/BarChart";
 import { MultiLineChart } from "@/components/dashboard/MultiLineChart";
+import { PnlCalendar } from "@/components/portfolio/PnlCalendar";
 import { StatsWindowTabs } from "@/components/portfolio/StatsWindowTabs";
 import { blockExpiredGuest, getPageAccess } from "@/lib/auth/guards";
 import { cn } from "@/lib/cn";
@@ -17,10 +17,6 @@ import {
   type PortfolioAnalytics,
   type TradingAnalysis,
 } from "@/lib/portfolio/analytics";
-
-export const metadata: Metadata = {
-  title: "Portfolio · ATS-ALGO",
-};
 
 // ── formatting ───────────────────────────────────────────────────────────────
 const money = (n: number) => `${n < 0 ? "-" : ""}$${Math.abs(n).toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
@@ -55,7 +51,11 @@ export default async function PortfolioPage({ searchParams }: { searchParams: Pr
   blockExpiredGuest(tier);
 
   const statsWindow = parseStatWindow((await searchParams).stats);
-  const data = session && entitled ? await loadPortfolioAnalytics(session.sub, statsWindow) : null;
+  // One render-time clock for the whole page: the metric windows and the calendar's
+  // "today" must agree, and two `new Date()` calls either side of a database read
+  // can straddle a UTC+2 midnight.
+  const now = new Date();
+  const data = session && entitled ? await loadPortfolioAnalytics(session.sub, statsWindow, now) : null;
 
   return (
     <AppShell>
@@ -75,7 +75,7 @@ export default async function PortfolioPage({ searchParams }: { searchParams: Pr
           <TabPreviewSkeleton />
         </SubscriptionGate>
       ) : data && data.hasBots ? (
-        <PortfolioView data={data} statsWindow={statsWindow} />
+        <PortfolioView data={data} statsWindow={statsWindow} nowIso={now.toISOString()} />
       ) : (
         <>
           <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-line bg-surface px-6 py-20 text-center">
@@ -97,7 +97,15 @@ export default async function PortfolioPage({ searchParams }: { searchParams: Pr
   );
 }
 
-function PortfolioView({ data, statsWindow }: { data: PortfolioAnalytics; statsWindow: PortfolioAnalytics["stats"]["window"] }) {
+function PortfolioView({
+  data,
+  statsWindow,
+  nowIso,
+}: {
+  data: PortfolioAnalytics;
+  statsWindow: PortfolioAnalytics["stats"]["window"];
+  nowIso: string;
+}) {
   return (
     <>
       {!data.hasTrades && (
@@ -107,6 +115,7 @@ function PortfolioView({ data, statsWindow }: { data: PortfolioAnalytics; statsW
         </p>
       )}
       <MetricsTable data={data} />
+      <PnlCalendar days={data.dailyPnl} nowIso={nowIso} />
       <StatsSection data={data} statsWindow={statsWindow} />
       <EquitySection data={data} />
       <TradingAnalysisSection analysis={data.analysis} />
