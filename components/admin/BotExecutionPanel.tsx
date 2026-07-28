@@ -66,6 +66,10 @@ export function BotExecutionPanel({ botId, botName }: { botId: string; botName: 
         setConfirming({ action, liveDeployments: data.liveDeployments });
         return;
       }
+      // Any resolved outcome (success or a non-confirmation error) closes the
+      // confirm box. It must NOT be cleared in `finally`, which also runs for the
+      // 409 branch above and would shut the box the same tick it opened.
+      setConfirming(null);
       if (!res.ok) {
         setNotice({ type: "error", message: data.error ?? "Dispatch failed" });
         return;
@@ -81,10 +85,10 @@ export function BotExecutionPanel({ botId, botName }: { botId: string; botName: 
             : `${LABELS[action]} sent — ${placed.length} position${placed.length === 1 ? "" : "s"} opened.`,
       });
     } catch {
+      setConfirming(null);
       setNotice({ type: "error", message: "Couldn't reach the server." });
     } finally {
       setBusy(null);
-      setConfirming(null);
     }
   }
 
