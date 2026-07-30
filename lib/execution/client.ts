@@ -2,7 +2,7 @@ import "server-only";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import type { Exchange, MarketInterface } from "ccxt";
+import type { Exchange, MarketInterface, Position } from "ccxt";
 import { prisma } from "@/lib/db";
 
 /**
@@ -271,4 +271,40 @@ export async function exchangeClient(exchange: string, creds: TradeCreds, market
   ex.setSandboxMode(creds.sandbox);
   ex.setMarkets(markets);
   return ex;
+}
+
+/**
+ * The venue's position for exactly `symbol`, or null when there is none.
+ *
+ * Match on `info.symbol` — the raw venue id — and NEVER on the unified
+ * `position.symbol`, which is actively wrong here. Bitget's all-position read
+ * returns every position for the productType regardless of the symbol asked for,
+ * and a client built above knows exactly one market, because `loadMarkets()` is
+ * deliberately never called. ccxt resolves each unknown market id against the
+ * market it was filtered on, so a member's unrelated `CROUSDT` position comes
+ * back *relabelled* `BTC/USDT:USDT` with CRO's contract count. It then passes
+ * ccxt's own symbol filter, lands at `positions[0]`, and looks exactly like ours.
+ *
+ * Every caller that trusted `[0]` therefore acted on someone else's trade: the
+ * flatten path tried to market-close 197966 foreign contracts against this
+ * symbol (Bitget 22002, "No position to close") and, because a reversal must
+ * close before it opens, blocked every entry queued behind it; settle read
+ * "still open" forever and never booked PnL; the ratchet sized a stop off the
+ * wrong position; and the orphan scan reported the member's own manual trade as
+ * an untracked one of ours.
+ *
+ * Falling back to the unified symbol when the venue sends no raw id keeps this
+ * from calling an account flat — which would settle a live position — on a
+ * response shape that has no id to compare.
+ */
+export async function livePosition(ex: Exchange, symbol: string): Promise<Position | null> {
+  const marketId = ex.markets?.[symbol]?.id;
+  const positions = await ex.fetchPositions([symbol]);
+  return (
+    positions.find((position) => {
+      const venueId = (position.info as { symbol?: string } | null | undefined)?.symbol;
+      if (venueId !== undefined && marketId !== undefined) return venueId === marketId;
+      return position.symbol === symbol;
+    }) ?? null
+  );
 }

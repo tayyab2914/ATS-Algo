@@ -2,7 +2,7 @@ import "server-only";
 import { prisma } from "@/lib/db";
 import { chosenExchange } from "@/lib/bot-exchanges";
 import { getDecryptedConnection } from "@/lib/exchanges/connection";
-import { exchangeClient, refreshMarketCache, type TradeCreds } from "./client";
+import { exchangeClient, livePosition, refreshMarketCache, type TradeCreds } from "./client";
 import { errorDetail, logExec } from "./log";
 import { syncPosition } from "./manage";
 import { resolveSymbol } from "./symbol";
@@ -133,7 +133,7 @@ export async function scanForOrphans(limit = 50): Promise<OrphanResult> {
     };
     const { symbol, market } = await resolveSymbol(chosen, deployment.bot.ticker, creds.sandbox);
     const ex = await exchangeClient(chosen, creds, [market]);
-    const contracts = Number((await ex.fetchPositions([symbol]))[0]?.contracts ?? 0);
+    const contracts = Number((await livePosition(ex, symbol))?.contracts ?? 0);
     result.checked++;
     if (contracts <= 0) return false;
 

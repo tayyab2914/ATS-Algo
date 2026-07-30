@@ -4,7 +4,7 @@ import type { Exchange, MarketInterface } from "ccxt";
 import type { ProfileConfig, ProfileSnapshot } from "@/lib/bot-config";
 import { beRungIndex } from "@/lib/bot-config";
 import { prisma } from "@/lib/db";
-import { exchangeClient, type TradeCreds } from "./client";
+import { exchangeClient, livePosition, type TradeCreds } from "./client";
 import { logExec } from "./log";
 import { closingSide, rungSizes, sizeFromMargin, slPrice, tpPrice, tradeMargin, type Side, type SizingInput } from "./pricing";
 import { MARGIN_MODE, ensurePrepared } from "./prepare";
@@ -418,7 +418,7 @@ export async function ratchetStop(input: {
   // and each filled rung shrinks the position underneath it — the DB row still carries
   // the original entry size, and an arm-time snapshot goes stale the moment the next
   // rung fills. Read what is actually there.
-  const live = (await ex.fetchPositions([position.symbol]))[0];
+  const live = await livePosition(ex, position.symbol);
   const remaining = Number(live?.contracts ?? 0);
   if (remaining <= 0) return { moved: false, reason: "flat" };
   const size = Number(ex.amountToPrecision(position.symbol, remaining));
@@ -618,8 +618,7 @@ export async function closeAll(ex: Exchange, symbol: string, clientOid?: string)
     /* nothing resting */
   }
 
-  const positions = await ex.fetchPositions([symbol]);
-  const open = positions[0];
+  const open = await livePosition(ex, symbol);
   const contracts = Number(open?.contracts ?? 0);
   let closeOrderId: string | null = null;
   if (contracts > 0 && open) {

@@ -11,7 +11,7 @@ import {
 } from "@/lib/bot-config";
 import { prisma } from "@/lib/db";
 import { getDecryptedConnection } from "@/lib/exchanges/connection";
-import { exchangeClient, getMarket, type TradeCreds } from "./client";
+import { exchangeClient, getMarket, livePosition, type TradeCreds } from "./client";
 import { clientOrderId, closeAll, ratchetStop } from "./execute";
 import { logExec } from "./log";
 import type { Side } from "./pricing";
@@ -291,16 +291,16 @@ export async function syncPosition(positionId: string, opts: { flatten?: boolean
   }
 
   // Flat on the venue → settle. This is the only place PnL is booked.
-  const livePosition = (await ex.fetchPositions([position.symbol]))[0];
-  const contracts = Number(livePosition?.contracts ?? 0);
+  const live = await livePosition(ex, position.symbol);
+  const contracts = Number(live?.contracts ?? 0);
   if (contracts > 0) {
     // Still open — snapshot the live mark so the member's page can show unrealized PnL
     // without an exchange call of its own. Prefer the venue's own number; fall back to the
     // linear-perp formula on the REMAINING contracts. Best-effort: a failed write just leaves
     // the previous snapshot, and the next pass refreshes it.
-    const mark = Number(livePosition?.markPrice ?? livePosition?.lastPrice ?? 0) || null;
+    const mark = Number(live?.markPrice ?? live?.lastPrice ?? 0) || null;
     if (mark) {
-      const venueUpnl = Number(livePosition?.unrealizedPnl);
+      const venueUpnl = Number(live?.unrealizedPnl);
       const dir = position.side === "LONG" ? 1 : -1;
       const unrealizedPnl = Number.isFinite(venueUpnl) ? venueUpnl : (mark - position.entryPrice) * contracts * dir;
       await prisma.position
