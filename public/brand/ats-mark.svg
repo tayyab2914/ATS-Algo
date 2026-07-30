@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="40" viewBox="0 0 48 40" fill="none" role="img" aria-label="ATS-ALGO">
+  <!--
+    ATS-ALGO mark. THIS FILE IS THE SWAP POINT: every logo on the site reads it,
+    so replacing it here changes the sidebar, the landing nav, the footer, the
+    auth screens and the admin rail at once, with no code change.
+
+    Keep the 48x40 viewBox (or set a viewBox that scales to the same box) —
+    callers size it in CSS and expect that aspect ratio.
+  -->
+  <path d="M2 8 L20 8 L14 14 L8 14 Z" fill="#2F7BFF" />
+  <path d="M2 19 L11 11 L42 11 L34 19 Z" fill="#3B82F6" />
+  <path d="M2 19 L34 19 L28 25 L8 25 Z" fill="#2563EB" />
+  <path d="M14 28 L46 28 L40 34 L20 34 Z" fill="#2F7BFF" />
+</svg>

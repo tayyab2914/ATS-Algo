@@ -1,4 +1,3 @@
-import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { AdminOverview, type AdminOverviewData } from "@/components/admin/AdminOverview";
 import { AdminSidebar } from "@/components/admin/AdminSidebar";
@@ -7,10 +6,6 @@ import { getSession } from "@/lib/auth/session";
 import { isSubscriptionActive } from "@/lib/billing";
 import { prisma } from "@/lib/db";
 import { describeEvent } from "@/lib/my-bots/live-view";
-
-export const metadata: Metadata = {
-  title: "Admin Dashboard · ATS-ALGO",
-};
 
 const DAY_MS = 86_400_000;
 const shortDate = (d: Date) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });

@@ -1,4 +1,3 @@
-import type { Metadata } from "next";
 import { Suspense } from "react";
 import { AppShell } from "@/components/app/AppShell";
 import { TabPreviewSkeleton } from "@/components/app/TabPreviewSkeleton";
@@ -6,10 +5,6 @@ import { BillingSection, type SubscriptionView } from "@/components/billing/Bill
 import { isSubscriptionActive, reconcileSubscriptionFromStripe } from "@/lib/billing";
 import { getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
-
-export const metadata: Metadata = {
-  title: "Billing · ATS-ALGO",
-};
 
 function Header() {
   return (

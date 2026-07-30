@@ -1,14 +1,9 @@
-import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { AdminSidebar } from "@/components/admin/AdminSidebar";
 import { CategoryManager, type CategoryRow } from "@/components/admin/CategoryManager";
 import { getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
-
-export const metadata: Metadata = {
-  title: "Categories · ATS-ALGO",
-};
 
 export default async function CategoriesPage() {
   const session = await getSession();

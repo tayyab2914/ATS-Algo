@@ -1,12 +1,7 @@
-import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { PolicyForm } from "@/components/policy/PolicyForm";
 import { getSession } from "@/lib/auth/session";
 import { POLICY_INTRO, POLICY_SECTIONS, POLICY_VERSION } from "@/lib/policy-content";
-
-export const metadata: Metadata = {
-  title: "Mandatory Rules & Policy · ATS-ALGO",
-};
 
 /** Only allow internal, non-protocol-relative redirect targets. */
 function safeNext(value?: string): string {

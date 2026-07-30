@@ -5,15 +5,16 @@ import { useMemo, useRef, useState } from "react";
 import { AdminCard } from "@/components/admin/AdminCard";
 import { BacktestResults } from "@/components/admin/BacktestResults";
 import { LadderPreview } from "@/components/admin/LadderPreview";
+import { LeverageField, parseLeverageInput } from "@/components/admin/LeverageField";
 import { parseTightenInput, StopLadderField } from "@/components/admin/StopLadderField";
 import { CheckIcon } from "@/components/admin/admin-icons";
 import { ExchangeMultiSelect } from "@/components/admin/ExchangeMultiSelect";
 import { Notice, type NoticeData } from "@/components/ui/Notice";
 import { Switch } from "@/components/ui/Switch";
-import { configRatchetPct, withRatchetPct } from "@/lib/bot-config";
+import { configRatchetPct, profileLeverage, withLeverage, withRatchetPct } from "@/lib/bot-config";
 import { runBacktest, type BacktestResult, type BotConfig, type RiskClass } from "@/lib/backtest/engine";
 import { cn } from "@/lib/cn";
-import { botConfigError } from "@/lib/validation";
+import { botConfigError, ladderGeometryError } from "@/lib/validation";
 
 const RISKS: { value: RiskClass; label: string }[] = [
   { value: "LOW", label: "Low (safe)" },
@@ -43,6 +44,8 @@ export type BotEditorData = {
   initialResult: BacktestResult | null;
 };
 
+const sameSet = (a: string[], b: string[]) => a.length === b.length && a.every((x) => b.includes(x));
+
 export function BotEditor({ bot, categories }: { bot: BotEditorData; categories: string[] }) {
   const router = useRouter();
   // Always include the bot's current category, even if it was since renamed/removed.
@@ -65,9 +68,10 @@ export function BotEditor({ bot, categories }: { bot: BotEditorData; categories:
   const [csvFilename, setCsvFilename] = useState(bot.csvFilename ?? "");
   const [configChanged, setConfigChanged] = useState(false);
   const [csvChanged, setCsvChanged] = useState(false);
-  // Editable on its own, without re-uploading the JSON — the whole point of moving
-  // the ladder out of the file.
+  // Editable on their own, without re-uploading the JSON — the whole point of
+  // moving the ladder and the leverage out of the file.
   const [tightenPct, setTightenPct] = useState(() => String(configRatchetPct(bot.config) ?? ""));
+  const [leveragePct, setLeveragePct] = useState(() => String(profileLeverage(bot.config, bot.riskClass) ?? ""));
 
   // Show the current bot's metrics on load so changes are easy to compare; the
   // user re-runs after swapping a file. These come straight off the row — the
@@ -81,15 +85,41 @@ export function BotEditor({ bot, categories }: { bot: BotEditorData; categories:
   const csvRef = useRef<HTMLInputElement>(null);
 
   const tighten = useMemo(() => parseTightenInput(tightenPct), [tightenPct]);
-  // Everything below reads the config WITH the ladder written in — preview,
-  // validation and PATCH must all judge the same object. Memoised because these
-  // ran on every keystroke in any field, not just the ladder's.
-  const effectiveConfig = useMemo(() => withRatchetPct(config, tighten.value), [config, tighten.value]);
-  const ladderError = useMemo(
-    () => tighten.error ?? botConfigError(effectiveConfig, riskClass),
-    [tighten.error, effectiveConfig, riskClass],
-  );
-  const tightenChanged = tighten.value !== configRatchetPct(bot.config);
+  const leverage = useMemo(() => parseLeverageInput(leveragePct), [leveragePct]);
+
+  // The config as it would be STORED: the current config with this bot's ladder and
+  // leverage written in. Preview, validation and the PATCH must all judge the same
+  // object. Memoised because these ran on every keystroke in any field.
+  const effectiveConfig = useMemo(() => {
+    const withLadder = withRatchetPct(config, tighten.value);
+    return leverage.value === null ? withLadder : withLeverage(withLadder, riskClass, leverage.value);
+  }, [config, tighten.value, leverage.value, riskClass]);
+
+  const storedTighten = configRatchetPct(bot.config);
+  const storedLeverage = profileLeverage(bot.config, riskClass);
+  const tightenChanged = tighten.value !== storedTighten;
+  const leverageChanged = leverage.value !== null && leverage.value !== storedLeverage;
+
+  /**
+   * Why Save is unavailable — or null when it isn't.
+   *
+   * Scoped to what this save actually SENDS. A config uploaded here has to pass the
+   * whole schema; a bot merely being renamed does not, and neither does the config
+   * already sitting on the row. That distinction is the bug this file used to have:
+   * `botConfigError` ran against the STORED config on mount, so any bot whose JSON
+   * predates the current rules (no `fees` block, say) had Save permanently disabled
+   * behind "Fix the stop ladder to save" — no matter what was edited. The server has
+   * never re-validated stored configs, and now neither does this.
+   */
+  const blockingError = useMemo(() => {
+    if (tighten.error) return tighten.error;
+    if (leverage.error) return leverage.error;
+    // A replacement file is new material — hold it to everything.
+    if (configChanged) return botConfigError(effectiveConfig, riskClass);
+    // An in-place retune is held to the ladder's geometry only, exactly like the API.
+    if (tightenChanged || leverageChanged) return ladderGeometryError(effectiveConfig)?.message ?? null;
+    return null;
+  }, [tighten.error, leverage.error, configChanged, tightenChanged, leverageChanged, effectiveConfig, riskClass]);
 
   // Any edited field counts as a change — including metadata-only edits like
   // switching the category, which previously left Save disabled with no reason.
@@ -97,31 +127,53 @@ export function BotEditor({ bot, categories }: { bot: BotEditorData; categories:
     name !== bot.name ||
     category !== bot.category ||
     timeframe !== bot.timeframe ||
-    exchanges.length !== bot.exchanges.length ||
-    exchanges.some((e) => !bot.exchanges.includes(e)) ||
+    !sameSet(exchanges, bot.exchanges) ||
     riskClass !== bot.riskClass ||
     configChanged ||
     tightenChanged ||
+    leverageChanged ||
     csvChanged;
-  // A fresh backtest is only required when the config or CSV changed; a
-  // metadata-only edit can save against the existing (mount-time) metrics.
-  // `tightenChanged` is deliberately NOT here: the backtest doesn't model the stop
-  // ladder at all, so a re-run would return byte-identical metrics and the prompt
-  // would be a lie. Change that the day `simulateTrade` reads `sl_tighten_pct`.
-  const needsRerun = (configChanged || csvChanged) && !result;
-  const saveDisabled = pending || !dirty || needsRerun || Boolean(ladderError) || !message.trim();
+
+  // A stale preview is worth flagging, but it is NOT a save blocker: the PATCH route
+  // re-runs the backtest server-side and stores that result, so the button used to
+  // be held hostage to a preview whose output is thrown away. Worse, a bot with no
+  // CSV on file could never satisfy it at all.
+  const previewStale = (configChanged || csvChanged) && !result;
+  const saveDisabled = pending || !dirty || Boolean(blockingError);
   // Tell the admin exactly why Save is unavailable instead of showing a dead button.
   const saveHint = pending
     ? null
     : !dirty
       ? "No changes to save yet"
-      : ladderError
-        ? "Fix the stop ladder to save"
-        : needsRerun
-          ? "Re-run the backtest before saving"
-          : !message.trim()
-            ? "Add a change note to save"
-            : null;
+      : blockingError
+        ? "Fix the highlighted field to save"
+        : previewStale
+          ? "Saving will re-run the backtest"
+          : null;
+
+  /**
+   * The change note, written for the admin when they leave the box empty.
+   *
+   * The note is what the bot's public history is made of, so it can't just be
+   * dropped — but requiring it by hand made a one-word rename impossible to save.
+   * Generating it keeps the history precise (more precise than most freehand notes)
+   * and takes the requirement off the critical path.
+   */
+  function describeChanges(): string {
+    const parts: string[] = [];
+    if (name !== bot.name) parts.push(`renamed “${bot.name}” → “${name}”`);
+    if (category !== bot.category) parts.push(`category ${bot.category} → ${category}`);
+    if (timeframe !== bot.timeframe) parts.push(`timeframe ${bot.timeframe} → ${timeframe}`);
+    if (!sameSet(exchanges, bot.exchanges))
+      parts.push(`exchanges ${bot.exchanges.join(", ") || "none"} → ${exchanges.join(", ") || "none"}`);
+    if (riskClass !== bot.riskClass) parts.push(`risk class ${bot.riskClass} → ${riskClass}`);
+    if (leverageChanged) parts.push(`leverage ${storedLeverage ?? "—"}x → ${leverage.value}x`);
+    if (tightenChanged) parts.push(`stop ladder ${storedTighten ?? "off"} → ${tighten.value ?? "off"}`);
+    if (configChanged) parts.push("replaced the config JSON");
+    if (csvChanged) parts.push(`replaced the signal CSV${csvFilename ? ` (${csvFilename})` : ""}`);
+    if (parts.length === 0) return "Saved with no field changes";
+    return `${parts[0][0].toUpperCase()}${parts[0].slice(1)}${parts.length > 1 ? `; ${parts.slice(1).join("; ")}` : ""}`;
+  }
 
   async function onJsonPicked(file: File) {
     setNotice(null);
@@ -134,11 +186,13 @@ export function BotEditor({ bot, categories }: { bot: BotEditorData; categories:
         return;
       }
       setConfig(parsed);
-      // Follow the new file's ladder if it carries one, so a replacement config's
-      // own tuning wins over whatever was left in the box from the old one.
+      // Follow the new file's ladder and leverage if it carries them, so a
+      // replacement config's own tuning wins over whatever was left in the boxes
+      // from the old one.
       setTightenPct(String(configRatchetPct(parsed) ?? ""));
+      setLeveragePct(String(profileLeverage(parsed, riskClass) ?? ""));
       setConfigChanged(true);
-      setResult(null); // force a re-run before saving
+      setResult(null); // the shown metrics are now stale
     } catch {
       setNotice({ type: "error", message: "Couldn't parse that file as JSON." });
     }
@@ -154,7 +208,13 @@ export function BotEditor({ bot, categories }: { bot: BotEditorData; categories:
     setCsvText(text);
     setCsvFilename(file.name);
     setCsvChanged(true);
-    setResult(null); // force a re-run before saving
+    setResult(null); // the shown metrics are now stale
+  }
+
+  /** Risk class selects a different profile, so the leverage box has to follow it. */
+  function onRiskChanged(next: RiskClass) {
+    setRiskClass(next);
+    setLeveragePct(String(profileLeverage(config, next) ?? ""));
   }
 
   /**
@@ -227,12 +287,8 @@ export function BotEditor({ bot, categories }: { bot: BotEditorData; categories:
   }
 
   async function save() {
-    if (!message.trim()) {
-      setNotice({ type: "error", message: "Add a short note describing what changed." });
-      return;
-    }
-    if (ladderError) {
-      setNotice({ type: "error", message: ladderError });
+    if (blockingError) {
+      setNotice({ type: "error", message: blockingError });
       return;
     }
     setPending(true);
@@ -247,15 +303,27 @@ export function BotEditor({ bot, categories }: { bot: BotEditorData; categories:
           timeframe,
           exchanges,
           riskClass,
-          message: message.trim(),
-          // Retuning the ladder alone still rewrites the config — it lives inside it.
-          ...(configChanged || tightenChanged ? { config: effectiveConfig } : {}),
+          message: message.trim() || describeChanges(),
+          // Only a replacement file ships a whole config. The ladder and leverage
+          // travel as their own fields so the server can apply them to the config
+          // already on the row — which is what lets a bot whose stored JSON predates
+          // the current schema still be retuned.
+          ...(configChanged ? { config } : {}),
+          ...(tightenChanged ? { tightenPct: tighten.value } : {}),
+          ...(leverageChanged ? { leverage: leverage.value } : {}),
           ...(csvChanged ? { csvText, csvFilename } : {}),
         }),
       });
-      const data = (await res.json().catch(() => null)) as { error?: string } | null;
+      const data = (await res.json().catch(() => null)) as { error?: string; warning?: string } | null;
       if (!res.ok) {
         setNotice({ type: "error", message: data?.error ?? "Couldn't save the bot." });
+        return;
+      }
+      if (data?.warning) {
+        // Saved, but something the admin should know about — keep them on the page
+        // to read it rather than bouncing to the list.
+        setNotice({ type: "success", message: data.warning });
+        router.refresh();
         return;
       }
       // `push` already refetches the list route's RSC payload — a `refresh` here
@@ -269,7 +337,7 @@ export function BotEditor({ bot, categories }: { bot: BotEditorData; categories:
   }
 
   return (
-    <AdminCard title={`Edit ${bot.name}`} subtitle="Swap the config or signals, re-run the backtest, then save with a note on what changed.">
+    <AdminCard title={`Edit ${bot.name}`} subtitle="Change anything here and save — the backtest is re-run on the server whenever it needs to be.">
       <div className="flex flex-col gap-6">
         {notice && <Notice notice={notice} />}
 
@@ -315,10 +383,17 @@ export function BotEditor({ bot, categories }: { bot: BotEditorData; categories:
           </div>
           <label className="flex flex-col gap-2">
             <span className={labelCls}>Risk Class</span>
-            <select value={riskClass} onChange={(e) => setRiskClass(e.target.value as RiskClass)} className={cn(inputCls, "appearance-none pr-10")}>
+            <select value={riskClass} onChange={(e) => onRiskChanged(e.target.value as RiskClass)} className={cn(inputCls, "appearance-none pr-10")}>
               {RISKS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
             </select>
           </label>
+          <LeverageField
+            value={leveragePct}
+            onChange={setLeveragePct}
+            stored={storedLeverage}
+            riskClass={riskClass}
+            error={leverage.error}
+          />
         </div>
 
         {/* Visibility — saves instantly, no change note / history entry. */}
@@ -344,6 +419,11 @@ export function BotEditor({ bot, categories }: { bot: BotEditorData; categories:
           >
             {previewPending ? "Running…" : "Run Backtest"}
           </button>
+          {previewStale && (
+            <p className="text-xs text-accent">
+              These metrics are from before your change. Run the backtest to preview the new ones — saving recomputes and stores them either way.
+            </p>
+          )}
           {result ? (
             <BacktestResults name={name} timeframe={timeframe} riskClass={riskClass} result={result} />
           ) : (
@@ -353,21 +433,22 @@ export function BotEditor({ bot, categories }: { bot: BotEditorData; categories:
 
         {/* Progressive stop ladder — the field is the source of truth; the table is its consequence. */}
         <div className="flex flex-col gap-4 border-t border-line pt-6">
-          <StopLadderField value={tightenPct} onChange={setTightenPct} error={ladderError} />
+          <StopLadderField value={tightenPct} onChange={setTightenPct} error={tighten.error} />
           <LadderPreview config={effectiveConfig} riskClass={riskClass} />
         </div>
 
         {/* Change message */}
         <label className="flex flex-col gap-2">
-          <span className={labelCls}>What changed? — required, saved to the bot&apos;s history</span>
+          <span className={labelCls}>What changed? — optional, saved to the bot&apos;s history</span>
           <textarea
             value={message}
             onChange={(e) => setMessage(e.target.value)}
             rows={3}
             maxLength={1000}
-            placeholder="e.g. Re-optimised TP ladder on fresh April–June signals; leverage 7→5 on balanced."
+            placeholder={dirty ? describeChanges() : "e.g. Re-optimised TP ladder on fresh April–June signals; leverage 7→5 on balanced."}
             className="w-full rounded-lg border border-line bg-background px-3 py-2 text-sm text-white placeholder:text-muted focus:border-accent/60 focus:outline-none"
           />
+          <span className="text-xs text-muted">Leave it empty and the summary above is recorded instead.</span>
         </label>
 
         {/* Actions */}

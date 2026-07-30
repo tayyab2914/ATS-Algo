@@ -1,14 +1,9 @@
-import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { AdminSidebar } from "@/components/admin/AdminSidebar";
 import { BotWizard } from "@/components/admin/BotWizard";
 import { getCategoryNames } from "@/lib/categories";
 import { getSession } from "@/lib/auth/session";
-
-export const metadata: Metadata = {
-  title: "Add New Bot · ATS-ALGO",
-};
 
 export default async function NewBotPage() {
   const session = await getSession();

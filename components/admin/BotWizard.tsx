@@ -5,11 +5,12 @@ import { useRef, useState } from "react";
 import { AdminCard } from "@/components/admin/AdminCard";
 import { BacktestResults } from "@/components/admin/BacktestResults";
 import { LadderPreview } from "@/components/admin/LadderPreview";
+import { LeverageField, parseLeverageInput } from "@/components/admin/LeverageField";
 import { parseTightenInput, StopLadderField } from "@/components/admin/StopLadderField";
 import { CheckIcon } from "@/components/admin/admin-icons";
 import { ExchangeMultiSelect } from "@/components/admin/ExchangeMultiSelect";
 import { Notice, type NoticeData } from "@/components/ui/Notice";
-import { configRatchetPct, withRatchetPct } from "@/lib/bot-config";
+import { configRatchetPct, profileLeverage, withLeverage, withRatchetPct } from "@/lib/bot-config";
 import { matchBotExchange } from "@/lib/bot-exchanges";
 import { runBacktest, type BacktestResult, type BotConfig, type RiskClass } from "@/lib/backtest/engine";
 import { cn } from "@/lib/cn";
@@ -53,20 +54,29 @@ export function BotWizard({ categories }: { categories: string[] }) {
   const [csvText, setCsvText] = useState("");
   const [csvFilename, setCsvFilename] = useState("");
   const [result, setResult] = useState<BacktestResult | null>(null);
-  // The stop ladder, as typed on the last step. Prefilled from the JSON when it
-  // carries one, so an existing config's ladder is edited rather than silently
-  // dropped — but from here on this box, not the file, decides.
+  // The stop ladder and the leverage, as typed on the last step. Both are prefilled
+  // from the JSON when it carries them, so an existing config's tuning is edited
+  // rather than silently dropped — but from here on these boxes, not the file, decide.
   const [tightenPct, setTightenPct] = useState("");
+  const [leveragePct, setLeveragePct] = useState("");
 
   const jsonRef = useRef<HTMLInputElement>(null);
   const csvRef = useRef<HTMLInputElement>(null);
 
   const tighten = parseTightenInput(tightenPct);
+  const leverage = parseLeverageInput(leveragePct);
+  const configLeverage = config ? profileLeverage(config, riskClass) : null;
   // What actually gets saved: the uploaded config with this bot's ladder written
-  // onto every profile. Everything on the last step reads THIS, never `config` —
-  // the preview, the validation and the POST must all judge the same object.
-  const effectiveConfig = config ? withRatchetPct(config, tighten.value) : null;
-  const ladderError = tighten.error ?? (effectiveConfig ? botConfigError(effectiveConfig, riskClass) : null);
+  // onto every profile and its leverage onto the one it trades. Everything on the
+  // last step reads THIS, never `config` — the preview, the validation and the POST
+  // must all judge the same object.
+  const effectiveConfig = !config
+    ? null
+    : leverage.value === null
+      ? withRatchetPct(config, tighten.value)
+      : withLeverage(withRatchetPct(config, tighten.value), riskClass, leverage.value);
+  const ladderError =
+    tighten.error ?? leverage.error ?? (effectiveConfig ? botConfigError(effectiveConfig, riskClass) : null);
 
   async function onJsonPicked(file: File) {
     setNotice(null);
@@ -80,6 +90,7 @@ export function BotWizard({ categories }: { categories: string[] }) {
       }
       setConfig(parsed);
       setTightenPct(String(configRatchetPct(parsed) ?? ""));
+      setLeveragePct(String(profileLeverage(parsed, riskClass) ?? ""));
       setName((n) => n || (parsed.name ? cleanBotName(parsed.name) : ""));
       setTimeframe((t) => t || (parsed.timeframe ? `${parsed.timeframe}m` : ""));
       setExchanges((xs) => {
@@ -198,10 +209,27 @@ export function BotWizard({ categories }: { categories: string[] }) {
                 </div>
                 <label className="flex flex-col gap-2">
                   <span className={labelCls}>Risk Class</span>
-                  <select value={riskClass} onChange={(e) => setRiskClass(e.target.value as RiskClass)} className={cn(inputCls, "appearance-none pr-10")}>
+                  <select
+                    value={riskClass}
+                    onChange={(e) => {
+                      const next = e.target.value as RiskClass;
+                      setRiskClass(next);
+                      // A different risk class is a different profile, so the leverage
+                      // box has to follow it rather than keep the old tier's number.
+                      setLeveragePct(String((config && profileLeverage(config, next)) ?? ""));
+                    }}
+                    className={cn(inputCls, "appearance-none pr-10")}
+                  >
                     {RISKS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
                   </select>
                 </label>
+                <LeverageField
+                  value={leveragePct}
+                  onChange={setLeveragePct}
+                  stored={configLeverage}
+                  riskClass={riskClass}
+                  error={leverage.error}
+                />
               </div>
             )}
           </div>

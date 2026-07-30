@@ -1,13 +1,8 @@
-import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { AdminAccountSection } from "@/components/admin/AdminAccountSection";
 import { AdminSidebar } from "@/components/admin/AdminSidebar";
 import { getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
-
-export const metadata: Metadata = {
-  title: "Account Management · ATS-ALGO",
-};
 
 export default async function AdminAccountPage() {
   const session = await getSession();

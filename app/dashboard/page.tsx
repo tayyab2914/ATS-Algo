@@ -1,4 +1,3 @@
-import type { Metadata } from "next";
 import { AppShell } from "@/components/app/AppShell";
 import { GuestGate } from "@/components/app/GuestGate";
 import { MyBotsPerformance } from "@/components/dashboard/MyBotsPerformance";
@@ -9,10 +8,6 @@ import { TopAssets } from "@/components/dashboard/TopAssets";
 import { blockExpiredGuest, getPageAccess } from "@/lib/auth/guards";
 import { loadDashboard } from "@/lib/dashboard/metrics";
 import { parsePeriod, parseTimeframe } from "@/lib/dashboard/window";
-
-export const metadata: Metadata = {
-  title: "Dashboard · ATS-ALGO",
-};
 
 export default async function DashboardPage({ searchParams }: PageProps<"/dashboard">) {
   const { session, tier } = await getPageAccess();

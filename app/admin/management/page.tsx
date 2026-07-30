@@ -1,4 +1,3 @@
-import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { AddTeamMember } from "@/components/admin/AddTeamMember";
 import { AdminSidebar } from "@/components/admin/AdminSidebar";
@@ -9,10 +8,6 @@ import { hasActiveSubscription } from "@/lib/billing";
 import { prisma } from "@/lib/db";
 import type { SubscriptionModel } from "@/lib/generated/prisma/models";
 import { guestTrialFrom } from "@/lib/guest";
-
-export const metadata: Metadata = {
-  title: "Members Management · ATS-ALGO",
-};
 
 function formatDate(date: Date): string {
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });

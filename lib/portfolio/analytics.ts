@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import { windowStart } from "@/lib/dashboard/window";
+import { computeDailyPnl, type DayPnl } from "@/lib/portfolio/calendar";
 
 /**
  * Portfolio analytics — every number on the Portfolio page, computed from the
@@ -305,6 +306,13 @@ export type PortfolioAnalytics = {
   stats: StatSeries;
   monthlyEquity: { labels: string[]; totalPnlPct: number[] };
   cumulativePnl: { labels: string[]; curve: number[] };
+  /**
+   * Realized PnL per calendar day, for the PnL calendar. Only days that actually
+   * closed a trade are present, so this is proportional to activity rather than to
+   * the age of the account — a year of daily trading is a couple of hundred rows,
+   * which is why the whole history ships at once and the calendar pages instantly.
+   */
+  dailyPnl: DayPnl[];
 };
 
 /**
@@ -382,5 +390,6 @@ export async function loadPortfolioAnalytics(
     // rather than faked.
     monthlyEquity: { labels: stats.labels, totalPnlPct: stats.cumulativePct },
     cumulativePnl: computeMonthlyPnl(forBucket, 8, now),
+    dailyPnl: computeDailyPnl(closedAll.map((t) => ({ realizedPnl: t.realizedPnl, marginUsed: t.marginUsed, closedAt: t.closedAt }))),
   };
 }

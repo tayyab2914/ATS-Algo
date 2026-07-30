@@ -1,4 +1,3 @@
-import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { AppShell } from "@/components/app/AppShell";
@@ -27,12 +26,6 @@ const PROFILE_TAGLINE: Record<"LOW" | "MEDIUM" | "HIGH", string> = {
 };
 
 const money = (n: number) => `$${Math.round(n).toLocaleString("en-US")}`;
-
-export async function generateMetadata({ params }: PageProps<"/my-bots/[botId]">): Promise<Metadata> {
-  const { botId } = await params;
-  const bot = await prisma.bot.findUnique({ where: { id: botId }, select: { name: true } });
-  return { title: bot ? `${bot.name} · My Bots` : "My Bots" };
-}
 
 /** Loads the signed-in member's deployment of this bot (or null). */
 async function getUserBot(userId: string, botId: string) {

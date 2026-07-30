@@ -1,14 +1,9 @@
-import type { Metadata } from "next";
 import { AppShell } from "@/components/app/AppShell";
 import { BotLibraryBrowser } from "@/components/bot-library/BotLibraryBrowser";
 import { type BotTableRow } from "@/components/admin/BotsTable";
 import { blockExpiredGuest, getPageAccess } from "@/lib/auth/guards";
 import { countFor, deploymentCounts } from "@/lib/bots/deployment-counts";
 import { prisma } from "@/lib/db";
-
-export const metadata: Metadata = {
-  title: "Bot Library · ATS-ALGO",
-};
 
 /**
  * Bot Library. Open to visitors and active guests (read-only browsing) as well

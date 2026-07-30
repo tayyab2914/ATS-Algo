@@ -241,64 +241,101 @@ export const botConfigSchema = z
     { error: "Config JSON must be an object." },
   )
   .loose()
-  // ── The stop ladder's GEOMETRY ────────────────────────────────────────────
-  // Checked here, not per-profile, because it needs the fee and slippage
-  // assumptions that live at the top of the config.
-  //
-  // The engine NEVER silently corrects an unsound ladder at runtime — it logs and
-  // refuses to move the stop. So the config must be right before it is stored: this
-  // is the only place a bad ladder can be caught.
+  // The stop ladder's GEOMETRY. Checked on the whole config rather than per
+  // profile, because it needs the fee and slippage assumptions that live at the
+  // top. See {@link ladderGeometryError}.
   .superRefine((cfg, ctx) => {
-    const buffer = stopBufferPct(Number(cfg.fees?.taker_fee_pct ?? 0), Number(cfg.slippage_pct ?? DEFAULT_SLIPPAGE_PCT));
+    const found = ladderGeometryError(cfg as Parameters<typeof ladderGeometryError>[0]);
+    if (found) ctx.addIssue({ code: "custom", path: ["profiles", found.profile, "sl_tighten_pct"], message: found.message });
+  });
 
-    for (const [key, profile] of Object.entries(cfg.profiles ?? {})) {
-      if (!profile) continue;
-      const p = profile as { tp: number[]; w: number[]; sl: number; sl_tighten_pct?: number | null };
-      const tighten = ratchetPct(p);
-      if (tighten === null) continue; // legacy `be` config — no ladder to check
-      if (!Array.isArray(p.tp) || p.tp.length < 2) continue; // caught by the profile schema
+/**
+ * The stop ladder's GEOMETRY, for any config — including one stored before the
+ * modern schema existed.
+ *
+ * Split out of `botConfigSchema` on purpose. A grandfathered config (no `fees`
+ * block, say) fails the schema outright, but retuning its ladder or its leverage
+ * must still be possible: those edits are held to the geometry rules ONLY, which
+ * is exactly the bar the row already meets. A freshly UPLOADED config still has to
+ * pass the whole schema — see `botConfigError`.
+ *
+ * The engine NEVER silently corrects an unsound ladder at runtime — it logs and
+ * refuses to move the stop. So the config has to be right before it is stored, and
+ * this is the only place a bad ladder can be caught.
+ *
+ * Returns the first offending profile and why, or null when every ladder is sound.
+ */
+export function ladderGeometryError(cfg: {
+  fees?: { taker_fee_pct?: number } | null;
+  slippage_pct?: number | null;
+  profiles?: Record<string, { tp?: number[]; sl?: number; sl_tighten_pct?: number | null } | undefined> | null;
+}): { profile: string; message: string } | null {
+  const buffer = stopBufferPct(Number(cfg.fees?.taker_fee_pct ?? 0), Number(cfg.slippage_pct ?? DEFAULT_SLIPPAGE_PCT));
 
-      // G2 — SOUNDNESS. After n rungs, price has touched the n-th NEAREST take-profit.
-      // The stop must stay `buffer` inside that level: any tighter and it sits above
-      // the market (Bitget silently re-files a wrong-side trigger, with no error) or
-      // exits giving the whole gain back in fees. G2 holding is also exactly what makes
-      // the PnL-if-stopped rise with every rung.
-      for (let n = 1; n <= p.tp.length - 1; n++) {
-        const d = ratchetDistancePct(p.sl, tighten, n);
-        const nearest = nthNearestTp(p.tp, n)!;
-        for (const side of ["LONG", "SHORT"] as const) {
-          const floor = minDistancePct(nearest, buffer, side);
-          if (d < floor) {
-            ctx.addIssue({
-              code: "custom",
-              path: ["profiles", key, "sl_tighten_pct"],
-              message:
-                `${key} profile: sl_tighten_pct=${tighten} is too aggressive. After ${n} rung(s) it puts the stop at ${d.toFixed(2)}% from entry, ` +
-                `but price has only reached the ${n}${n === 1 ? "st" : n === 2 ? "nd" : n === 3 ? "rd" : "th"}-nearest take-profit (${nearest}%) — on a ${side} the stop may be no tighter than ` +
-                `${floor.toFixed(2)}% once fees and slippage (${buffer.toFixed(3)}%) are covered. It would sit beyond the market and never protect anything. Lower sl_tighten_pct.`,
-            });
-            return; // one clear reason beats a cascade
-          }
+  for (const [key, profile] of Object.entries(cfg.profiles ?? {})) {
+    if (!profile) continue;
+    const tighten = ratchetPct(profile);
+    if (tighten === null) continue; // legacy `be` config — no ladder to check
+    // Under two rungs there is no ladder to have geometry: the final rung closes
+    // the position outright, so a one-rung profile never carries a movable stop.
+    // G3 below divides by `tp.length - 1`, so this guard is also what keeps it
+    // from reporting "never locks profit / use at least ~Infinity" on such a config.
+    if (!Array.isArray(profile.tp) || profile.tp.length < 2) continue;
+    const tp = profile.tp;
+    const sl = Number(profile.sl);
+    if (!Number.isFinite(sl) || sl <= 0) continue; // caught by the profile schema
+
+    // G2 — SOUNDNESS. After n rungs, price has touched the n-th NEAREST take-profit.
+    // The stop must stay `buffer` inside that level: any tighter and it sits above
+    // the market (Bitget silently re-files a wrong-side trigger, with no error) or
+    // exits giving the whole gain back in fees. G2 holding is also exactly what makes
+    // the PnL-if-stopped rise with every rung.
+    for (let n = 1; n <= tp.length - 1; n++) {
+      const d = ratchetDistancePct(sl, tighten, n);
+      const nearest = nthNearestTp(tp, n)!;
+      for (const side of ["LONG", "SHORT"] as const) {
+        const floor = minDistancePct(nearest, buffer, side);
+        if (d < floor) {
+          return {
+            profile: key,
+            message:
+              `${key} profile: sl_tighten_pct=${tighten} is too aggressive. After ${n} rung(s) it puts the stop at ${d.toFixed(2)}% from entry, ` +
+              `but price has only reached the ${n}${n === 1 ? "st" : n === 2 ? "nd" : n === 3 ? "rd" : "th"}-nearest take-profit (${nearest}%) — on a ${side} the stop may be no tighter than ` +
+              `${floor.toFixed(2)}% once fees and slippage (${buffer.toFixed(3)}%) are covered. It would sit beyond the market and never protect anything. Lower sl_tighten_pct.`,
+          };
         }
       }
-
-      // G3 — CONFORMANCE. The weights sum to 1, so the FINAL rung closes the position
-      // outright. A ladder that only reaches profit at or after it can never lock
-      // anything in: the stop is dead config.
-      const locksProfit = Array.from({ length: p.tp.length - 1 }, (_, i) => ratchetDistancePct(p.sl, tighten, i + 1)).some((d) => d <= -buffer);
-      if (!locksProfit) {
-        const needed = (100 / (p.tp.length - 1)) * (1 + buffer / p.sl);
-        ctx.addIssue({
-          code: "custom",
-          path: ["profiles", key, "sl_tighten_pct"],
-          message:
-            `${key} profile: sl_tighten_pct=${tighten} never locks in profit. The last of the ${p.tp.length} rungs closes the position outright (the weights sum to 1), ` +
-            `so the stop only ever matters up to rung ${p.tp.length - 1} — and by then it is still ${ratchetDistancePct(p.sl, tighten, p.tp.length - 1).toFixed(2)}% from entry, a losing stop. ` +
-            `Use at least ~${needed.toFixed(1)} to move it past break-even while the trade is still open.`,
-        });
-      }
     }
-  });
+
+    // G3 — CONFORMANCE. The weights sum to 1, so the FINAL rung closes the position
+    // outright. A ladder that only reaches profit at or after it can never lock
+    // anything in: the stop is dead config.
+    const locksProfit = Array.from({ length: tp.length - 1 }, (_, i) => ratchetDistancePct(sl, tighten, i + 1)).some((d) => d <= -buffer);
+    if (!locksProfit) {
+      const needed = (100 / (tp.length - 1)) * (1 + buffer / sl);
+      return {
+        profile: key,
+        message:
+          `${key} profile: sl_tighten_pct=${tighten} never locks in profit. The last of the ${tp.length} rungs closes the position outright (the weights sum to 1), ` +
+          `so the stop only ever matters up to rung ${tp.length - 1} — and by then it is still ${ratchetDistancePct(sl, tighten, tp.length - 1).toFixed(2)}% from entry, a losing stop. ` +
+          `Use at least ~${needed.toFixed(1)} to move it past break-even while the trade is still open.`,
+      };
+    }
+  }
+  return null;
+}
+
+/** Leverage bounds, enforced identically by the schema and by the on-the-fly field. */
+export const MIN_LEVERAGE = 1;
+export const MAX_LEVERAGE = 125;
+
+/** Readable reason a leverage value is unusable, or null when it's fine. */
+export function leverageError(lev: number): string | null {
+  if (!Number.isFinite(lev)) return "Leverage must be a number.";
+  if (lev < MIN_LEVERAGE) return `Leverage must be at least ${MIN_LEVERAGE}.`;
+  if (lev > MAX_LEVERAGE) return `Leverage above ${MAX_LEVERAGE}x is not supported.`;
+  return null;
+}
 
 /**
  * First readable validation error for a bot config, or null when it's valid.

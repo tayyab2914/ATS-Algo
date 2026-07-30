@@ -1,4 +1,3 @@
-import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { AppShell } from "@/components/app/AppShell";
@@ -45,12 +44,6 @@ async function getActiveBot(id: string) {
       },
     },
   });
-}
-
-export async function generateMetadata({ params }: PageProps<"/bot-library/[id]">): Promise<Metadata> {
-  const { id } = await params;
-  const bot = await prisma.bot.findFirst({ where: { id, status: "ACTIVE" }, select: { name: true } });
-  return { title: bot ? `${bot.name} · Bot Library` : "Bot Library" };
 }
 
 function BackArrow() {
