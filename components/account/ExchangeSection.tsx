@@ -5,7 +5,7 @@ import { useState } from "react";
 import { DangerAction, PrimaryAction, SettingsCard } from "@/components/account/SettingsCard";
 import { Notice, type NoticeData } from "@/components/ui/Notice";
 import { type ExchangeName } from "@/lib/account";
-import { BOT_EXCHANGES, exchangeRequiresPassphrase } from "@/lib/bot-exchanges";
+import { BOT_EXCHANGES, exchangeEnabled, exchangeRequiresPassphrase } from "@/lib/bot-exchanges";
 
 type Connections = Partial<Record<ExchangeName, { permissions: string }>>;
 
@@ -93,6 +93,10 @@ export function ExchangeSection({
           const connection = connections[exchange];
           const isAdding = adding === exchange;
           const needsPassphrase = exchangeRequiresPassphrase(exchange);
+          // The registry predicate, NOT the raw `connectable` flag: a venue whose
+          // execution path isn't wired must not offer a form, or the key validates and
+          // then every signal is silently dropped.
+          const canConnect = exchangeEnabled(exchange);
           return (
             <li
               key={exchange}
@@ -102,7 +106,7 @@ export function ExchangeSection({
                 <div className="flex flex-col gap-1">
                   <span className="text-sm font-semibold text-white">{venue.label}</span>
                   <span className="text-xs text-muted">
-                    {!venue.enabled
+                    {!canConnect
                       ? "Coming soon"
                       : connection
                         ? `API Connected • ${connection.permissions}`
@@ -110,7 +114,7 @@ export function ExchangeSection({
                   </span>
                 </div>
 
-                {!venue.enabled ? (
+                {!canConnect ? (
                   <span className="rounded-full border border-line px-3 py-1 text-xs text-muted">
                     Coming soon
                   </span>
@@ -125,7 +129,7 @@ export function ExchangeSection({
                 )}
               </div>
 
-              {isAdding && venue.enabled && !connection && (
+              {isAdding && canConnect && !connection && (
                 <div className="flex flex-col gap-3 rounded-xl border border-line bg-background p-4">
                   <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                     <input
@@ -154,7 +158,7 @@ export function ExchangeSection({
                   <p className="text-xs text-muted">
                     Use a <span className="text-white">trade-only</span> key with{" "}
                     <span className="text-white">withdrawal disabled</span>.
-                    {needsPassphrase && " Bitget also requires the passphrase you set on the key."}{" "}
+                    {needsPassphrase && ` ${venue.label} also requires the passphrase you set on the key.`}{" "}
                     {egressIp ? (
                       <>
                         For extra safety, restrict the key to our fixed IP{" "}

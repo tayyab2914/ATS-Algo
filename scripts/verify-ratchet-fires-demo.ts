@@ -72,7 +72,7 @@ async function main() {
   const mark = async () => Number((await ex.fetchTicker(symbol)).last);
 
   try {
-    const signal = await prisma.signal.create({ data: { botId: bot.id, action: "ENTER", side: "LONG", ts: String(stamp), raw: {} }, select: { id: true } });
+    const signal = await prisma.signal.create({ data: { botId: bot.id, action: "ENTER", side: "LONG", dedupeKey: String(stamp), raw: {} }, select: { id: true } });
     const priceHint = await mark();
     const opened = await openPosition({
       signalId: signal.id, userBotId: userBot.id, userId: user.id, exchange: "Bitget", creds, symbol, market,

@@ -1,9 +1,19 @@
 /**
  * The public IP every exchange call leaves from.
  *
- * Members can IP-whitelist their exchange API key (Bitget: optional but
- * recommended; Bybit: keys WITHOUT a whitelist auto-expire after 90 days), and
- * that only works if every call we make comes from ONE address they can type in.
+ * Members can IP-whitelist their exchange API key, and that only works if every
+ * call we make comes from ONE address they can type in.
+ *
+ *   Bitget — optional but recommended.
+ *   Bybit  — NOT optional in practice. Its own key form says "If an API key isn't
+ *            linked to an IP address, it will expire in 3 months", and the key list
+ *            says IP-bound keys "are permanently valid". (Bybit states MONTHS, never
+ *            a day count — an earlier note here said "90 days", which Bybit's UI
+ *            does not say anywhere. Verified against the live form 2026-08-03.)
+ *            So without a published egress IP, every Bybit member's bot silently
+ *            stops trading a quarter after they connect it, and the symptom looks
+ *            exactly like a revoked key. Publishing STATIC_EGRESS_IP is therefore a
+ *            PREREQUISITE for offering Bybit, not a hardening step.
  * On EC2 that address is the instance's Elastic IP: connections go out direct
  * and the exchange sees the EIP. Nothing to tunnel, nothing to route — which is
  * why there is no proxy plumbing here.

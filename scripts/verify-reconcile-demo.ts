@@ -58,7 +58,7 @@ async function main() {
   });
 
   const mkSignal = async (ts: number, price: number) =>
-    prisma.signal.create({ data: { botId: bot.id, action: "ENTER", side: "LONG", ts: String(ts), raw: { price } }, select: { id: true } });
+    prisma.signal.create({ data: { botId: bot.id, action: "ENTER", side: "LONG", dedupeKey: String(ts), raw: { price } }, select: { id: true } });
 
   const { symbol, market, requested } = await resolveSymbol("Bitget", "BTC", true);
   const ex = await exchangeClient("Bitget", creds, [market]);

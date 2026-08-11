@@ -70,7 +70,7 @@ async function main() {
     console.log(`  symbol=${symbol} priceHint=${priceHint} profile=safe lev=${profile.lev} sl=${profile.sl}% be=${profile.be}`);
 
     console.log("\n── an unplaceable ladder is refused BEFORE any position opens ──");
-    const tinySignal = await prisma.signal.create({ data: { botId: bot.id, action: "ENTER", side: "LONG", ts: `${stamp}-tiny`, raw: {} }, select: { id: true } });
+    const tinySignal = await prisma.signal.create({ data: { botId: bot.id, action: "ENTER", side: "LONG", dedupeKey: `${stamp}-tiny`, raw: {} }, select: { id: true } });
     let laddErr = "";
     try {
       await openPosition({
@@ -86,7 +86,7 @@ async function main() {
     check("no position row written", (await prisma.position.count({ where: { userBotId: userBot.id } })) === 0);
 
     console.log("\n── open: market entry + attached stop + full 6-rung ladder ──");
-    const signal = await prisma.signal.create({ data: { botId: bot.id, action: "ENTER", side: "LONG", ts: stamp, raw: {} }, select: { id: true } });
+    const signal = await prisma.signal.create({ data: { botId: bot.id, action: "ENTER", side: "LONG", dedupeKey: stamp, raw: {} }, select: { id: true } });
     const t0 = performance.now();
     const opened = await openPosition({
       signalId: signal.id, userBotId: userBot.id, userId: user.id, exchange: "Bitget", creds, symbol, market,

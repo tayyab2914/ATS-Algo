@@ -1,6 +1,6 @@
 import "server-only";
 import type { MarketInterface } from "ccxt";
-import { getMarket } from "./client";
+import { demoFallbackFor, getMarket } from "./client";
 
 /**
  * Turning a bot's ticker into a venue symbol, using only cached market
@@ -8,10 +8,16 @@ import { getMarket } from "./client";
  */
 
 /**
- * Bitget's paper venue lists ~51 perps against ~1950 live, so a bot whose
- * instrument isn't there can't be exercised on demo at all. We substitute this
- * one, and **only in sandbox** — live never trades an instrument the bot didn't
- * ask for.
+ * Bitget's paper venue lists ~51 perps against ~1950 live, so a bot whose instrument isn't
+ * there can't be exercised on demo at all. We substitute a stand-in, and **only in sandbox** —
+ * live never trades an instrument the bot didn't ask for.
+ *
+ * PER-VENUE, and deliberately absent for some: Bybit's demo lists the full set (proven on the
+ * venue — 679 demo against 679 live, zero missing), so it substitutes NOTHING and paper trades
+ * run the bot's real instrument. The stand-in is a workaround for a thin paper venue, not a
+ * feature; a venue that doesn't need it must not get it.
+ *
+ * @see demoFallbackFor in ./client — the per-venue source of truth.
  */
 export const DEMO_FALLBACK_SYMBOL = "BTC/USDT:USDT";
 
@@ -40,10 +46,11 @@ export type ResolvedSymbol = {
 };
 
 /**
- * Resolve a bot's ticker to a tradable swap market. Throws `NO_TICKER` when the
- * bot has none and `NO_MARKET:<symbol>` when the venue doesn't list it — except
- * in sandbox, where {@link DEMO_FALLBACK_SYMBOL} stands in so the pipeline can
- * still be exercised.
+ * Resolve a bot's ticker to a tradable swap market. Throws `NO_TICKER` when the bot has none
+ * and `NO_MARKET:<symbol>` when the venue doesn't list it — except in sandbox on a venue whose
+ * paper engine is thin, where its stand-in symbol takes over so the pipeline can still be
+ * exercised. A venue whose demo lists everything never substitutes, and raises `NO_MARKET`
+ * exactly as live would.
  */
 export async function resolveSymbol(exchange: string, ticker: string | null, sandbox: boolean): Promise<ResolvedSymbol> {
   const wanted = toSwapSymbol(ticker);
@@ -52,10 +59,11 @@ export async function resolveSymbol(exchange: string, ticker: string | null, san
   const market = await getMarket(exchange, wanted, sandbox);
   if (market?.swap) return { symbol: wanted, market, requested: wanted, substituted: false };
 
-  if (sandbox) {
-    const fallback = await getMarket(exchange, DEMO_FALLBACK_SYMBOL, true);
+  const fallbackSymbol = sandbox ? demoFallbackFor(exchange) : null;
+  if (fallbackSymbol) {
+    const fallback = await getMarket(exchange, fallbackSymbol, true);
     if (fallback?.swap) {
-      return { symbol: DEMO_FALLBACK_SYMBOL, market: fallback, requested: wanted, substituted: true };
+      return { symbol: fallbackSymbol, market: fallback, requested: wanted, substituted: true };
     }
   }
 

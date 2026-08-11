@@ -142,8 +142,23 @@ slow exchange round-trip would otherwise stack passes on top of each other.
 
 ccxt is imported once at server boot by `instrumentation.ts`, so no member's
 order pays the ~679 ms import and nothing needs pinging to stay warm. Boot logs
-`[boot] ccxt warm via bitget-only in NNNms` — if you don't see that line, the
-warm failed and the first trade will be slow (it still works).
+one entry per WIRED venue:
+
+```
+[boot] ccxt warm via bitget:bitget-only bybit:bybit-only in NNNms
+```
+
+Each `venue:source` pair should read `<id>-only` — that is the deep single-file
+import. `full-ccxt` means the deep module was pruned from the build, which still
+works but boots slower. A venue missing from the line failed to import and its
+first trade will pay for it (it still works). No line at all means the warm
+failed entirely.
+
+Boot also measures the clock offset for any venue that signs with a timestamp.
+**Bybit does, and it is strict**: more than ~1 s of drift AHEAD of their server
+makes every signed call fail with `10002`, which surfaces to members as an
+invalid API key. Bitget is unaffected. So if Bybit trading stops while Bitget
+keeps working, suspect NTP on this box before suspecting the keys.
 
 ## 6. nginx + TLS
 

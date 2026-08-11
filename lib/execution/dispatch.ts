@@ -1,6 +1,6 @@
 import "server-only";
 import { profileFor, snapshotProfile, type BotConfig } from "@/lib/bot-config";
-import { chosenExchange } from "@/lib/bot-exchanges";
+import { chosenExchange, exchangeEnabled } from "@/lib/bot-exchanges";
 import { prisma } from "@/lib/db";
 import { getDecryptedConnection } from "@/lib/exchanges/connection";
 import { botReadiness } from "@/lib/my-bots/readiness";
@@ -41,19 +41,45 @@ export type FanOutResult = {
 
 /**
  * How many of a bot's active deployments would trade REAL money right now: armed
- * for live *and* holding a non-sandbox key. Zero means a dispatch can only ever
- * touch paper. The admin panel confirms against this number before firing.
+ * for live *and* holding a non-sandbox key ON THE VENUE THAT DEPLOYMENT RUNS ON.
+ * Zero means a dispatch can only ever touch paper. The admin panel confirms against
+ * this number before firing.
+ *
+ * Matching each deployment to its OWN venue is the whole point, and it used to count
+ * `exchange: "Bitget"` connections instead. That was wrong in both directions the
+ * moment a second venue existed: a member armed on Bybit while holding an unused live
+ * Bitget key counted (harmless over-warning), and — the dangerous one — a member armed
+ * on Bybit *with a live Bybit key* did NOT count. Their real money was invisible to the
+ * gate, so the confirmation dialog never opened and the orders went out unacknowledged.
+ *
+ * Counts DEPLOYMENTS, not connections: one member holding live keys on two venues is
+ * still one deployment's worth of money on this bot.
+ *
+ * Deliberately does NOT filter on {@link exchangeEnabled} — an unwired venue cannot
+ * actually place an order, so filtering would be more *accurate*, but the two failure
+ * directions are not symmetric. Over-warning costs an admin one extra click; under-
+ * warning fires real money with no dialog. This counts armed intent, and errs loud.
  */
 export async function liveDeploymentCount(botId: string): Promise<number> {
   const armed = await prisma.userBot.findMany({
     where: { botId, active: true, liveArmed: true },
-    select: { userId: true },
+    select: { userId: true, exchangeSource: true, bot: { select: { exchanges: true } } },
   });
   if (armed.length === 0) return 0;
 
-  return prisma.exchangeConnection.count({
-    where: { userId: { in: armed.map((a) => a.userId) }, exchange: "Bitget", sandbox: false },
+  // One read for every live key these members hold, then match each deployment to the
+  // venue it would actually trade on. A member with no live key anywhere contributes
+  // nothing, whatever they have armed.
+  const liveKeys = await prisma.exchangeConnection.findMany({
+    where: { userId: { in: armed.map((a) => a.userId) }, sandbox: false },
+    select: { userId: true, exchange: true },
   });
+  const hasLiveKey = new Set(liveKeys.map((key) => `${key.userId}:${key.exchange}`));
+
+  return armed.filter((deployment) => {
+    const chosen = chosenExchange(deployment.exchangeSource, deployment.bot.exchanges);
+    return chosen !== null && hasLiveKey.has(`${deployment.userId}:${chosen}`);
+  }).length;
 }
 
 function loadSignal(signalId: string) {
@@ -108,26 +134,49 @@ export async function fanOut(signalId: string): Promise<FanOutResult> {
 }
 
 
+/**
+ * The entry price for one deployment, resolved lazily and PER VENUE.
+ *
+ * The alert carries no price. TradingView substitutes nothing into an indicator's webhook
+ * body — not even its own `{{close}}` — so asking for one only ever produced a literal
+ * placeholder and a rejected entry. We read the venue's last trade instead. A payload that
+ * DOES carry a usable number still wins for everyone: the admin panel sends one, and a
+ * deliberate admin dispatch means one price.
+ *
+ * Why this is a closure rather than a value computed up front: the venue's last trade is
+ * VENUE-SPECIFIC — different book, different index, different tick — so it cannot be hoisted
+ * out of the per-deployment loop the way it used to be. A bot allowed on two venues priced
+ * every member off Bitget's book, and that number is what sizes the position.
+ *
+ * Memoised per (venue, symbol) because `inChunks` runs CHUNK deployments concurrently:
+ * without it, one signal to N members on one venue pays N public-price round-trips instead
+ * of one. Caches the PROMISE so concurrent callers share a single in-flight probe, and drops
+ * a rejected one so a transient failure isn't cached for the rest of the fan-out.
+ */
+function priceHintFor(payload: number | undefined) {
+  const inflight = new Map<string, Promise<number>>();
+  return (exchange: string, symbol: string): Promise<number> => {
+    if (payload !== undefined) return Promise.resolve(payload);
+    const key = `${exchange}:${symbol}`;
+    let pending = inflight.get(key);
+    if (!pending) {
+      pending = publicPrice(exchange, symbol).catch((error) => {
+        inflight.delete(key);
+        throw error;
+      });
+      inflight.set(key, pending);
+    }
+    return pending;
+  };
+}
+
 async function enterAll(signal: LoadedSignal, result: FanOutResult): Promise<FanOutResult> {
   const side = (signal.side ?? "LONG") as Side;
 
-  // The alert carries no price. TradingView substitutes nothing into an
-  // indicator's webhook body — not even its own `{{close}}` — so asking for one
-  // only ever produced a literal placeholder and a rejected entry. Read the
-  // venue's last trade instead, exactly as an admin dispatch does. A payload that
-  // does carry a usable number still wins: the admin panel sends one.
   const raw = signal.raw as { price?: string | number } | null;
-  let priceHint = Number(raw?.price);
-  if (!Number.isFinite(priceHint) || priceHint <= 0) {
-    try {
-      const { symbol } = await resolveSymbol("Bitget", signal.bot.ticker, false);
-      priceHint = await publicPrice("Bitget", symbol);
-      await logExec({ level: "info", event: "fanout.pricedFromVenue", botId: signal.botId, signalId: signal.id, detail: { symbol, price: priceHint } });
-    } catch (error) {
-      await logExec({ level: "error", event: "fanout.noPrice", botId: signal.botId, signalId: signal.id, detail: errorDetail(error) });
-      return result;
-    }
-  }
+  const payloadPrice = Number(raw?.price);
+  const payloadPriceUsed = Number.isFinite(payloadPrice) && payloadPrice > 0;
+  const resolvePrice = priceHintFor(payloadPriceUsed ? payloadPrice : undefined);
 
   const botConfig = signal.bot.config as unknown as BotConfig;
   const profile = profileFor(botConfig, signal.bot.riskClass);
@@ -155,7 +204,9 @@ async function enterAll(signal: LoadedSignal, result: FanOutResult): Promise<Fan
 
     const chosen = chosenExchange(deployment.exchangeSource, signal.bot.exchanges);
     if (!chosen) return skip("noExchangeChosen");
-    if (chosen !== "Bitget") return skip("exchangeNotWired");
+    // Reads the venue registry, never a venue name — the connect surface reads the same
+    // predicate, so a member can never hold a validated key for a venue this drops.
+    if (!exchangeEnabled(chosen)) return skip("exchangeNotWired");
 
     const connection = await getDecryptedConnection(deployment.userId, chosen);
     if (!connection) return skip("noConnection");
@@ -211,7 +262,27 @@ async function enterAll(signal: LoadedSignal, result: FanOutResult): Promise<Fan
     if (substituted) {
       await logExec({
         level: "warn", event: "symbol.substituted", botId: signal.botId, userBotId: deployment.id, signalId: signal.id,
-        detail: { requested, traded: symbol, note: "instrument absent from the paper venue" },
+        detail: { requested, traded: symbol, exchange: chosen, note: "instrument absent from the paper venue" },
+      });
+    }
+
+    // Priced against THIS deployment's venue, and against the symbol actually being traded
+    // (which a paper substitution may have changed). A failure is now isolated to this
+    // member instead of aborting the whole fan-out — the same principle as a bad API key.
+    let priceHint: number;
+    try {
+      priceHint = await resolvePrice(chosen, symbol);
+    } catch (error) {
+      await logExec({
+        level: "error", event: "fanout.noPrice", botId: signal.botId, userBotId: deployment.id,
+        signalId: signal.id, detail: { exchange: chosen, symbol, ...errorDetail(error) },
+      });
+      return skip("noPrice");
+    }
+    if (!payloadPriceUsed) {
+      await logExec({
+        level: "info", event: "fanout.pricedFromVenue", botId: signal.botId, userBotId: deployment.id,
+        signalId: signal.id, detail: { exchange: chosen, symbol, price: priceHint },
       });
     }
 

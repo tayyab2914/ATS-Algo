@@ -1,6 +1,6 @@
 import "server-only";
 import { prisma } from "@/lib/db";
-import { chosenExchange } from "@/lib/bot-exchanges";
+import { chosenExchange, exchangeEnabled } from "@/lib/bot-exchanges";
 import { getDecryptedConnection } from "@/lib/exchanges/connection";
 import { exchangeClient, livePosition, refreshMarketCache, type TradeCreds } from "./client";
 import { errorDetail, logExec } from "./log";
@@ -94,7 +94,20 @@ export async function reconcileOpenPositions(limit = DEFAULT_LIMIT): Promise<Rec
   return result;
 }
 
-export type OrphanResult = { checked: number; orphans: number };
+export type OrphanResult = {
+  /** Deployments actually READ from a venue. */
+  checked: number;
+  orphans: number;
+  /**
+   * Deployments NOT read, by reason — so a pass that swept almost nothing can never be
+   * mistaken for an all-clear. This used to be invisible: the venue gate returned before
+   * `checked` was incremented, so a fleet of unwired deployments reported
+   * `{ checked: 0, orphans: 0 }` — indistinguishable from a clean sweep. On an unwired
+   * venue an orphan is money committed with nothing managing it, and it was not even
+   * being logged.
+   */
+  skipped: { noExchangeChosen: number; venueNotWired: number; noConnection: number };
+};
 
 /**
  * Find positions the exchange holds that we have no row for.
@@ -118,14 +131,31 @@ export async function scanForOrphans(limit = 50): Promise<OrphanResult> {
     select: { id: true, userId: true, exchangeSource: true, bot: { select: { ticker: true, exchanges: true } } },
   });
 
-  const result: OrphanResult = { checked: 0, orphans: 0 };
+  const result: OrphanResult = {
+    checked: 0,
+    orphans: 0,
+    skipped: { noExchangeChosen: 0, venueNotWired: 0, noConnection: 0 },
+  };
 
   const outcomes = await inChunks(deployments, CHUNK, async (deployment) => {
     const chosen = chosenExchange(deployment.exchangeSource, deployment.bot.exchanges);
-    if (!chosen || chosen !== "Bitget") return false;
+    if (!chosen) {
+      result.skipped.noExchangeChosen++;
+      return false;
+    }
+    // The venue registry, not a venue name — the same predicate the executor and the
+    // connect surface read, so this can never disagree with what a member was allowed
+    // to configure.
+    if (!exchangeEnabled(chosen)) {
+      result.skipped.venueNotWired++;
+      return false;
+    }
 
     const connection = await getDecryptedConnection(deployment.userId, chosen);
-    if (!connection) return false;
+    if (!connection) {
+      result.skipped.noConnection++;
+      return false;
+    }
 
     const creds: TradeCreds = {
       apiKey: connection.apiKey, apiSecret: connection.apiSecret,
@@ -139,13 +169,26 @@ export async function scanForOrphans(limit = 50): Promise<OrphanResult> {
 
     await logExec({
       level: "warn", event: "reconcile.orphan", userBotId: deployment.id,
-      detail: { symbol, contracts, sandbox: creds.sandbox, note: "position on the venue with no row; not closed automatically" },
+      detail: { symbol, contracts, sandbox: creds.sandbox, exchange: chosen, note: "position on the venue with no row; not closed automatically" },
     });
     return true;
   });
 
   for (const outcome of outcomes) {
     if (outcome.status === "fulfilled" && outcome.value) result.orphans++;
+  }
+
+  // A deployment on an unwired venue is a BLIND SPOT, not a clean result: it may hold a
+  // position nothing is managing, and this scan cannot see it. Say so, once per pass.
+  if (result.skipped.venueNotWired > 0) {
+    await logExec({
+      level: "warn",
+      event: "reconcile.orphanScanBlindSpot",
+      detail: {
+        venueNotWired: result.skipped.venueNotWired,
+        note: "active deployments on a venue the engine cannot read; orphans there are undetectable",
+      },
+    });
   }
   return result;
 }

@@ -3,6 +3,7 @@ import type { NextRequest } from "next/server";
 import { z } from "zod";
 import { fail, ok, zodFail } from "@/lib/api";
 import { getSession } from "@/lib/auth/session";
+import { exchangeEnabled } from "@/lib/bot-exchanges";
 import { prisma } from "@/lib/db";
 import { publicPrice } from "@/lib/execution/client";
 import { fanOut, killSwitchOn, liveDeploymentCount } from "@/lib/execution/dispatch";
@@ -48,7 +49,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
   if (killSwitchOn()) return fail("SIGNALS_KILL_SWITCH is on — every signal is a no-op.", 409);
 
-  const bot = await prisma.bot.findUnique({ where: { id: botId }, select: { id: true, status: true, ticker: true } });
+  const bot = await prisma.bot.findUnique({ where: { id: botId }, select: { id: true, status: true, ticker: true, exchanges: true } });
   if (!bot) return fail("Bot not found", 404);
   if (bot.status !== "ACTIVE") return fail("This bot is disabled — enable it before dispatching signals.", 409);
 
@@ -70,12 +71,20 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   }
 
   try {
-    // Price the entry the way a TradingView alert would: the venue's last trade.
-    // Read from the public feed, so no member's key is touched to build the signal.
+    // Price the entry the way a TradingView alert would: the venue's last trade. Read from
+    // the public feed, so no member's key is touched to build the signal.
+    //
+    // Priced against a venue THIS BOT is actually allowed on, not a hardcoded one. For a bot
+    // allowed on several, the first wired one wins and that single number goes to every
+    // member — deliberate: an admin dispatch is one considered action, and the ladder prices
+    // off each member's real fill regardless. A member on another venue is sized from a price
+    // a few basis points off, which is the same tolerance a TradingView bar-close carries.
     let price: number | undefined;
     if (action === "enter") {
-      const { symbol } = await resolveSymbol("Bitget", bot.ticker, false);
-      price = await publicPrice("Bitget", symbol);
+      const venue = bot.exchanges.find((name) => exchangeEnabled(name));
+      if (!venue) return fail("This bot has no exchange that is wired for trading yet.", 409);
+      const { symbol } = await resolveSymbol(venue, bot.ticker, false);
+      price = await publicPrice(venue, symbol);
     }
 
     const raw = { action, side, price, source: "admin", admin: session.sub };

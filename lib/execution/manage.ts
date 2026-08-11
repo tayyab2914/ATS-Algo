@@ -11,10 +11,11 @@ import {
 } from "@/lib/bot-config";
 import { prisma } from "@/lib/db";
 import { getDecryptedConnection } from "@/lib/exchanges/connection";
-import { exchangeClient, getMarket, livePosition, type TradeCreds } from "./client";
+import { adapterFor, exchangeClient, getMarket, livePosition, type TradeCreds } from "./client";
 import { clientOrderId, closeAll, ratchetStop } from "./execute";
 import { logExec } from "./log";
 import type { Side } from "./pricing";
+import { stopStrategyFor } from "./stops";
 
 /**
  * Reconciling one open position against the venue.
@@ -72,8 +73,19 @@ type Trades = Awaited<ReturnType<Exchange["fetchMyTrades"]>>;
  * `sell` proceeds minus `buy` cost, minus fees — correct for a long (bought then
  * sold) and for a short (sold then bought) alike. Also reports how much of the
  * position each side actually closed, so incomplete attribution can be detected.
+ *
+ * `contractSize` is the base amount ONE contract represents, and it is NOT optional on a
+ * contract-denominated venue. ccxt reports `trade.amount` in the venue's own units, so on BloFin
+ * a fill of "18.4" is 18.4 contracts = 0.0184 BTC, not 18.4 BTC. Without the factor a $300 trade
+ * booked a PnL of 1,196,097 — a thousand times over — and that number is what `realizedBalance`
+ * compounds from and sizes the next trade with. Caught by
+ * scripts/verify-ratchet-fires-blofin-demo.ts.
+ *
+ * `closedAmount` deliberately stays in VENUE units, because the only thing compared against it is
+ * `position.size`, which is stored in venue units too. Converting one and not the other is how
+ * this class of bug happens in the first place.
  */
-function summarizeTrades(trades: Trades, exitSide: "buy" | "sell", ourOrderIds: Set<string> | null) {
+function summarizeTrades(trades: Trades, exitSide: "buy" | "sell", ourOrderIds: Set<string> | null, contractSize: number) {
   let pnl = 0;
   let closedAmount = 0;
   let matched = 0;
@@ -81,7 +93,7 @@ function summarizeTrades(trades: Trades, exitSide: "buy" | "sell", ourOrderIds: 
     if (ourOrderIds && (!trade.order || !ourOrderIds.has(trade.order))) continue;
     matched++;
     const amount = Number(trade.amount);
-    pnl += (trade.side === "sell" ? 1 : -1) * Number(trade.price) * amount;
+    pnl += (trade.side === "sell" ? 1 : -1) * Number(trade.price) * amount * contractSize;
     pnl -= Number(trade.fee?.cost ?? 0);
     if (trade.side === exitSide) closedAmount += amount;
   }
@@ -106,12 +118,13 @@ async function realizedPnlFor(
   ourOrderIds: Set<string>,
   positionSize: number,
   positionId: string,
+  contractSize: number,
 ): Promise<number> {
-  const matched = summarizeTrades(trades, exitSide, ourOrderIds);
+  const matched = summarizeTrades(trades, exitSide, ourOrderIds, contractSize);
   const accountedFor = Math.abs(matched.closedAmount - positionSize) <= positionSize * 0.01;
   if (accountedFor) return matched.pnl;
 
-  const all = summarizeTrades(trades, exitSide, null);
+  const all = summarizeTrades(trades, exitSide, null, contractSize);
   await logExec({
     level: "warn",
     event: "pnl.attributionIncomplete",
@@ -127,7 +140,7 @@ async function realizedPnlFor(
   return all.pnl;
 }
 
-async function clientFor(position: LoadedPosition): Promise<{ ex: Exchange; creds: TradeCreds } | null> {
+async function clientFor(position: LoadedPosition): Promise<{ ex: Exchange; creds: TradeCreds; contractSize: number } | null> {
   const connection = await getDecryptedConnection(position.userId, position.exchange);
   if (!connection) return null;
   const creds: TradeCreds = {
@@ -138,7 +151,12 @@ async function clientFor(position: LoadedPosition): Promise<{ ex: Exchange; cred
   };
   const market = await getMarket(position.exchange, position.symbol, creds.sandbox);
   if (!market) return null;
-  return { ex: await exchangeClient(position.exchange, creds, [market]), creds };
+  return {
+    ex: await exchangeClient(position.exchange, creds, [market]),
+    creds,
+    // 1 on Bitget and Bybit, so every calculation downstream is unchanged there.
+    contractSize: Number(market.contractSize ?? 1) || 1,
+  };
 }
 
 /**
@@ -165,7 +183,7 @@ export async function syncPosition(positionId: string, opts: { flatten?: boolean
     await logExec({ level: "warn", event: "sync.noConnection", positionId, userBotId: position.userBotId });
     return { positionId, rungsFilled: position.tpRungsFilled, stopMoved: false, closed: false, realizedPnl: null };
   }
-  const { ex } = client;
+  const { ex, contractSize } = client;
 
   let closeOrderId: string | null = null;
   if (opts.flatten) {
@@ -190,13 +208,18 @@ export async function syncPosition(positionId: string, opts: { flatten?: boolean
     }
   }
 
-  // Which of our orders are still resting? Anything of ours that is gone has either
-  // filled or been cancelled, and only the venue can say which. The `profit_loss` pass is
-  // required: a live movable pos_loss (and the preset) is in neither {} nor {trigger:true},
-  // so without it a live pos_loss STOP row reads as "not resting" and falls to fetchOrder by
-  // bare id below — which cannot address a TPSL and can mis-mark the row while it is still live.
+  // Which of our orders are still resting? Anything of ours that is gone has either filled or
+  // been cancelled, and only the venue can say which.
+  //
+  // The stop passes are REQUIRED, not belt-and-braces: on Bitget a live movable pos_loss (and
+  // the preset) appears in neither {} nor {trigger:true}, so without its own pass a live STOP
+  // row reads as "not resting" and falls through to `fetchOrder` by bare id below — which
+  // cannot address a TPSL and can mis-mark the row while the stop is still protecting the
+  // position. The strategy contributes whatever its venue needs, so a venue whose stops live on
+  // the ordinary order list (Bybit) does not get a meaningless extra round-trip.
+  const strategy = stopStrategyFor(position.exchange);
   const restingIds = new Set<string>();
-  for (const params of [{}, { trigger: true }, { planType: "profit_loss" }]) {
+  for (const params of [{}, { trigger: true }]) {
     try {
       for (const order of await ex.fetchOpenOrders(position.symbol, undefined, undefined, params)) {
         if (order.id) restingIds.add(order.id);
@@ -205,12 +228,21 @@ export async function syncPosition(positionId: string, opts: { flatten?: boolean
       /* nothing of this kind */
     }
   }
+  for (const stop of [...(await strategy.findWorking(ex, position.symbol)), await strategy.findBackstop(ex, position.symbol)]) {
+    if (stop?.id) restingIds.add(stop.id);
+  }
 
   for (const order of position.orders) {
     const terminal = order.state === "FILLED" || order.state === "CANCELED" || order.state === "REJECTED";
     if (terminal || !order.exchangeOrderId || restingIds.has(order.exchangeOrderId)) continue;
     try {
-      const live = await ex.fetchOrder(order.exchangeOrderId, position.symbol);
+      // A STOP row that is still live was already added to `restingIds` above, so anything
+      // reaching here has left the book. Note for a venue whose stops need their own filter to
+      // be addressable (Bybit): a FIRED stop may not be found by a bare id, which throws and is
+      // swallowed below — the row simply stays OPEN until settle marks it, so it self-heals
+      // rather than mis-marking a live stop.
+      const live = await adapterFor(position.exchange).readFill(ex, position.symbol, order.exchangeOrderId);
+      if (!live) continue; // unreadable this pass; settle will mark it, or the next sync retries
       const filled = Number(live.filled ?? 0);
       const state = live.status === "closed" && filled > 0 ? "FILLED" : live.status === "canceled" ? "CANCELED" : order.state;
       await prisma.order.update({
@@ -322,20 +354,17 @@ export async function syncPosition(positionId: string, opts: { flatten?: boolean
         /* nothing of this kind was resting */
       }
     }
-    // A movable pos_loss survives the sweeps above (profit_loss family). At settle the position
-    // is already flat, so it SHOULD have died with the position — but if the position closed by
-    // some other cause (TP-full, the preset, an under-filled close) while a ratchet pos_loss
-    // still rested, it is orphaned and would bind the next same-symbol trade. There is no
-    // reconcile backstop for orphan ORDERS (scanForOrphans keys on contracts), so cancel by id.
-    try {
-      for (const order of await ex.fetchOpenOrders(position.symbol, undefined, undefined, { planType: "profit_loss" })) {
-        if ((order.info as { planType?: string } | undefined)?.planType === "pos_loss" && order.id) {
-          await ex.cancelOrder(order.id, position.symbol, { planType: "pos_loss", trigger: true }).catch(() => {});
-        }
-      }
-    } catch {
-      /* nothing resting */
-    }
+    // A movable stop can survive the sweeps above (on Bitget it lives in its own plan family).
+    // At settle the position is already flat, so it SHOULD have died with the position — but if
+    // the position closed by some other cause (TP-full, the backstop, an under-filled close)
+    // while a ratchet stop still rested, it is orphaned and would bind the next same-symbol
+    // trade. There is no reconcile backstop for orphan ORDERS (scanForOrphans keys on
+    // contracts), so clear it explicitly.
+    //
+    // Safe here even on a venue where this also removes the backstop: `contracts === 0` was
+    // just confirmed above, so there is no position left to leave unprotected. That is NOT true
+    // in `closeAll`, which is why the ordering there is venue-dependent.
+    await strategy.clearWorking(ex, position.symbol).catch(() => {});
   }
 
   const ourOrderIds = new Set(
@@ -363,8 +392,11 @@ export async function syncPosition(positionId: string, opts: { flatten?: boolean
     for (const t of trades) {
       if (t.side !== exitSide || !t.order || ourOrderIds.has(t.order) || stopPlanIds.has(t.order)) continue;
       try {
-        const child = await ex.fetchOrder(t.order, position.symbol);
-        const childOid = child.clientOrderId ?? (child.info as { clientOid?: string } | undefined)?.clientOid;
+        // Through the adapter, NOT `ex.fetchOrder` directly: BloFin has no `fetchOrder` at all, so
+        // a direct call threw there and this whole attribution path was dead on that venue —
+        // every BloFin stop-out fell through to the widened PnL calculation.
+        const child = await adapterFor(position.exchange).readFill(ex, position.symbol, t.order);
+        const childOid = child?.clientOrderId;
         if (childOid && stopPlanIds.has(childOid)) {
           ourOrderIds.add(t.order);
           stoppedOut = true;
@@ -374,7 +406,7 @@ export async function syncPosition(positionId: string, opts: { flatten?: boolean
       }
     }
 
-    realizedPnl = await realizedPnlFor(trades, exitSide, ourOrderIds, position.size, position.id);
+    realizedPnl = await realizedPnlFor(trades, exitSide, ourOrderIds, position.size, position.id, contractSize);
 
     // Belt-and-braces: some venues DO carry the plan-order id directly on the fill.
     if (!stoppedOut) {

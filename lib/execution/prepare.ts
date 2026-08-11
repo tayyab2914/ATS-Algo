@@ -1,10 +1,10 @@
 import "server-only";
 import type { MarketInterface } from "ccxt";
 import { profileFor, type BotConfig } from "@/lib/bot-config";
-import { chosenExchange } from "@/lib/bot-exchanges";
+import { chosenExchange, exchangeEnabled } from "@/lib/bot-exchanges";
 import { prisma } from "@/lib/db";
 import { getDecryptedConnection } from "@/lib/exchanges/connection";
-import { exchangeClient, type TradeCreds } from "./client";
+import { adapterFor, exchangeClient, type TradeCreds } from "./client";
 import { resolveSymbol } from "./symbol";
 
 /**
@@ -31,6 +31,12 @@ import { resolveSymbol } from "./symbol";
  * This value is part of {@link preparedKey}, so changing it re-prepares every
  * account. Bitget rejects a margin-mode change under an open position (45117), so
  * a cutover must run against a flat book.
+ *
+ * WHAT DIFFERS PER VENUE is not the value but who applies it — see
+ * `VenueAdapter.marginModePolicy`. Where the setting is per-symbol we set it; where it is
+ * ACCOUNT-WIDE (Bybit UTA) we only CHECK it and refuse to trade otherwise, because changing it
+ * would reconfigure margin across positions that are none of our business. Either way a bot
+ * never trades on cross — which is the invariant this constant exists to guarantee.
  */
 export const MARGIN_MODE = "isolated";
 
@@ -53,6 +59,62 @@ export const preparedKey = (
   leverage: number,
   marginMode: string = MARGIN_MODE,
 ): string => `${exchange}|${sandbox ? "demo" : "live"}|${symbol}|${leverage}|${marginMode}`;
+
+/**
+ * Venue answers that mean "already in the state you asked for".
+ *
+ * Deliberately a narrow allow-list of codes and their exact messages, never a broad match on
+ * words like "margin" or "leverage" — those appear in genuine failures too (Bitget 45117
+ * "currently holding positions", insufficient-margin rejections), and swallowing one of those
+ * would let a trade proceed on settings that were never applied.
+ *
+ *   110025  Bybit  position mode is not modified
+ *   110026  Bybit  margin mode is already set  (ccxt: MarginModeAlreadySet)
+ *   110043  Bybit  leverage not modified       (ccxt maps this to BadRequest, not NoChange)
+ *   30084   Bybit  isolated not modified
+ *   34036   Bybit  leverage not modified (legacy)
+ */
+const NO_CHANGE = /\b(110025|110026|110043|30084|34036)\b|not modified|already set|no need to (modify|change)/i;
+
+/** Await a prep call, tolerating only "already at that value". Anything else propagates. */
+async function noChangeOk(call: Promise<unknown>): Promise<void> {
+  try {
+    await call;
+  } catch (error) {
+    const raw = error instanceof Error ? error.message : String(error);
+    if (!NO_CHANGE.test(raw)) throw error;
+  }
+}
+
+/**
+ * Refuse to trade unless the member's account is ALREADY on isolated margin.
+ *
+ * For venues where the setting is account-wide, so changing it for them would silently
+ * reconfigure margin across their whole account. The bot declining to start is the lesser
+ * harm — and it is recoverable by the member in one click, whereas a surprise margin change
+ * under an unrelated open position is not.
+ *
+ * FAILS CLOSED on live: an unreadable mode is treated as a refusal, not as permission. The
+ * whole point is that a bot must never trade on cross, and "we could not check" is not
+ * evidence that it isn't.
+ *
+ * The one exception is the PAPER engine, where the endpoint genuinely does not exist (Bybit's
+ * demo has no /v5/account/info) and there is no real collateral to protect. Skipping the check
+ * there is what keeps the demo suites runnable.
+ */
+async function assertMarginMode(
+  ex: Awaited<ReturnType<typeof exchangeClient>>,
+  adapter: ReturnType<typeof adapterFor>,
+  input: PrepareInput,
+): Promise<void> {
+  const mode = adapter.readMarginMode ? await adapter.readMarginMode(ex, input.symbol).catch(() => null) : null;
+
+  if (mode === null) {
+    if (input.creds.sandbox) return; // paper: unknowable, and nothing at stake
+    throw new Error("MARGIN_MODE_UNKNOWN");
+  }
+  if (mode !== MARGIN_MODE) throw new Error(`MARGIN_MODE_NOT_ISOLATED:${mode}`);
+}
 
 export type PrepareInput = {
   userBotId: string;
@@ -87,10 +149,37 @@ export async function ensurePrepared(input: PrepareInput): Promise<boolean> {
     /* already one-way, or an open position/order pins it there */
   }
 
-  // These two are safe to repeat with the same value; they will reject while a
-  // position is open, which is correct — leverage must not change under a trade.
-  await ex.setMarginMode(MARGIN_MODE, input.symbol);
-  await ex.setLeverage(input.leverage, input.symbol);
+  // ── Margin mode ───────────────────────────────────────────────────────────
+  // ISOLATED always, but HOW we get there depends on the venue's blast radius.
+  //
+  //   "set"   — per-symbol (Bitget). Applying it touches only this bot's instrument, so we do
+  //             it for the member.
+  //   "check" — ACCOUNT-WIDE (Bybit UTA: the call carries no symbol). Setting it would
+  //             reconfigure margin for every position the member holds, including trades we
+  //             have nothing to do with. We refuse to reach that far into someone's account:
+  //             we READ the mode and decline to trade if it is not isolated. The member changes
+  //             it themselves, deliberately, or their bot does not start.
+  const adapter = adapterFor(input.exchange);
+  if (adapter.marginModePolicy === "set") {
+    await noChangeOk(ex.setMarginMode(MARGIN_MODE, input.symbol));
+  } else {
+    await assertMarginMode(ex, adapter, input);
+  }
+
+  // Leverage is per-symbol everywhere we support, so it is always set.
+  //
+  // Repeating it with the SAME value is not uniformly a no-op: Bybit answers "not modified"
+  // with an ERROR (110043) rather than success, so an idempotent prep pass — which is exactly
+  // what this is, since the fingerprint can miss — would throw on a correctly-configured
+  // account and block the trade. Bitget accepts a repeat silently.
+  //
+  // So swallow ONLY "already at the requested value". That is safe on any venue by definition:
+  // the error states the account is in the state we asked for. Every other failure still
+  // propagates, which is essential — Bitget's 45117 (and Bybit's own guards) mean leverage was
+  // changed under an open position, and that must NOT be silently ignored.
+  // `leverageParams` is not decoration: on BloFin, omitting `marginMode` makes ccxt default to
+  // CROSS and set the leverage on the wrong book, silently, while the account trades isolated.
+  await noChangeOk(ex.setLeverage(input.leverage, input.symbol, adapter.leverageParams(MARGIN_MODE)));
 
   await prisma.userBot.update({ where: { id: input.userBotId }, data: { exchangePrepared: key } });
   return true;
@@ -132,7 +221,7 @@ export async function prepareDeployment(userId: string, botId: string): Promise<
 
   const chosen = chosenExchange(deployment.exchangeSource, deployment.bot.exchanges);
   if (!chosen) return { prepared: false, reason: "no execution exchange chosen" };
-  if (chosen !== "Bitget") return { prepared: false, reason: `${chosen} is not wired for trading yet` };
+  if (!exchangeEnabled(chosen)) return { prepared: false, reason: `${chosen} is not wired for trading yet` };
 
   const connection = await getDecryptedConnection(userId, chosen);
   if (!connection) return { prepared: false, reason: `no ${chosen} connection` };

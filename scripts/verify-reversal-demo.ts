@@ -57,7 +57,7 @@ async function main() {
 
   const fire = async (side: "LONG" | "SHORT", ts: number) => {
     const price = Number((await ex.fetchTicker(symbol)).last);
-    const s = await prisma.signal.create({ data: { botId: bot.id, action: "ENTER", side, ts: String(ts), raw: { price } }, select: { id: true } });
+    const s = await prisma.signal.create({ data: { botId: bot.id, action: "ENTER", side, dedupeKey: String(ts), raw: { price } }, select: { id: true } });
     return fanOut(s.id);
   };
 

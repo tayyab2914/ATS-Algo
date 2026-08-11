@@ -15,9 +15,30 @@ export const slPrice = (entry: number, slPct: number, side: Side): number =>
 export const tpPrice = (entry: number, tpPct: number, side: Side): number =>
   side === "LONG" ? entry * (1 + tpPct / 100) : entry * (1 - tpPct / 100);
 
-/** Contracts controlled by `margin` of collateral at `lev` leverage. */
-export const sizeFromMargin = (margin: number, lev: number, price: number): number =>
-  (margin * lev) / price;
+/**
+ * Order size, in the units the VENUE counts, for `margin` of collateral at `lev` leverage.
+ *
+ * `contractSize` is the base amount ONE contract represents, straight off the ccxt market
+ * descriptor. It defaults to 1 because that is what Bitget and Bybit report for a linear perp —
+ * there, one "contract" IS one BTC, so base units and venue units coincide and this divisor
+ * vanishes.
+ *
+ * BloFin is the reason the parameter exists: it denominates in genuine contracts, and the size
+ * differs PER INSTRUMENT (BTC-USDT 0.001, ETH-USDT 0.01, SOL-USDT 1). Passing base units there
+ * would ask for a thousandth of the intended position on BTC. It happens to fail loudly rather
+ * than silently — the result lands under the venue's minimum and is rejected — but only by luck
+ * of the numbers, so the conversion belongs here rather than in a caller's head.
+ *
+ * Everything downstream (`rungSizes`, the minimum-amount checks, what goes on the wire) then
+ * works in one consistent unit: venue units. Only NOTIONAL needs converting back, which is why
+ * the cost checks multiply by `contractSize` again.
+ */
+export const sizeFromMargin = (margin: number, lev: number, price: number, contractSize = 1): number =>
+  (margin * lev) / price / (contractSize || 1);
+
+/** What `size` venue-units is worth in quote currency — the number a minimum-notional guards. */
+export const notionalOf = (size: number, price: number, contractSize = 1): number =>
+  size * (contractSize || 1) * price;
 
 /** The reduce-only order side that closes a position. */
 export const closingSide = (side: Side): "buy" | "sell" => (side === "LONG" ? "sell" : "buy");

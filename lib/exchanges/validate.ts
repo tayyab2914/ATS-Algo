@@ -1,5 +1,6 @@
 import type { Exchange } from "ccxt";
 import { ccxtIdFor, exchangeRequiresPassphrase } from "@/lib/bot-exchanges";
+import { adapterFor, clockOffsetFor } from "@/lib/execution/client";
 
 export type ValidateInput = { apiKey: string; apiSecret: string; passphrase?: string };
 
@@ -36,6 +37,26 @@ export async function validateExchangeKey(
   const Ctor = (ccxt as unknown as Record<string, ExchangeCtor | undefined>)[ccxtId];
   if (!Ctor) return { ok: false, status: 400, message: `Exchange not available: ${exchange}` };
 
+  // The venue's own connection facts — the SAME ones the executor uses. Sharing them is the
+  // point: validation must authenticate against exactly the host that will later place orders,
+  // or a key can validate here and fail there (or the reverse).
+  //
+  // A venue can be listed in BOT_EXCHANGES (so `ccxtIdFor` resolves) while having no adapter
+  // yet — that is the normal in-progress state. `adapterFor` THROWS for those, so it is caught
+  // and turned into the same typed result as every other rejection. The connect route already
+  // gates on `exchangeEnabled`, so this is a backstop rather than the primary check; it exists
+  // so a registry entry can never crash the route.
+  let adapter: ReturnType<typeof adapterFor>;
+  try {
+    adapter = adapterFor(exchange);
+  } catch {
+    return { ok: false, status: 400, message: `${exchange} isn't available for connection yet.` };
+  }
+  // A clock-sensitive venue needs its offset here too. Without it Bybit answers every signed
+  // call with 10002, ccxt raises InvalidNonce, and this function tells the member their key is
+  // invalid — which it is not.
+  const timeDifference = adapter.syncClock ? await clockOffsetFor(exchange) : 0;
+
   const build = (sandbox: boolean) => {
     // Validation leaves from the same address as trading — the instance's
     // Elastic IP — so a member who already whitelisted our published IP passes
@@ -46,9 +67,13 @@ export async function validateExchangeKey(
       password: creds.passphrase, // ccxt names the passphrase "password"
       timeout: 8000,
       enableRateLimit: true,
-      options: { defaultType: "swap" },
+      options: { ...adapter.options, ...(adapter.syncClock ? { timeDifference } : {}) },
     });
-    if (sandbox) ex.setSandboxMode(true);
+    // NOT `setSandboxMode` — that is the executor's mistake to avoid too. On Bybit it selects
+    // api-TESTNET, a separate exchange with its own registration and its own keys, while the
+    // demo engine is api-demo. A member's Bybit demo key would fail BOTH attempts and be
+    // reported as invalid. `paperMode` picks the right paper host per venue.
+    if (sandbox) adapter.paperMode(ex, true);
     return ex;
   };
 

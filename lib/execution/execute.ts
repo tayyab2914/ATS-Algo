@@ -4,14 +4,23 @@ import type { Exchange, MarketInterface } from "ccxt";
 import type { ProfileConfig, ProfileSnapshot } from "@/lib/bot-config";
 import { beRungIndex } from "@/lib/bot-config";
 import { prisma } from "@/lib/db";
-import { exchangeClient, livePosition, type TradeCreds } from "./client";
+import { adapterFor, exchangeClient, livePosition, venueOf, type TradeCreds } from "./client";
 import { logExec } from "./log";
-import { closingSide, rungSizes, sizeFromMargin, slPrice, tpPrice, tradeMargin, type Side, type SizingInput } from "./pricing";
+import { closingSide, notionalOf, rungSizes, sizeFromMargin, slPrice, tpPrice, tradeMargin, type Side, type SizingInput } from "./pricing";
 import { MARGIN_MODE, ensurePrepared } from "./prepare";
+import { stopStrategyFor } from "./stops";
 
 /**
- * Placing and managing one position on Bitget.
+ * Placing and managing one position, on any wired venue.
  *
+ * This file owns what is COMMON: sizing, the ladder, the ratchet's arithmetic and its
+ * monotonicity. Everything that differs per exchange lives behind two seams —
+ * `adapterFor()` in ./client for connection and order-shape facts, and `stopStrategyFor()` in
+ * ./stops for stop mechanics. Read ./stops before changing anything about stops: the two
+ * venues are not differently-spelled, they are structurally different, and the safety argument
+ * below is Bitget's alone.
+ *
+ * ── BITGET ────────────────────────────────────────────────────────────────────
  * Everything below was settled against Bitget's paper engine rather than assumed:
  *
  *  - `createOrders` accepts a batch of reduce-only limit orders — the whole
@@ -62,6 +71,25 @@ import { MARGIN_MODE, ensurePrepared } from "./prepare";
  * every one of them merely means the profit-lock does not happen, and the trade falls back
  * to the preset, never looser than the original `sl%`. The ratchet optimises; it cannot
  * endanger.
+ *
+ * ── BYBIT — the same guarantee, held up by something else ──────────────────────
+ * Do NOT carry the paragraph above across. It is true on Bitget *because* the preset and the
+ * working stop occupy two independent slots. Bybit has ONE: the entry-attached stop and the
+ * movable stop are the same `position.stopLoss` field under the same order id, so moving the
+ * stop OVERWRITES the backstop and clearing it leaves the position genuinely naked (both
+ * proven on the demo venue — see ./stops).
+ *
+ * So on Bybit the guarantee is a property of THIS CODE, not of the venue, and it rests on
+ * three rules the strategy enforces:
+ *
+ *   1. The ratchet OVERWRITES in place and never cancels, so there is no gap to be naked in.
+ *   2. Every stop write is READ BACK off the position, because a rejected write returns
+ *      success and silently changes nothing.
+ *   3. `clearWorking` runs at flatten and nowhere else, and `closeAll` market-closes BEFORE
+ *      sweeping, because a bare `cancelAllOrders` takes the backstop with it.
+ *
+ * Bybit does make one thing genuinely better: its stop is SIZELESS, so it tracks the position
+ * down as rungs fill instead of needing the venue to clamp an oversized order.
  */
 
 export type OrderKindName = "ENTRY" | "STOP" | "TP" | "CLOSE";
@@ -89,12 +117,17 @@ export type LadderRung = { rungIndex: number; size: number; price: number };
 export function planLadder(entryPrice: number, size: number, profile: ProfileConfig, side: Side, market: MarketInterface, round: (n: number) => number, roundPrice: (n: number) => number): LadderRung[] {
   const minAmount = Number(market.limits?.amount?.min ?? 0);
   const minCost = Number(market.limits?.cost?.min ?? 0);
+  // `size` and every rung are in VENUE units. On a contract-denominated venue those are not base
+  // units, so notional needs converting back before it can be compared to a minimum COST.
+  const contractSize = Number(market.contractSize ?? 1) || 1;
 
   const tooSmall = () => {
     const needed = Math.max(
-      ...profile.w.map((weight) => Math.max(minAmount / weight, minCost > 0 ? minCost / (weight * entryPrice) : 0)),
+      ...profile.w.map((weight) =>
+        Math.max(minAmount / weight, minCost > 0 ? minCost / (weight * contractSize * entryPrice) : 0),
+      ),
     );
-    return new Error(`LADDER_TOO_SMALL:${needed.toPrecision(4)}:${(needed * entryPrice).toFixed(2)}`);
+    return new Error(`LADDER_TOO_SMALL:${needed.toPrecision(4)}:${notionalOf(needed, entryPrice, contractSize).toFixed(2)}`);
   };
 
   // Check the UNROUNDED rungs first. `amountToPrecision` throws for anything below
@@ -103,7 +136,7 @@ export function planLadder(entryPrice: number, size: number, profile: ProfileCon
   for (let k = 0; k < profile.w.length; k++) {
     const raw = size * profile.w[k];
     const price = tpPrice(entryPrice, profile.tp[k], side);
-    if (raw < minAmount || (minCost > 0 && raw * price < minCost)) throw tooSmall();
+    if (raw < minAmount || (minCost > 0 && notionalOf(raw, price, contractSize) < minCost)) throw tooSmall();
   }
 
   const sizes = rungSizes(size, profile.w, round);
@@ -116,7 +149,7 @@ export function planLadder(entryPrice: number, size: number, profile: ProfileCon
   // And again after rounding: the final rung absorbs the remainder and could land
   // under the minimum even when its unrounded share cleared it.
   for (const rung of rungs) {
-    if (rung.size < minAmount || (minCost > 0 && rung.size * rung.price < minCost)) throw tooSmall();
+    if (rung.size < minAmount || (minCost > 0 && notionalOf(rung.size, rung.price, contractSize) < minCost)) throw tooSmall();
   }
   return rungs;
 }
@@ -186,10 +219,13 @@ export async function openPosition(input: OpenPositionInput): Promise<OpenPositi
   const margin = tradeMargin(input.sizing);
   const minAmount = Number(market.limits?.amount?.min ?? 0);
   const minCost = Number(market.limits?.cost?.min ?? 0);
+  // The base amount one contract represents. 1 on Bitget and Bybit, so everything below is
+  // unchanged there; genuinely per-instrument on BloFin (BTC 0.001, ETH 0.01, SOL 1).
+  const contractSize = Number(market.contractSize ?? 1) || 1;
 
   // Validate before rounding — `amountToPrecision` throws below one precision step.
-  const rawSize = sizeFromMargin(margin, profile.lev, input.priceHint);
-  if (!(rawSize > 0) || rawSize < minAmount || rawSize * input.priceHint < minCost) {
+  const rawSize = sizeFromMargin(margin, profile.lev, input.priceHint, contractSize);
+  if (!(rawSize > 0) || rawSize < minAmount || notionalOf(rawSize, input.priceHint, contractSize) < minCost) {
     throw new Error(`SIZE_TOO_SMALL:${rawSize.toPrecision(4)}:${minAmount}:${minCost}`);
   }
   const size = round(rawSize);
@@ -200,65 +236,76 @@ export async function openPosition(input: OpenPositionInput): Promise<OpenPositi
 
   const entrySide = side === "LONG" ? "buy" : "sell";
   const stopAtHint = roundPrice(slPrice(input.priceHint, profile.sl, side));
+  const adapter = adapterFor(exchange);
+  const strategy = stopStrategyFor(exchange);
 
-  // 1 — market entry, stop attached so the position is never naked.
+  // 1 — market entry, stop attached so the position is never naked. What the attached stop
+  // BECOMES differs by venue (Bitget: a sized, uncancellable loss_plan that clamps; Bybit: a
+  // sizeless whole-position attribute) — see lib/execution/stops.ts. Both are valid
+  // full-position backstops; only Bitget's survives the ratchet independently.
   const entry = await ex.createOrder(symbol, "market", entrySide, size, undefined, {
-    marginMode: MARGIN_MODE,
-    oneWayMode: true,
-    clientOid: clientOrderId(input.signalId, input.userBotId, "ENTRY"),
-    stopLoss: { triggerPrice: stopAtHint },
+    ...adapter.orderParams(MARGIN_MODE),
+    clientOrderId: clientOrderId(input.signalId, input.userBotId, "ENTRY"),
+    ...strategy.entryStopParams(stopAtHint),
   });
 
   // Without an id we cannot read the fill, cancel, or reconcile — and a position
   // may already be open. Fail loudly so the reconcile job adopts the orphan.
   if (!entry.id) throw new Error("ENTRY_NO_ORDER_ID");
 
-  // 2 — the true fill. Bitget's createOrder response carries only the id.
-  const filled = await ex.fetchOrder(entry.id, symbol);
-  const entryPrice = Number(filled.average ?? filled.price ?? input.priceHint);
-  const filledSize = Number(filled.filled ?? size);
+  // 2 — the true fill. `createOrder` returns only an id on EVERY venue we support, so this read
+  // always happens, on the latency-critical entry path. How it is done differs: Bitget and Bybit
+  // use `fetchOrder` (Bybit refusing it without `acknowledged: true`), while BloFin has no
+  // `fetchOrder` at all and reads the closed-order list instead. Hence the seam.
+  //
+  // A failed read is NOT fatal: fall back to the size we asked for and the signal's price hint.
+  // The position exists and its stop is live, so a slightly-off entry price is a worse ladder
+  // anchor, not a risk — and reconcile re-reads everything from the venue anyway.
+  const filled = await adapter.readFill(ex, symbol, entry.id);
+  const entryPrice = Number(filled?.average ?? filled?.price ?? input.priceHint);
+  const filledSize = Number(filled?.filled ?? size);
 
-  // 3 — the whole ladder in one call, priced off the real fill.
+  // 3 — the ladder, priced off the real fill. Chunked to the venue's batch ceiling: Bitget
+  // takes 50 legs in one call, Bybit only 10, and over-sending is not silently truncated.
   const rungs = planLadder(entryPrice, filledSize, profile, side, market, round, roundPrice);
   const exitSide = closingSide(side);
-  let placed: Awaited<ReturnType<Exchange["createOrders"]>> = [];
+  const placed: Awaited<ReturnType<Exchange["createOrders"]>> = [];
   let ladderError: string | null = null;
   try {
-    placed = await ex.createOrders(
-      rungs.map((rung) => ({
-        symbol,
-        type: "limit" as const,
-        side: exitSide,
-        amount: rung.size,
-        price: rung.price,
-        params: {
-          reduceOnly: true,
-          marginMode: MARGIN_MODE,
-          oneWayMode: true,
-          clientOid: clientOrderId(input.signalId, input.userBotId, "TP", rung.rungIndex),
-        },
-      })),
-    );
+    const requests = rungs.map((rung) => ({
+      symbol,
+      type: "limit" as const,
+      side: exitSide,
+      amount: rung.size,
+      price: rung.price,
+      params: {
+        reduceOnly: true,
+        ...adapter.orderParams(MARGIN_MODE),
+        clientOrderId: clientOrderId(input.signalId, input.userBotId, "TP", rung.rungIndex),
+      },
+    }));
+    for (let from = 0; from < requests.length; from += adapter.batchMax) {
+      placed.push(...(await ex.createOrders(requests.slice(from, from + adapter.batchMax))));
+    }
+    // A PER-LEG failure does not throw on every venue. Bybit returns top-level retCode 0 and
+    // reports bad legs inside the batch, which ccxt surfaces as an order with status
+    // "rejected" and NO id — so a try/catch alone would record a rejected rung as placed and
+    // the position would trade with a take-profit that does not exist. Inspect every leg.
+    const rejected = placed.filter((order) => !order.id || order.status === "rejected");
+    if (rejected.length > 0) {
+      ladderError = `LADDER_LEGS_REJECTED:${rejected.length}/${requests.length}`;
+    }
   } catch (error) {
     // The position exists and its stop is live; record the rungs as rejected and
     // let the reconcile job retry rather than throw away a real position.
     ladderError = error instanceof Error ? error.message : String(error);
   }
 
-  // 4 — the preset's id. It is not in the entry response and only lists under
-  // `planType: profit_loss`. Off the critical path, but needed later: if the
+  // 4 — the backstop's id. Never in the entry response on either venue, and found differently
+  // on each (Bitget filters the profit_loss family for a loss_plan; Bybit filters resting stop
+  // orders for stopOrderType StopLoss). Off the critical path, but needed later: if the
   // backstop ever fires, its fills must be attributable to this position.
-  let presetStopId: string | null = null;
-  try {
-    const presets = await ex.fetchOpenOrders(symbol, undefined, undefined, { planType: "profit_loss" });
-    // Find the loss_plan explicitly — NEVER `[0]`. This read is unambiguous now (only the
-    // preset exists pre-ratchet), but once a ratchet pos_loss coexists the family holds two
-    // orders in venue order, so `[0]` would be a trap for anyone copying this pattern.
-    presetStopId = presets.find((o) => (o.info as { planType?: string } | undefined)?.planType === "loss_plan")?.id
-      ?? presets[0]?.id ?? null;
-  } catch {
-    /* the reconcile job will find it */
-  }
+  const presetStopId = (await strategy.findBackstop(ex, symbol).catch(() => null))?.id ?? null;
 
   const position = await persistPosition({ input, entryPrice, filledSize, stopAtHint, entryOrderId: entry.id, presetStopId, rungs, placed, ladderError });
 
@@ -301,7 +348,9 @@ async function persistPosition(args: {
       leverage: input.profile.lev,
       entryPrice: args.entryPrice,
       size: args.filledSize,
-      marginUsed: (args.filledSize * args.entryPrice) / input.profile.lev,
+      // Notional / leverage. `filledSize` is in VENUE units, so a contract-denominated venue
+      // needs the contract size folded back in or the recorded margin is out by that factor.
+      marginUsed: notionalOf(args.filledSize, args.entryPrice, Number(input.market.contractSize ?? 1) || 1) / input.profile.lev,
       // The attached stop was priced off the signal hint, a few basis points from
       // the fill. `stopPrice` records where it belongs once the fill is known.
       initialStopPrice: args.stopAtHint,
@@ -442,73 +491,61 @@ export async function ratchetStop(input: {
   const farSide = side === "LONG" ? stopPrice < mark : stopPrice > mark;
   if (!farSide) return { moved: false, reason: "wrongSide" };
 
-  // CANCEL-FIRST. The movable stop is a pos_loss (position-level TPSL). A reduce-only plan
-  // stop is STARVED — the reduce-only TP ladder reserves ~100% of the position, so on trigger
-  // it fills 0 and is rejected; a pos_loss ignores those reservations and closes the whole
-  // position. We cancel the prior generation BEFORE placing the next so exactly ONE movable
-  // pos_loss ever rests, which sidesteps every coexistence case (add / replace-in-place /
-  // reject). The brief gap is backstopped by the uncancellable preset at `sl%` — never naked,
-  // only the profit-lock is deferred at most one sync. A pos_loss cancels ONLY with the
-  // planType, never bare {trigger:true}, and we filter strictly to pos_loss so the loss_plan
-  // PRESET can never enter the stale set and be swept.
+  // HOW the stop moves is a venue fact, delegated to ./stops, because the two venues need
+  // OPPOSITE approaches and picking the wrong one is unsafe rather than merely wrong:
+  //
+  //   Bitget (2 slots) — CANCEL-FIRST, so exactly one movable pos_loss ever rests, sidestepping
+  //     every coexistence case. The brief gap is covered by the uncancellable preset, so the
+  //     position is never naked; only the profit-lock is deferred at most one sync.
+  //   Bybit (1 slot) — OVERWRITE IN PLACE. Cancel-first here would remove the ONLY stop, and a
+  //     failed re-place would leave the position genuinely unprotected. A new trigger replaces
+  //     atomically, and the write is READ BACK off the position because a rejected write
+  //     returns success and silently changes nothing.
+  //
+  // The reduce-only `normal_plan` shape is used on NEITHER venue: the reduce-only TP ladder
+  // reserves ~100% of the position, so such a stop is STARVED — proven on Bitget's paper venue,
+  // where one filled 0.0001 of 0.0018 and died (scripts/verify-preset-demo.ts, section B).
+  //
   // A discriminator per generation. Bitget rejects a repeat (40786), which both dedupes a
-  // retried sync and lets us ADOPT an already-placed generation instead of throwing.
+  // retried sync and lets the strategy ADOPT an already-placed generation instead of throwing.
+  // Bybit drops the client id on its stop path entirely, so there idempotency comes from
+  // `stopStep` below plus the read-back — never from the venue.
   const oid = clientOrderId(position.entrySignalId, position.userBotId, "STOP", -1 - input.step);
+  const strategy = stopStrategyFor(position.exchange);
 
-  // Cancel every OLDER generation — but NEVER our own. If a prior attempt placed THIS
-  // generation on the venue and then crashed before recording it, cancelling it here and
-  // re-placing would burn its clientOid (40786) and then fail to re-find it (we just
-  // cancelled it), wedging the step. So adopt our own generation and cancel only the rest.
-  // Reuses the one enumeration; no extra round-trip.
-  const movable = await movablePosLossStops(ex, position.symbol);
-  const alreadyMine = movable.find((o) => o.clientOid === oid)?.id ?? null;
-  const canceled: string[] = [];
-  for (const staleStop of movable) {
-    if (staleStop.id === alreadyMine) continue;
-    try {
-      await ex.cancelOrder(staleStop.id, position.symbol, { planType: "pos_loss", trigger: true });
-      canceled.push(staleStop.id);
-    } catch {
-      /* already gone — it triggered, or the venue reaped it */
-    }
+  const outcome = await strategy.moveWorking(ex, {
+    symbol: position.symbol,
+    exitSide,
+    size,
+    stopPrice,
+    clientOid: oid,
+    marginMode: MARGIN_MODE,
+  });
+
+  if (!outcome.moved) {
+    // Both reasons leave the PREVIOUS stop exactly where it was, so neither can endanger the
+    // position. `wrongSideRace` means the mark crossed the trigger between our guard and the
+    // venue's check, which coincides with a favourable move. `notConfirmed` means the venue
+    // accepted the write and did nothing — only Bybit does that, and the read-back exists to
+    // catch it. A warn, because a silent no-op that went unnoticed would be a stale stop.
+    await logExec({
+      level: outcome.reason === "notConfirmed" ? "warn" : "info",
+      event: "stop.workingStopMissing",
+      positionId: position.id,
+      userBotId: position.userBotId,
+      detail: { step: input.step, reason: outcome.reason, exchange: position.exchange },
+    });
+    return { moved: false, reason: "wrongSide" };
   }
 
-  let stopOrderId: string;
-  if (alreadyMine) {
-    // A crashed prior attempt already placed this exact generation. The price is
-    // deterministic for a step (frozen entry × fixed distance), so it is the right stop.
-    stopOrderId = alreadyMine;
-  } else {
-    try {
-      // `stopLossPrice` mints a pos_loss. NOT `triggerPrice`+`reduceOnly` (starves); NOT the
-      // entry's `stopLoss.triggerPrice` (that is the uncancellable loss_plan preset).
-      const placed = await ex.createOrder(position.symbol, "market", exitSide, size, undefined, {
-        marginMode: MARGIN_MODE,
-        oneWayMode: true,
-        stopLossPrice: stopPrice,
-        clientOid: oid,
-      });
-      // createOrder for a TPSL may not return a usable id — resolve it by our clientOid.
-      stopOrderId = placed.id ?? (await posLossIdByClientOid(ex, position.symbol, oid)) ?? "";
-    } catch (error) {
-      const raw = error instanceof Error ? error.message : String(error);
-      // 40917: the mark ticked across the trigger between our guard and the venue's check. Any
-      // older generation is already cancelled, so only the preset remains — but this coincides
-      // with a favourable move (price ran away from the stop). Let the next sync retry.
-      if (/40917|stop price|mark price/i.test(raw)) {
-        await logExec({ level: "info", event: "stop.workingStopMissing", positionId: position.id, userBotId: position.userBotId, detail: { step: input.step, reason: "wrongSideRace" } });
-        return { moved: false, reason: "wrongSide" };
-      }
-      // 40786: raced with our own just-placed generation (it was not yet visible to the
-      // enumeration above). Adopt it.
-      if (/40786|duplicate/i.test(raw)) {
-        stopOrderId = (await posLossIdByClientOid(ex, position.symbol, oid)) ?? "";
-      } else {
-        throw error;
-      }
-    }
-  }
-  if (!stopOrderId) throw new Error("STOP_NO_ORDER_ID");
+  // A venue whose stop is a position ATTRIBUTE rather than an order can legitimately return no
+  // id (Bybit's mint does). Recorded as-is rather than failing the ratchet: the stop IS live —
+  // the read-back proved it — and the cost is that a stop-out attributes via the widened path
+  // instead of by id, which is a less specific label, never a wrong number. On a 2-slot venue
+  // an id is always returned, so a missing one there is a genuine fault.
+  const stopOrderId = outcome.orderId ?? "";
+  if (!stopOrderId && strategy.slots === 2) throw new Error("STOP_NO_ORDER_ID");
+  const canceled = outcome.canceled;
 
   // One row per generation, keyed by clientOid. Every generation keeps its own
   // exchangeOrderId (the pos_loss plan-order id) — `realizedPnlFor` and the stop-out
@@ -546,46 +583,10 @@ export async function ratchetStop(input: {
   return { moved: true, step: input.step, stopPrice, orderId: stopOrderId, canceled };
 }
 
-/**
- * The movable `pos_loss` stops only — the ones the ratchet places and moves. These live in
- * the `profit_loss` family ALONGSIDE the entry preset (a `loss_plan`), so we filter STRICTLY
- * on `planType === "pos_loss"`: the loss_plan preset is the uncancellable full-position
- * backstop and must NEVER enter the stale set, or a cancel would try to sweep the one stop
- * that guarantees the position is never naked. Never discriminate by size (the preset carries
- * the entry size; a pos_loss reports size 0) — only by planType.
- */
-async function movablePosLossStops(ex: Exchange, symbol: string): Promise<{ id: string; clientOid: string | undefined }[]> {
-  try {
-    const orders = await ex.fetchOpenOrders(symbol, undefined, undefined, { planType: "profit_loss" });
-    return orders
-      .filter((order) => Boolean(order.id) && (order.info as { planType?: string } | undefined)?.planType === "pos_loss")
-      .map((order) => ({
-        id: order.id as string,
-        clientOid: order.clientOrderId ?? (order.info as { clientOid?: string } | undefined)?.clientOid,
-      }));
-  } catch {
-    return [];
-  }
-}
-
-/**
- * Resolve a just-placed pos_loss's order id by the clientOid we sent — createOrder for a
- * TPSL can come back without a usable id, and once a pos_loss coexists with the preset in
- * the `profit_loss` family, `[0]` is a trap. Match on planType AND clientOid.
- */
-async function posLossIdByClientOid(ex: Exchange, symbol: string, clientOid: string): Promise<string | null> {
-  try {
-    const orders = await ex.fetchOpenOrders(symbol, undefined, undefined, { planType: "profit_loss" });
-    const mine = orders.find(
-      (order) =>
-        (order.info as { planType?: string } | undefined)?.planType === "pos_loss" &&
-        (order.clientOrderId === clientOid || (order.info as { clientOid?: string } | undefined)?.clientOid === clientOid),
-    );
-    return mine?.id ?? null;
-  } catch {
-    return null;
-  }
-}
+// `movablePosLossStops` and `posLossIdByClientOid` lived here. Both were Bitget plan-family
+// lookups and both now live in ./stops as `findWorking`, alongside Bybit's equivalent — because
+// the venues disagree on what a "movable stop" even is (Bitget: a separate pos_loss order in the
+// profit_loss family; Bybit: the same position attribute the entry's backstop occupies).
 
 /**
  * Flatten a position: cancel everything resting, then market-close what remains.
@@ -596,41 +597,58 @@ async function posLossIdByClientOid(ex: Exchange, symbol: string, clientOid: str
  * The uncancellable preset dies with the position.
  */
 export async function closeAll(ex: Exchange, symbol: string, clientOid?: string): Promise<{ flattened: boolean; contracts: number; closeOrderId: string | null }> {
-  for (const params of [{}, { trigger: true }]) {
-    try {
-      await ex.cancelAllOrders(symbol, params);
-    } catch {
-      /* 22001 "No order to cancel" — nothing of this kind was resting */
-    }
-  }
+  // Derived from the client, never passed in — see `venueOf`. Every existing caller keeps its
+  // `(ex, symbol)` shape, which is the point.
+  const exchange = venueOf(ex);
+  const adapter = adapterFor(exchange);
+  const strategy = stopStrategyFor(exchange);
 
-  // A movable pos_loss lives in the profit_loss family and SURVIVES both sweeps above. Cancel
-  // it by id BEFORE the market close: being position-level, a stray pos_loss can otherwise bind
-  // to a freshly-reversed same-symbol position and stop it out at a dead trigger. Leave the
-  // loss_plan preset (uncancellable, and it dies with the position anyway).
-  try {
-    for (const order of await ex.fetchOpenOrders(symbol, undefined, undefined, { planType: "profit_loss" })) {
-      if ((order.info as { planType?: string } | undefined)?.planType === "pos_loss" && order.id) {
-        await ex.cancelOrder(order.id, symbol, { planType: "pos_loss", trigger: true }).catch(() => {});
+  const sweepResting = async () => {
+    for (const params of [{}, { trigger: true }]) {
+      try {
+        await ex.cancelAllOrders(symbol, params);
+      } catch {
+        /* 22001 "No order to cancel" — nothing of this kind was resting */
       }
     }
-  } catch {
-    /* nothing resting */
-  }
+    // The movable stop survives both sweeps above on a venue where it lives in its own plan
+    // family. Remove it by id: being position-level, a stray one can otherwise bind to a
+    // freshly-reversed same-symbol position and stop it out at a dead trigger.
+    await strategy.clearWorking(ex, symbol).catch(() => {});
+  };
 
-  const open = await livePosition(ex, symbol);
-  const contracts = Number(open?.contracts ?? 0);
-  let closeOrderId: string | null = null;
-  if (contracts > 0 && open) {
+  const marketClose = async (): Promise<{ contracts: number; closeOrderId: string | null }> => {
+    const open = await livePosition(ex, symbol);
+    const contracts = Number(open?.contracts ?? 0);
+    if (!(contracts > 0) || !open) return { contracts: 0, closeOrderId: null };
     const order = await ex.createOrder(symbol, "market", open.side === "long" ? "sell" : "buy", contracts, undefined, {
-      marginMode: MARGIN_MODE,
-      oneWayMode: true,
+      ...adapter.orderParams(MARGIN_MODE),
       reduceOnly: true,
-      ...(clientOid ? { clientOid } : {}),
+      ...(clientOid ? { clientOrderId: clientOid } : {}),
     });
-    closeOrderId = order.id ?? null;
+    return { contracts, closeOrderId: order.id ?? null };
+  };
+
+  // ORDER MATTERS, and it is opposite per venue.
+  //
+  // On a venue where a bare `cancelAllOrders` also removes the entry's backstop (Bybit —
+  // proven: the stop went from 56571.8 to empty with 0.005 still open), sweeping first strips
+  // protection from a position that is still open. If the market close then failed — a network
+  // blip, a rejection — the position would sit naked with no stop AND no ladder. So there:
+  // CLOSE FIRST, then sweep whatever the close left behind.
+  //
+  // On a venue whose backstop is uncancellable (Bitget), sweeping first is correct and is the
+  // long-standing behaviour: it clears the reduce-only ladder so the market close is not
+  // fighting its own resting orders for the position.
+  let result: { contracts: number; closeOrderId: string | null };
+  if (strategy.bareSweepRemovesBackstop) {
+    result = await marketClose();
+    await sweepResting();
+  } else {
+    await sweepResting();
+    result = await marketClose();
   }
-  return { flattened: contracts > 0, contracts, closeOrderId };
+  return { flattened: result.contracts > 0, contracts: result.contracts, closeOrderId: result.closeOrderId };
 }
 
 /** Map internal and ccxt failures to something a member can act on. */
@@ -639,33 +657,72 @@ export function executionError(error: unknown): { message: string; status: numbe
 
   if (raw === "NO_TICKER") return { message: "This bot has no ticker to trade.", status: 400 };
   if (raw === "NO_CONNECTION") return { message: "Connect your exchange API key first.", status: 400 };
+  if (raw.startsWith("UNSUPPORTED_EXCHANGE:")) {
+    return { message: `${raw.slice("UNSUPPORTED_EXCHANGE:".length)} isn't wired for trading yet.`, status: 400 };
+  }
+  // Venue-neutral wording throughout: the same message is shown to a member on any exchange, so
+  // it must not name one. The venue's own minimums are already in the numbers.
   if (raw.startsWith("NO_MARKET:")) {
-    return { message: `No Bitget futures market for this bot (${raw.slice("NO_MARKET:".length)}).`, status: 400 };
+    return { message: `This bot's instrument (${raw.slice("NO_MARKET:".length)}) has no futures market on your exchange.`, status: 400 };
   }
   if (raw.startsWith("SIZE_TOO_SMALL:")) {
     const [, size, minAmount, minCost] = raw.split(":");
     return {
-      message: `Order size ${size} is below Bitget's minimum (min ${minAmount}, min ~${minCost} USDT notional). Raise capital per trade or leverage.`,
+      message: `Order size ${size} is below your exchange's minimum (min ${minAmount}${Number(minCost) > 0 ? `, min ~${minCost} USDT notional` : ""}). Raise capital per trade or leverage.`,
       status: 400,
     };
   }
   if (raw.startsWith("LADDER_TOO_SMALL:")) {
     const [, size, notional] = raw.split(":");
     return {
-      message: `Capital per trade is too small to place all take-profit rungs — each rung is a separate order and must clear Bitget's minimum. This bot needs a position of at least ${size} contracts (~${notional} USDT notional).`,
+      message: `Capital per trade is too small to place all take-profit rungs — each rung is a separate order and must clear your exchange's minimum on its own. This bot needs a position of at least ${size} contracts (~${notional} USDT notional).`,
       status: 400,
+    };
+  }
+  if (raw.startsWith("LADDER_LEGS_REJECTED:")) {
+    return {
+      message: `The exchange rejected some take-profit rungs (${raw.slice("LADDER_LEGS_REJECTED:".length)}). The position is open and its stop is live; the reconcile job will retry the ladder.`,
+      status: 502,
+    };
+  }
+  // The member's account is not on isolated margin, and on this venue the setting is
+  // account-wide — so we decline rather than changing it for them. Names the exact setting,
+  // because "margin mode" alone sends people hunting.
+  if (raw.startsWith("MARGIN_MODE_NOT_ISOLATED:")) {
+    const found = raw.slice("MARGIN_MODE_NOT_ISOLATED:".length);
+    return {
+      message: `Your exchange account is set to ${found} margin. This bot only runs on ISOLATED margin, and that setting applies to your whole account — so we won't change it for you. Switch it in your exchange's Margin Mode settings, then activate the bot again.`,
+      status: 409,
+    };
+  }
+  if (raw === "MARGIN_MODE_UNKNOWN") {
+    return {
+      message: "We couldn't confirm your account is on isolated margin, so the bot hasn't started. Check that your API key has read permission for account info, then try again.",
+      status: 409,
     };
   }
   if (raw === "ENTRY_NO_ORDER_ID") {
     return { message: "The exchange accepted the entry but returned no order id. Check your position before retrying.", status: 502 };
   }
-  if (/duplicate clientoid|40786/i.test(raw)) {
+  // Duplicate client order id. Bitget 40786; Bybit 110072 "OrderLinkedID is duplicate" (plus
+  // 110030 / 12141 / 170141 on other product lines).
+  if (/duplicate clientoid|orderlinkedid is duplicate|40786|110072|110030|170141/i.test(raw)) {
     return { message: "This signal was already executed.", status: 409 };
   }
-  // Raised when leverage or margin mode is changed under an open position — e.g.
-  // an admin edits the bot's risk class while a member is in a trade.
-  if (/45117|currently holding positions/i.test(raw)) {
+  // Leverage or margin mode changed under an open position — e.g. an admin edits the bot's risk
+  // class while a member is in a trade. Bitget 45117; Bybit 110024 (position mode), 110028 (open
+  // orders exist), 110036 (cross mode forbids a leverage change).
+  if (/45117|currently holding positions|110024|110028|110036|existing position/i.test(raw)) {
     return { message: "Leverage or margin mode can't change while a position is open. Close it, then retry.", status: 409 };
+  }
+  // Bybit rejects a stop whose trigger is already the wrong side of the mark.
+  if (/110092|110093|expect (rising|falling)/i.test(raw)) {
+    return { message: "The stop price is already past the market. Nothing was changed; the previous stop still applies.", status: 409 };
+  }
+  // Bybit signs with a timestamp; a drifted server clock fails every private call and looks
+  // exactly like a bad key. Worth naming, because the fix is NTP, not the API key.
+  if (/10002|recv_window|timestamp/i.test(raw)) {
+    return { message: "The exchange rejected our request timestamp (server clock drift). This is on our side — please retry shortly.", status: 502 };
   }
   if (/auth|signature|passphrase|apikey|api key|sign/i.test(raw)) {
     return { message: "Exchange key rejected (authentication). Re-connect the key.", status: 400 };
