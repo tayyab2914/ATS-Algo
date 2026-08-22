@@ -15,7 +15,7 @@ import crypto from "node:crypto";
 export const CURRENT_KEY_VERSION = 1;
 
 // Loaded lazily and cached so `next build` never throws when ENCRYPTION_KEY is
-// unset (mirrors the lazy Stripe client in lib/stripe.ts).
+// unset (the same lazy-client shape used elsewhere for optional secrets).
 let cachedKey: Buffer | null = null;
 
 function encryptionKey(): Buffer {

@@ -76,7 +76,14 @@ export function guestTrialFrom(expiresAt: Date | null, now: number = Date.now())
 export function guestTrialLabel(trial: GuestTrial): string {
   if (trial.expired) return "Trial expired";
   if (trial.daysLeft > 1) return `${trial.daysLeft} days left`;
-  if (trial.hoursLeft > 1) return `${trial.hoursLeft} hours left`;
-  if (trial.hoursLeft === 1) return "1 hour left";
+  // Derive the hour figure from `msLeft` rather than reading `hoursLeft`.
+  // `hoursLeft` is Math.ceil'd, so it is 1 with sixty seconds to go — the banner
+  // would promise "1 hour left" at the exact moment the countdown matters most,
+  // and the sub-hour branch below could never be reached at all (ceil never
+  // returns 0 while any time remains). Flooring tells the truth and can only ever
+  // under-promise.
+  const hours = Math.floor(trial.msLeft / (60 * 60 * 1000));
+  if (hours > 1) return `${hours} hours left`;
+  if (hours === 1) return "1 hour left";
   return "Less than an hour left";
 }

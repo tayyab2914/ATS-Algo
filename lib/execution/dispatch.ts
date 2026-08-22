@@ -1,5 +1,6 @@
 import "server-only";
 import { profileFor, snapshotProfile, type BotConfig } from "@/lib/bot-config";
+import { isSubscriptionActive } from "@/lib/billing";
 import { chosenExchange, exchangeEnabled } from "@/lib/bot-exchanges";
 import { prisma } from "@/lib/db";
 import { getDecryptedConnection } from "@/lib/exchanges/connection";
@@ -193,6 +194,10 @@ async function enterAll(signal: LoadedSignal, result: FanOutResult): Promise<Fan
     select: {
       id: true, userId: true, exchangeSource: true, exchangePrepared: true, liveArmed: true,
       allocationType: true, capitalPerTrade: true, allocatedCapital: true, compounding: true, realizedBalance: true,
+      // Entitlement, fetched here rather than per-deployment: `user` is already a
+      // relation on UserBot, so this rides along on the query the fan-out was
+      // making anyway and costs the money path no extra round-trip.
+      user: { select: { role: true, subscription: { select: { currentPeriodEnd: true } } } },
     },
   });
 
@@ -201,6 +206,21 @@ async function enterAll(signal: LoadedSignal, result: FanOutResult): Promise<Fan
       await logExec({ level: "info", event: `fanout.skip.${reason}`, botId: signal.botId, userBotId: deployment.id, signalId: signal.id });
       return { userBotId: deployment.id, reason };
     };
+
+    // ── Entitlement ──────────────────────────────────────────────────────────
+    // A grant EXPIRES by the clock and nothing runs at that instant — no cron
+    // rewrites the row, and the member never makes a request we could gate. So if
+    // this were not checked here, a lapsed member's tabs would all lock while
+    // their bots quietly kept opening real positions forever. An explicit admin
+    // revoke disarms them (see /api/admin/members), but expiry alone cannot.
+    //
+    // Uses the same `isSubscriptionActive` every page gate uses, so the money
+    // path and the UI can never disagree about who is entitled. Admins are
+    // entitled by role, exactly as in getPageAccess.
+    const owner = deployment.user;
+    if (owner.role !== "ADMIN" && !isSubscriptionActive(owner.subscription)) {
+      return skip("notEntitled");
+    }
 
     const chosen = chosenExchange(deployment.exchangeSource, signal.bot.exchanges);
     if (!chosen) return skip("noExchangeChosen");

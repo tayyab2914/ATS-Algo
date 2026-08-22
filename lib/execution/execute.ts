@@ -265,14 +265,18 @@ export async function openPosition(input: OpenPositionInput): Promise<OpenPositi
   const entryPrice = Number(filled?.average ?? filled?.price ?? input.priceHint);
   const filledSize = Number(filled?.filled ?? size);
 
-  // 3 — the ladder, priced off the real fill. Chunked to the venue's batch ceiling: Bitget
-  // takes 50 legs in one call, Bybit only 10, and over-sending is not silently truncated.
+  // 3 — the ladder, priced off the real fill. Chunked to the venue's batch ceiling — Bitget
+  // takes 50 legs in one call, Bybit 10 and BingX only 5 — and over-sending is not silently
+  // truncated: ccxt throws above the cap.
   const rungs = planLadder(entryPrice, filledSize, profile, side, market, round, roundPrice);
   const exitSide = closingSide(side);
-  const placed: Awaited<ReturnType<Exchange["createOrders"]>> = [];
+  const rungOids = rungs.map((rung) => clientOrderId(input.signalId, input.userBotId, "TP", rung.rungIndex));
+  // Venue order id per rung, by INDEX — not a flat list. A batch can fail halfway on some
+  // venues, so "the nth response" and "the nth rung" stop lining up exactly when it matters.
+  const placedIds: (string | null)[] = rungs.map(() => null);
   let ladderError: string | null = null;
   try {
-    const requests = rungs.map((rung) => ({
+    const requests = rungs.map((rung, i) => ({
       symbol,
       type: "limit" as const,
       side: exitSide,
@@ -281,24 +285,70 @@ export async function openPosition(input: OpenPositionInput): Promise<OpenPositi
       params: {
         reduceOnly: true,
         ...adapter.orderParams(MARGIN_MODE),
-        clientOrderId: clientOrderId(input.signalId, input.userBotId, "TP", rung.rungIndex),
+        clientOrderId: rungOids[i],
       },
     }));
     for (let from = 0; from < requests.length; from += adapter.batchMax) {
-      placed.push(...(await ex.createOrders(requests.slice(from, from + adapter.batchMax))));
+      const batch = await ex.createOrders(requests.slice(from, from + adapter.batchMax));
+      batch.forEach((order, k) => {
+        if (order?.id && order.status !== "rejected") placedIds[from + k] = order.id;
+      });
     }
     // A PER-LEG failure does not throw on every venue. Bybit returns top-level retCode 0 and
     // reports bad legs inside the batch, which ccxt surfaces as an order with status
     // "rejected" and NO id — so a try/catch alone would record a rejected rung as placed and
     // the position would trade with a take-profit that does not exist. Inspect every leg.
-    const rejected = placed.filter((order) => !order.id || order.status === "rejected");
-    if (rejected.length > 0) {
-      ladderError = `LADDER_LEGS_REJECTED:${rejected.length}/${requests.length}`;
-    }
+    const missing = placedIds.filter((id) => !id).length;
+    if (missing > 0) ladderError = `LADDER_LEGS_REJECTED:${missing}/${requests.length}`;
   } catch (error) {
-    // The position exists and its stop is live; record the rungs as rejected and
-    // let the reconcile job retry rather than throw away a real position.
+    // The position exists and its stop is live; record what actually landed and let the
+    // reconcile job retry the rest, rather than throwing away a real position.
     ladderError = error instanceof Error ? error.message : String(error);
+  }
+
+  // RECOVERY RE-READ — because a failed batch is not necessarily an empty one.
+  //
+  // Three different shapes across four venues, and BingX's is the dangerous one: it THROWS and
+  // still places the legs that were fine (proven — a 3-leg batch with one bad leg threw 101481
+  // and left 2 orders resting). Trusting the throw would persist every rung as REJECTED while
+  // real reduce-only orders sit on the book: orphans the database denies exist, which the
+  // reconcile job would then try to re-place under the same deterministic client ids — ids the
+  // venue has already burned, so the retry can never succeed either.
+  //
+  // Matching resting orders back by clientOrderId is what makes that recoverable, and it is
+  // exactly what the deterministic ids are for. Costs one read, only on the failure path, and is
+  // a harmless no-op where the batch really was atomic.
+  if (ladderError) {
+    const live = await ex.fetchOpenOrders(symbol).catch(() => []);
+    const byOid = new Map<string, string>();
+    for (const order of live) {
+      const rawOrder = (order.info ?? {}) as { clientOrderID?: string; clientOid?: string; clientOrderId?: string };
+      const cid = order.clientOrderId ?? rawOrder.clientOrderID ?? rawOrder.clientOrderId ?? rawOrder.clientOid;
+      if (cid && order.id) byOid.set(String(cid), order.id);
+    }
+    rungOids.forEach((oid, i) => {
+      if (!placedIds[i]) placedIds[i] = byOid.get(oid) ?? null;
+    });
+    const stillMissing = placedIds.filter((id) => !id).length;
+    // Every leg turned out to be live after all — the throw described the batch, not the book.
+    ladderError = stillMissing === 0 ? null : `LADDER_LEGS_REJECTED:${stillMissing}/${rungs.length}`;
+    if (ladderError) {
+      // A partially-placed ladder is not fatal — the position is open and its backstop is live —
+      // but it must not be SILENT. The per-rung REJECTED rows record which legs are missing; this
+      // records that it happened at all, with the venue's own words, so a recurring cause
+      // (a min-notional floor, a burned client id) is diagnosable rather than inferred from
+      // scattered rows. logExec swallows its own write failures, so it cannot break the entry.
+      await logExec({
+        level: "warn",
+        event: "ladder.partiallyPlaced",
+        userBotId: input.userBotId,
+        signalId: input.signalId,
+        detail: {
+          exchange, symbol, placed: rungs.length - stillMissing, of: rungs.length,
+          missingRungs: placedIds.map((id, i) => (id ? null : i)).filter((i) => i !== null),
+        },
+      });
+    }
   }
 
   // 4 — the backstop's id. Never in the entry response on either venue, and found differently
@@ -307,7 +357,7 @@ export async function openPosition(input: OpenPositionInput): Promise<OpenPositi
   // backstop ever fires, its fills must be attributable to this position.
   const presetStopId = (await strategy.findBackstop(ex, symbol).catch(() => null))?.id ?? null;
 
-  const position = await persistPosition({ input, entryPrice, filledSize, stopAtHint, entryOrderId: entry.id, presetStopId, rungs, placed, ladderError });
+  const position = await persistPosition({ input, entryPrice, filledSize, stopAtHint, entryOrderId: entry.id, presetStopId, rungs, placedIds, rungOids });
 
   return {
     positionId: position.id,
@@ -317,7 +367,9 @@ export async function openPosition(input: OpenPositionInput): Promise<OpenPositi
     entryPrice,
     stopPrice: stopAtHint,
     rungs,
-    rungsPlaced: placed.length,
+    // What is actually resting on the venue, not how many responses came back — those differ
+    // whenever a batch fails partway.
+    rungsPlaced: placedIds.filter((id) => id).length,
     substituted: input.substituted,
   };
 }
@@ -330,10 +382,11 @@ async function persistPosition(args: {
   entryOrderId: string;
   presetStopId: string | null;
   rungs: LadderRung[];
-  placed: { id?: string }[];
-  ladderError: string | null;
+  /** Venue order id per rung, by index. Null where the rung is not resting on the venue. */
+  placedIds: (string | null)[];
+  rungOids: string[];
 }) {
-  const { input, rungs, placed } = args;
+  const { input, rungs, placedIds, rungOids } = args;
   const exitSide = closingSide(input.side);
 
   return prisma.position.create({
@@ -387,9 +440,13 @@ async function persistPosition(args: {
           },
           ...rungs.map((rung, i) => ({
             kind: "TP" as const,
-            state: (args.ladderError ? "REJECTED" : "OPEN") as "REJECTED" | "OPEN",
-            exchangeOrderId: placed[i]?.id ?? null,
-            clientOrderId: clientOrderId(input.signalId, input.userBotId, "TP", rung.rungIndex),
+            // PER RUNG, not per batch. A partial failure leaves some legs genuinely resting, and
+            // marking those REJECTED because a sibling failed would hide live reduce-only orders
+            // from every later read — the ladder-fill accounting, the flatten sweep and the
+            // orphan scan all work off these rows.
+            state: (placedIds[i] ? "OPEN" : "REJECTED") as "REJECTED" | "OPEN",
+            exchangeOrderId: placedIds[i],
+            clientOrderId: rungOids[i],
             rungIndex: rung.rungIndex,
             side: exitSide,
             price: rung.price,
@@ -523,11 +580,15 @@ export async function ratchetStop(input: {
   });
 
   if (!outcome.moved) {
-    // Both reasons leave the PREVIOUS stop exactly where it was, so neither can endanger the
+    // Every reason leaves the PREVIOUS stop exactly where it was, so none can endanger the
     // position. `wrongSideRace` means the mark crossed the trigger between our guard and the
     // venue's check, which coincides with a favourable move. `notConfirmed` means the venue
     // accepted the write and did nothing — only Bybit does that, and the read-back exists to
     // catch it. A warn, because a silent no-op that went unnoticed would be a stale stop.
+    // `positionGone` means the position closed underneath us (a rung completing it, or the
+    // backstop firing) between the fresh read above and the write — BingX rejects a stop with
+    // no position to attach to. Nothing is left to protect, so it is reported as `flat`, the
+    // same outcome the pre-read would have produced a moment earlier.
     await logExec({
       level: outcome.reason === "notConfirmed" ? "warn" : "info",
       event: "stop.workingStopMissing",
@@ -535,7 +596,7 @@ export async function ratchetStop(input: {
       userBotId: position.userBotId,
       detail: { step: input.step, reason: outcome.reason, exchange: position.exchange },
     });
-    return { moved: false, reason: "wrongSide" };
+    return { moved: false, reason: outcome.reason === "positionGone" ? "flat" : "wrongSide" };
   }
 
   // A venue whose stop is a position ATTRIBUTE rather than an order can legitimately return no
@@ -701,12 +762,29 @@ export function executionError(error: unknown): { message: string; status: numbe
       status: 409,
     };
   }
+  // The same refusal on the position-mode axis. Named separately because the fix is a DIFFERENT
+  // setting in a different part of the exchange's UI, and telling someone to check "margin mode"
+  // when the problem is hedge mode sends them to the wrong screen entirely.
+  if (raw === "POSITION_MODE_NOT_ONE_WAY") {
+    return {
+      message: "Your exchange account is in Hedge position mode. These bots reverse a position when the signal flips, which needs One-way mode — and that setting applies to your whole account, so we won't change it for you. Switch it in your exchange's Position Mode settings with no positions open, then activate the bot again.",
+      status: 409,
+    };
+  }
+  if (raw === "POSITION_MODE_UNKNOWN") {
+    return {
+      message: "We couldn't confirm your account is in One-way position mode, so the bot hasn't started. Check that your API key has read permission, then try again.",
+      status: 409,
+    };
+  }
   if (raw === "ENTRY_NO_ORDER_ID") {
     return { message: "The exchange accepted the entry but returned no order id. Check your position before retrying.", status: 502 };
   }
   // Duplicate client order id. Bitget 40786; Bybit 110072 "OrderLinkedID is duplicate" (plus
   // 110030 / 12141 / 170141 on other product lines).
-  if (/duplicate clientoid|orderlinkedid is duplicate|40786|110072|110030|170141/i.test(raw)) {
+  // BingX 101481 "clientOrderID cannot be repeated" — and note it stays burned after the order is
+  // CANCELLED, not just while it rests, which is what makes it a real idempotency guarantee here.
+  if (/duplicate clientoid|orderlinkedid is duplicate|clientorderid cannot be repeated|40786|110072|110030|170141|101481/i.test(raw)) {
     return { message: "This signal was already executed.", status: 409 };
   }
   // Leverage or margin mode changed under an open position — e.g. an admin edits the bot's risk
@@ -715,8 +793,9 @@ export function executionError(error: unknown): { message: string; status: numbe
   if (/45117|currently holding positions|110024|110028|110036|existing position/i.test(raw)) {
     return { message: "Leverage or margin mode can't change while a position is open. Close it, then retry.", status: 409 };
   }
-  // Bybit rejects a stop whose trigger is already the wrong side of the mark.
-  if (/110092|110093|expect (rising|falling)/i.test(raw)) {
+  // Bybit rejects a stop whose trigger is already the wrong side of the mark; BingX answers
+  // 110412 ("Stop Loss price should be greater/less than the current price") to the same thing.
+  if (/110092|110093|110412|expect (rising|falling)|stop loss price should be/i.test(raw)) {
     return { message: "The stop price is already past the market. Nothing was changed; the previous stop still applies.", status: 409 };
   }
   // Bybit signs with a timestamp; a drifted server clock fails every private call and looks
@@ -729,6 +808,20 @@ export function executionError(error: unknown): { message: string; status: numbe
   }
   if (/permission|forbidden/i.test(raw)) {
     return { message: "This key lacks futures trade permission (grant Futures Orders + Holdings).", status: 400 };
+  }
+  // BingX enforces a 2 USDT minimum notional PER ORDER and rejects with 110425. That is a sizing
+  // problem, not a funding one, so it must be matched before the balance catch-all below —
+  // otherwise a member is told to add funds when the fix is a bigger position or fewer rungs.
+  if (/110425|minimum nominal value/i.test(raw)) {
+    return {
+      message: "One or more orders were below your exchange's minimum order value (2 USDT each). Raise capital per trade, or use a bot with fewer take-profit rungs.",
+      status: 400,
+    };
+  }
+  // BingX 109420 — a stop or reduce-only order was sent with no position to attach to, because
+  // the position closed underneath it. Benign by the time anyone reads this.
+  if (/109420|position not exist/i.test(raw)) {
+    return { message: "The position was already closed, so there was nothing left to adjust.", status: 409 };
   }
   if (/insufficient|margin|balance/i.test(raw)) {
     return { message: "Insufficient balance in the futures wallet for this order.", status: 400 };

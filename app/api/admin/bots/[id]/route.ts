@@ -7,7 +7,7 @@ import { backtestBotColumns } from "@/lib/backtest/bot-record";
 import { profileLeverage, withLeverage, withRatchetPct } from "@/lib/bot-config";
 import { matchBotExchange } from "@/lib/bot-exchanges";
 import { prisma } from "@/lib/db";
-import { botConfigError, ladderGeometryError, leverageError, MAX_LEVERAGE, MIN_LEVERAGE } from "@/lib/validation";
+import { MAX_LEVERAGE, MIN_LEVERAGE, botConfigError, botExchangesSchema, ladderGeometryError, leverageError } from "@/lib/validation";
 
 /**
  * Update a bot: optionally swap in a new config JSON and/or signal CSV, retune the
@@ -25,7 +25,7 @@ const updateBotSchema = z.object({
   name: z.string().trim().min(1).max(80).optional(),
   category: z.string().trim().min(1).max(60).optional(),
   timeframe: z.string().trim().min(1).max(20).optional(),
-  exchanges: z.array(z.string()).max(3).optional(),
+  exchanges: botExchangesSchema.optional(),
   exchange: z.string().trim().max(40).optional(), // legacy single
   riskClass: z.enum(["LOW", "MEDIUM", "HIGH"]).optional(),
   config: z.any().optional(),

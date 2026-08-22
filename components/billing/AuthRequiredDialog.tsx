@@ -5,10 +5,10 @@ import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/Button";
 
 /**
- * Shown when a signed-out visitor tries to subscribe to a plan. Checkout needs
- * an account, so rather than silently bouncing them to the login page we explain
- * why and offer both paths — log in or create a free account. Dismissing keeps
- * them on the plans so they can keep browsing.
+ * Shown when a signed-out visitor tries to request access. A request has to
+ * attach to an account, so rather than silently bouncing them to the login page
+ * we explain why and offer both paths — log in or create a free account.
+ * Dismissing leaves them where they were.
  *
  * Mirrors {@link ConfirmDialog}'s mechanics: portalled to `document.body` so it
  * escapes the sidebar's stacking context, Escape/backdrop dismiss, and body
@@ -19,7 +19,6 @@ export function AuthRequiredDialog({
   onClose,
   loginHref,
   signupHref,
-  planLabel,
 }: {
   open: boolean;
   onClose: () => void;
@@ -27,8 +26,6 @@ export function AuthRequiredDialog({
   loginHref: string;
   /** Where "Create account" goes. */
   signupHref: string;
-  /** The plan the visitor tried to buy, woven into the copy when present. */
-  planLabel?: string;
 }) {
   useEffect(() => {
     if (!open) return;
@@ -64,11 +61,11 @@ export function AuthRequiredDialog({
       />
       <div className="relative z-10 w-full max-w-sm rounded-2xl border border-line bg-surface p-6 shadow-[0_24px_80px_-24px_rgba(0,0,0,0.8)]">
         <h2 id="auth-required-title" className="text-lg font-semibold text-white">
-          Log in to subscribe
+          Log in to request access
         </h2>
         <p className="mt-2 text-sm leading-[21px] text-muted">
-          {planLabel ? `Subscribing to the ${planLabel} plan` : "Subscribing"} needs an account. Log in
-          to come straight back and finish checkout, or create a free account to get started.
+          Requesting access needs an account. Log in to come straight back and send your request, or
+          create a free account to get started.
         </p>
         <div className="mt-6 flex flex-col gap-3">
           <Button variant="primary" onClick={() => window.location.assign(loginHref)}>
@@ -83,7 +80,7 @@ export function AuthRequiredDialog({
           onClick={onClose}
           className="mt-4 w-full text-center text-xs text-muted underline-offset-4 transition-colors hover:text-white hover:underline"
         >
-          Keep browsing plans
+          Not now
         </button>
       </div>
     </div>,

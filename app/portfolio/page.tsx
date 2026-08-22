@@ -334,9 +334,9 @@ function CustodyNote() {
         lose or freeze.
       </p>
       <p className="text-sm leading-[21px] text-muted">
-        The subscription is billed separately through Stripe.{" "}
+        Access to ATS-ALGO is granted by an admin, not sold — there is nothing to pay here either.{" "}
         <Link href="/billing" className="font-semibold text-accent hover:underline">
-          Manage billing
+          View your access
         </Link>
       </p>
     </section>

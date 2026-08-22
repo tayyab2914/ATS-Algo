@@ -54,17 +54,13 @@ model User {
   // Guest Mode trial deadline. A signed-in, non-admin user with NO active
   // subscription is a "guest": they may explore the dashboard, bot library and
   // bot profiles read-only until this instant, after which they are hard-walled
-  // to the Billing tab until they pay. Set on first login (now + 3 days) and
-  // left untouched thereafter — an active subscription supersedes it, and a
-  // lapsed subscription falls back to this (past) date, so a former member is
-  // immediately paywalled again. Null means the trial clock hasn't started yet.
+  // to the Billing tab until an admin grants them access. Set on first login
+  // (now + 3 days) and left untouched thereafter — a live grant supersedes it,
+  // and a revoked or lapsed grant falls back to this (past) date, so a former
+  // member is immediately walled again. Null means the clock hasn't started.
   // Accounts are NOT auto-deleted on expiry; the email is retained for later
   // marketing simply by keeping the row.
   guestExpiresAt DateTime?
-
-  // Stripe customer id, created lazily the first time the user starts checkout
-  // or opens the billing portal. One customer per user.
-  stripeCustomerId String? @unique
 
   verificationTokens  VerificationToken[]
   passwordResetTokens PasswordResetToken[]
@@ -72,6 +68,7 @@ model User {
   twoFactorCodes      TwoFactorCode[]
   paymentMethods      PaymentMethod[]
   subscription        Subscription?
+  subscriptionRequest SubscriptionRequest?
   emailChangeRequest  EmailChangeRequest?
   bots                UserBot[]
 
@@ -83,7 +80,7 @@ model User {
 /// are persisted: the full card number (PAN) is received over HTTPS, used to
 /// derive the brand and last four, then discarded — it is NEVER stored, and the
 /// CVV is never even transmitted. This is a convenience wallet for the user's
-/// own reference; actual subscription charges still run through Stripe.
+/// own reference; it is never charged — access is granted, not sold.
 model PaymentMethod {
   id     String @id @default(cuid())
   userId String
@@ -116,26 +113,22 @@ model PaymentMethod {
   @@map("payment_methods")
 }
 
-/// A user's Stripe subscription, mirrored from Stripe via webhooks. Stripe is
-/// the source of truth; this row is a read-optimized cache the app gates on so
-/// it never has to call Stripe to check entitlement. One subscription per user.
+/// A grant of access, created and removed by an admin from Members Management.
+/// There is nothing to buy and no plan to be on: the row's EXISTENCE is the
+/// grant, and `currentPeriodEnd` is the only thing that can end it.
+///
+/// Expiry is evaluated at READ time (lib/billing.ts `isSubscriptionActive`), not
+/// by a job. Nothing rewrites a lapsed row — it simply stops counting the moment
+/// the clock passes its end date. That is why there is no expiry cron to forget
+/// to run, and no window in which a lapsed grant still opens a gate. Revoking is
+/// a delete. One grant per user.
 model Subscription {
   id     String @id @default(cuid())
   userId String @unique
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  /// Null for an admin-granted comp subscription that never touched Stripe.
-  stripeSubscriptionId String?            @unique
-  stripePriceId        String?
-  plan                 BillingPlan
-  status               SubscriptionStatus
-  /// End of the current paid period — also the renewal date, or the date access
-  /// ends when `cancelAtPeriodEnd` is set. Null on a perpetual comp grant.
-  currentPeriodEnd     DateTime?
-  cancelAtPeriodEnd    Boolean            @default(false)
-  /// True when an admin granted this access for free (no Stripe charge). Stripe
-  /// webhooks overwrite the row by user, so a later real purchase supersedes it.
-  isComp               Boolean            @default(false)
+  /// When the granted access ends. NULL is an open-ended ("Lifetime") grant.
+  currentPeriodEnd DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -143,22 +136,41 @@ model Subscription {
   @@map("subscriptions")
 }
 
-/// Billing cadence, derived from the Stripe price the customer subscribed to.
-enum BillingPlan {
-  MONTHLY
-  YEARLY
+/// A member asking an admin for access, raised from the Billing tab.
+///
+/// ONE row per user, updated in place rather than appended to. That single
+/// unique row is what makes the request endpoint safe: a double-click races into
+/// an upsert instead of creating two rows, the daily cooldown has exactly one
+/// timestamp to read, and nobody can flood the admin inbox by holding the button
+/// down.
+///
+/// `APPROVED` is not merely an audit note — it is the handshake that tells the
+/// member's own browser it was unlocked from somebody else's. The grant happens
+/// in the ADMIN's session, so no `revalidatePath` there can reach the member;
+/// their Billing page consumes this row once and drops the stale (locked) client
+/// Router Cache itself. See app/billing/actions.ts.
+model SubscriptionRequest {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  status SubscriptionRequestStatus @default(PENDING)
+  /// When the member last raised it. Drives the cooldown and the admin sort.
+  requestedAt DateTime @default(now())
+  /// When an admin granted or declined it. Null while PENDING.
+  resolvedAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, requestedAt])
+  @@map("subscription_requests")
 }
 
-/// Mirror of Stripe's subscription `status` values.
-enum SubscriptionStatus {
-  INCOMPLETE
-  INCOMPLETE_EXPIRED
-  TRIALING
-  ACTIVE
-  PAST_DUE
-  CANCELED
-  UNPAID
-  PAUSED
+enum SubscriptionRequestStatus {
+  PENDING
+  APPROVED
+  DECLINED
 }
 
 /// A user's connection to an exchange's API. The usable credentials are stored

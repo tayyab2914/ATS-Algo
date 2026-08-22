@@ -13,11 +13,11 @@ function LockIcon() {
 }
 
 /**
- * "Plan not active" lock shown to a signed-in user without an active
- * subscription. Renders the tab's content blurred and inert with a centered
- * modal that sends them to /billing to subscribe — the paid-user counterpart to
- * {@link GuestGate} (which sends guests to login). Rendered in place so the tab
- * opens instantly instead of redirecting.
+ * "Access not active" lock shown to a signed-in user whose access has not been
+ * granted (or has lapsed). Renders the tab's content blurred and inert with a
+ * centered modal that sends them to /billing to ask an admin — the counterpart
+ * to {@link GuestGate} (which sends signed-out visitors to login). Rendered in
+ * place so the tab opens instantly instead of redirecting.
  */
 export function SubscriptionGate({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -32,9 +32,9 @@ export function SubscriptionGate({ title, children }: { title: string; children:
             <LockIcon />
           </span>
           <div className="flex flex-col gap-1.5">
-            <h2 className="text-lg font-semibold text-white">Plan not active</h2>
+            <h2 className="text-lg font-semibold text-white">Access not active</h2>
             <p className="text-sm leading-[21px] text-muted">
-              Subscribe to any plan to unlock your {title.toLowerCase()}, deploy bots, and track live
+              Request access to unlock your {title.toLowerCase()}, deploy bots, and track live
               performance.
             </p>
           </div>
@@ -42,7 +42,7 @@ export function SubscriptionGate({ title, children }: { title: string; children:
             href="/billing?gated=1"
             className="mt-1 inline-flex h-11 w-full items-center justify-center rounded-2xl bg-accent px-5 text-sm font-semibold text-[#06141a] transition-transform hover:-translate-y-0.5"
           >
-            View plans &amp; subscribe
+            Request access
           </Link>
         </div>
       </div>

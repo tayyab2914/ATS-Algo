@@ -26,6 +26,8 @@ export function ExchangeSection({
   const [apiKey, setApiKey] = useState("");
   const [apiSecret, setApiSecret] = useState("");
   const [passphrase, setPassphrase] = useState("");
+  // Only ever sent for a venue that cannot reveal it from the key itself (BingX).
+  const [sandbox, setSandbox] = useState(false);
   const [banner, setBanner] = useState<NoticeData | null>(null);
   const [pending, setPending] = useState(false);
 
@@ -34,6 +36,7 @@ export function ExchangeSection({
     setApiKey("");
     setApiSecret("");
     setPassphrase("");
+    setSandbox(false); // default LIVE — the safe direction; a demo key on the live host fails loudly
     setAdding(exchange);
   }
 
@@ -44,7 +47,7 @@ export function ExchangeSection({
       const res = await fetch("/api/account/exchanges", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ exchange, apiKey, apiSecret, passphrase }),
+        body: JSON.stringify({ exchange, apiKey, apiSecret, passphrase, sandbox }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -155,6 +158,25 @@ export function ExchangeSection({
                       />
                     )}
                   </div>
+                  {!venue.paperDetectableFromKey && (
+                    <label className="flex items-start gap-2 rounded-lg border border-line bg-surface px-3 py-2.5">
+                      <input
+                        type="checkbox"
+                        checked={sandbox}
+                        onChange={(e) => setSandbox(e.target.checked)}
+                        className="mt-0.5 h-4 w-4 accent-accent"
+                      />
+                      <span className="text-xs text-muted">
+                        This is a <span className="text-white">Demo (VST) key</span> — tick only if
+                        you want bots on this connection to trade {venue.label}&apos;s paper engine
+                        with virtual funds.
+                        <br />
+                        {venue.label} uses the <span className="text-white">same API key</span> for
+                        demo and live, so we can&apos;t detect this for you. Left unticked, this
+                        connection trades <span className="text-white">real money</span>.
+                      </span>
+                    </label>
+                  )}
                   <p className="text-xs text-muted">
                     Use a <span className="text-white">trade-only</span> key with{" "}
                     <span className="text-white">withdrawal disabled</span>.
@@ -174,6 +196,16 @@ export function ExchangeSection({
                       </>
                     )}
                   </p>
+                  {/* Only where the venue actually deletes idle keys. Without this the advice
+                      above ("leave it un-IP-restricted") quietly comes with an expiry date. */}
+                  {!egressIp && venue.unusedKeyExpiryDays !== undefined && (
+                    <p className="text-xs text-[#F4A825]">
+                      Note: {venue.label} automatically deletes an API key that has trading
+                      permission, no IP restriction, and{" "}
+                      <span className="text-white">no API activity for {venue.unusedKeyExpiryDays} days</span>.
+                      If your bot goes that long without trading you may need to create a new key.
+                    </p>
+                  )}
                   <div className="flex items-center gap-3">
                     <PrimaryAction type="button" onClick={() => connect(exchange)} disabled={pending}>
                       {pending ? "Validating…" : "Save Connection"}

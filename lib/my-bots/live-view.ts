@@ -173,6 +173,8 @@ export function describeEvent(event: string, detail: Record<string, unknown> | n
       return "Realized PnL widened — a closing fill came from outside this bot";
     case "fanout.skip.liveNotArmed":
       return "Signal skipped — live trading is not armed";
+    case "fanout.skip.notEntitled":
+      return "Signal skipped — your access has lapsed";
     case "fanout.skip.positionAlreadyOpen":
       return "Signal skipped — a position is already open";
     case "fanout.skip.noConnection":

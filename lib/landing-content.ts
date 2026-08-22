@@ -126,6 +126,7 @@ export const EXCHANGES: readonly string[] = [
   "OKX",
   "KuCoin",
   "Bitget",
+  "BingX",
   "Gate.io",
 ] as const;
 

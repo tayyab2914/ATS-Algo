@@ -4,14 +4,12 @@ import { toPublicUser } from "@/lib/auth/account";
 import { confirmNewEmail } from "@/lib/auth/email-change";
 import { requireMember } from "@/lib/auth/guards";
 import { createSession } from "@/lib/auth/session";
-import { stripe } from "@/lib/stripe";
 import { emailChangeCodeSchema } from "@/lib/validation";
 
 /**
  * Stage 2: confirm the code emailed to the NEW address, then commit the change.
  * The session cookie is re-issued with the new (now-verified) email so its
- * claims stay accurate without a forced sign-out, and the Stripe customer email
- * is kept in sync (best-effort).
+ * claims stay accurate without a forced sign-out.
  */
 export async function POST(request: NextRequest) {
   const access = await requireMember();
@@ -49,15 +47,6 @@ export async function POST(request: NextRequest) {
     emailVerified: user.emailVerified !== null,
     policyAccepted: user.policyAcceptedAt !== null,
   });
-
-  // Best-effort: a failed sync must not undo the committed email change.
-  if (user.stripeCustomerId) {
-    try {
-      await stripe().customers.update(user.stripeCustomerId, { email: user.email });
-    } catch (error) {
-      console.error("Stripe customer email sync failed:", error);
-    }
-  }
 
   return ok({ user: toPublicUser(user), email: user.email });
 }

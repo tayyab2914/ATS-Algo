@@ -116,6 +116,33 @@ async function assertMarginMode(
   if (mode !== MARGIN_MODE) throw new Error(`MARGIN_MODE_NOT_ISOLATED:${mode}`);
 }
 
+/**
+ * Refuse to trade unless the member's account is ALREADY in one-way position mode.
+ *
+ * The margin-mode argument, applied to the other axis — and here the consequence of getting it
+ * wrong is more concrete than "wrong collateral model". Every bot is swing: a LONG signal
+ * arriving on a short position is executed as a REVERSAL (dispatch.ts), which relies on the new
+ * entry closing the old position. In hedge mode it does not — the venue opens a second, opposite
+ * position and the member ends up holding both, each with its own stop, neither of which the
+ * engine believes exists.
+ *
+ * FAILS CLOSED on live for the same reason as the margin check: "we could not read it" is not
+ * evidence that it is safe. Skipped on paper, where there is no member account to protect.
+ */
+async function assertPositionMode(
+  ex: Awaited<ReturnType<typeof exchangeClient>>,
+  adapter: ReturnType<typeof adapterFor>,
+  input: PrepareInput,
+): Promise<void> {
+  const hedged = adapter.readPositionMode ? await adapter.readPositionMode(ex, input.symbol).catch(() => null) : null;
+
+  if (hedged === null) {
+    if (input.creds.sandbox) return;
+    throw new Error("POSITION_MODE_UNKNOWN");
+  }
+  if (hedged) throw new Error("POSITION_MODE_NOT_ONE_WAY");
+}
+
 export type PrepareInput = {
   userBotId: string;
   exchange: string;
@@ -139,14 +166,23 @@ export async function ensurePrepared(input: PrepareInput): Promise<boolean> {
   if (input.prepared === key) return false;
 
   const ex = await exchangeClient(input.exchange, input.creds, [input.market]);
+  const adapter = adapterFor(input.exchange);
 
-  // Bitget defaults to hedge mode, which rejects one-way orders (err 40774). It
-  // throws once the account is already one-way, or when a position/order exists
-  // (err 40920) — by which point it is one-way anyway.
-  try {
-    await ex.setPositionMode(false, input.symbol);
-  } catch {
-    /* already one-way, or an open position/order pins it there */
+  // ── Position mode ─────────────────────────────────────────────────────────
+  // ONE-WAY always: every bot is swing, so a new entry must REVERSE the position rather than
+  // open a second one alongside it. As with margin mode, the venues differ on how far the
+  // setting reaches, and the answer follows the blast radius rather than convenience.
+  if (adapter.positionModePolicy === "set") {
+    // Bitget defaults to hedge mode, which rejects one-way orders (err 40774). It
+    // throws once the account is already one-way, or when a position/order exists
+    // (err 40920) — by which point it is one-way anyway.
+    try {
+      await ex.setPositionMode(false, input.symbol);
+    } catch {
+      /* already one-way, or an open position/order pins it there */
+    }
+  } else {
+    await assertPositionMode(ex, adapter, input);
   }
 
   // ── Margin mode ───────────────────────────────────────────────────────────
@@ -159,7 +195,6 @@ export async function ensurePrepared(input: PrepareInput): Promise<boolean> {
   //             have nothing to do with. We refuse to reach that far into someone's account:
   //             we READ the mode and decline to trade if it is not isolated. The member changes
   //             it themselves, deliberately, or their bot does not start.
-  const adapter = adapterFor(input.exchange);
   if (adapter.marginModePolicy === "set") {
     await noChangeOk(ex.setMarginMode(MARGIN_MODE, input.symbol));
   } else {

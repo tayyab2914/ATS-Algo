@@ -2,8 +2,8 @@ import { Suspense } from "react";
 import { AppShell } from "@/components/app/AppShell";
 import { TabPreviewSkeleton } from "@/components/app/TabPreviewSkeleton";
 import { BillingSection, type SubscriptionView } from "@/components/billing/BillingSection";
-import { isSubscriptionActive, reconcileSubscriptionFromStripe } from "@/lib/billing";
-import { getSession } from "@/lib/auth/session";
+import { getPageAccess } from "@/lib/auth/guards";
+import { isSubscriptionActive } from "@/lib/billing";
 import { prisma } from "@/lib/db";
 
 function Header() {
@@ -11,74 +11,58 @@ function Header() {
     <header className="flex flex-col gap-1">
       <h1 className="text-2xl font-semibold leading-[31px] text-white">Billing</h1>
       <p className="text-sm leading-[21px] text-muted">
-        Manage your subscription, payment method, and invoices.
+        Your access to ATS-ALGO, granted by an admin.
       </p>
     </header>
   );
 }
 
 export default async function BillingPage() {
-  // Deliberately use getSession here, NOT getPageAccess. The self-heal reconcile
-  // below may flip this user to active; getPageAccess is React-cached per request
-  // and is also called by AppShell, so calling it BEFORE the reconcile would
-  // freeze a stale "guest" view into the cache — AppShell would then render the
-  // trial banner even though the plan is now active. getSession has an
-  // independent cache, leaving AppShell's getPageAccess to evaluate fresh AFTER
-  // the reconcile has written the row.
-  const session = await getSession();
+  // getPageAccess is React-cached and shared with AppShell, which is only safe
+  // because nothing on this page WRITES entitlement. If that ever changes, the
+  // cached evaluation would freeze the pre-write ("guest") view and AppShell
+  // would render the trial banner to someone who already has access.
+  const { session } = await getPageAccess();
 
-  // Guests can browse the plans (picking one sends them to sign in first).
+  // A signed-out visitor can still read what the page is for; requesting needs
+  // an account, and the button prompts for one.
   if (!session) {
     return (
       <AppShell>
         <Header />
         <Suspense fallback={<TabPreviewSkeleton rows={3} />}>
-          <BillingSection subscription={null} hasCustomer={false} authenticated={false} />
+          <BillingSection subscription={null} authenticated={false} requestPending={false} />
         </Suspense>
       </AppShell>
     );
   }
 
-  let user = await prisma.user.findUnique({
-    where: { id: session.sub },
-    select: { stripeCustomerId: true, subscription: true },
-  });
+  const [sub, request] = await Promise.all([
+    prisma.subscription.findUnique({
+      where: { userId: session.sub },
+      select: { currentPeriodEnd: true },
+    }),
+    prisma.subscriptionRequest.findUnique({
+      where: { userId: session.sub },
+      select: { status: true },
+    }),
+  ]);
 
-  // Self-heal a missing/stale row when the activation webhook never arrived.
-  // Only fires for a user who has a Stripe customer yet no active access, so the
-  // happy path (already synced by /api/billing/return after checkout) does no
-  // extra work. This is what rescues someone who was charged but whose webhook
-  // was dropped: their plan settles the next time they open Billing.
+  const active = isSubscriptionActive(sub);
+
+  // The grant landed in ANOTHER browser — the admin's — so no revalidatePath
+  // there could reach this member. An APPROVED request is the handshake that
+  // says "you were just unlocked": consume it once here and let the client drop
+  // its stale (locked) Router Cache for the other tabs. Same mechanism the old
+  // post-checkout activation used, different trigger.
   let justActivated = false;
-  if (user?.stripeCustomerId && !isSubscriptionActive(user.subscription)) {
-    try {
-      if (await reconcileSubscriptionFromStripe(user.stripeCustomerId)) {
-        user = await prisma.user.findUnique({
-          where: { id: session.sub },
-          select: { stripeCustomerId: true, subscription: true },
-        });
-        // The reconcile flipped a previously-inactive user to active. The other
-        // tabs may still be cached (locked) in this browser's Router Cache; flag
-        // it so the client drops that cache once. Unlike the checkout path there
-        // is no Route Handler here to call revalidatePath (it can't run during a
-        // Server Component render), so the bust is delegated to the client.
-        justActivated = isSubscriptionActive(user?.subscription ?? null);
-      }
-    } catch (error) {
-      console.error("Billing page subscription reconcile failed:", error);
-    }
+  if (active && request?.status === "APPROVED") {
+    justActivated = true;
+    await prisma.subscriptionRequest.deleteMany({ where: { userId: session.sub } });
   }
 
-  const sub = user?.subscription ?? null;
   const subscription: SubscriptionView | null = sub
-    ? {
-        plan: sub.plan,
-        status: sub.status,
-        active: isSubscriptionActive(sub),
-        currentPeriodEnd: sub.currentPeriodEnd?.toISOString() ?? null,
-        cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
-        isComp: sub.isComp,
-      }
+    ? { active, currentPeriodEnd: sub.currentPeriodEnd?.toISOString() ?? null }
     : null;
 
   return (
@@ -87,8 +71,8 @@ export default async function BillingPage() {
       <Suspense fallback={<TabPreviewSkeleton rows={3} />}>
         <BillingSection
           subscription={subscription}
-          hasCustomer={Boolean(user?.stripeCustomerId)}
           authenticated
+          requestPending={request?.status === "PENDING"}
           justActivated={justActivated}
         />
       </Suspense>

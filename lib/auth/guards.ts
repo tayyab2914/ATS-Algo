@@ -6,11 +6,10 @@ import { fail } from "@/lib/api";
 import { SESSION_COOKIE, verifyToken, type SessionPayload } from "@/lib/auth/jwt";
 import { isSubscriptionActive } from "@/lib/billing";
 import { prisma } from "@/lib/db";
-import type { SubscriptionStatus } from "@/lib/generated/prisma/enums";
 import { guestTrialFrom, type GuestTrial } from "@/lib/guest";
 
 /** The subscription columns the entitlement check needs. */
-type ViewerSubscription = { status: SubscriptionStatus; isComp: boolean; currentPeriodEnd: Date | null };
+type ViewerSubscription = { currentPeriodEnd: Date | null };
 
 /**
  * Who is viewing a gated surface.
@@ -18,10 +17,10 @@ type ViewerSubscription = { status: SubscriptionStatus; isComp: boolean; current
  * - `visitor`      — signed out. Sees the "sign in to unlock" {@link GuestGate}.
  * - `guestActive`  — signed in, no active plan, trial still running. Read-only
  *                    access to the dashboard, bot library and bot profiles;
- *                    every other tab is locked behind an upgrade.
+ *                    every other tab is locked until access is granted.
  * - `guestExpired` — signed in, no active plan, trial elapsed. Hard-walled to the
  *                    Billing tab — every other in-app route bounces there.
- * - `member`       — active paid plan or live comp grant. Full access.
+ * - `member`       — holds a live admin-granted subscription. Full access.
  * - `admin`        — full access, never a guest.
  */
 export type ViewerTier = "visitor" | "guestActive" | "guestExpired" | "member" | "admin";
@@ -84,7 +83,7 @@ const loadViewer = cache(
           name: true,
           email: true,
           avatarUrl: true,
-          subscription: { select: { status: true, isComp: true, currentPeriodEnd: true } },
+          subscription: { select: { currentPeriodEnd: true } },
         },
       });
     } catch (error) {
@@ -126,7 +125,8 @@ const loadViewer = cache(
  * instant (no blank flash while a server redirect bounces around).
  *
  * Authoritative: subscription state is read from the database each request, so
- * access reflects webhook updates immediately rather than a stale JWT claim.
+ * an admin's grant or revoke — and a grant simply reaching its end date — takes
+ * effect on the member's very next request, not at token expiry.
  *
  * Wrapped in React `cache` so the page and the surrounding {@link AppShell} (and
  * any other caller) share a single evaluation — and a single DB query — per request.
@@ -142,7 +142,7 @@ export const getPageAccess = cache(async (): Promise<PageAccess> => {
     return { session, tier: "admin", entitled: true, guest: null, profile };
   }
 
-  // A live paid plan or comp grant outranks the trial clock entirely.
+  // A live grant outranks the trial clock entirely.
   if (isSubscriptionActive(subscription)) {
     return { session, tier: "member", entitled: true, guest: null, profile };
   }
@@ -186,7 +186,7 @@ export async function requireMember(): Promise<
   return {
     error: NextResponse.json(
       {
-        error: "Your guest trial is read-only. Become a member to make changes.",
+        error: "Your guest trial is read-only. Request access from the Billing tab to make changes.",
         upgradeRequired: true,
       },
       { status: 403 },

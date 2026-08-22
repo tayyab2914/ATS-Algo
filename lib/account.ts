@@ -4,7 +4,7 @@ import { BOT_EXCHANGES } from "@/lib/bot-exchanges";
  * The literal tuple is kept (zod's `z.enum` needs it to build the `ExchangeName`
  * union), but per-venue facts (ccxt id, passphrase, enabled) live in BOT_EXCHANGES
  * — the single source of truth. The guard below fails loudly if they diverge. */
-export const EXCHANGES = ["Bybit", "Bitget", "Blofin"] as const;
+export const EXCHANGES = ["Bybit", "Bitget", "Blofin", "Bingx"] as const;
 
 export type ExchangeName = (typeof EXCHANGES)[number];
 

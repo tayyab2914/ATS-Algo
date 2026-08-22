@@ -21,12 +21,14 @@ function SparkIcon() {
 
 /**
  * Prominent banner shown across the app while the viewer is on a Guest Mode
- * trial. Counts down to the deadline and routes the guest to Billing to upgrade.
+ * trial. Counts down to the deadline and routes the guest to Billing to ask an
+ * admin for access.
  *
  * Two flavours:
  *  - active  — "Guest trial · N days left" with a soft accent treatment.
- *  - expired — a red, urgent "trial ended, subscribe to continue" bar (only seen
- *              on /billing, since every other tab bounces an expired guest here).
+ *  - expired — a red, urgent "trial ended, request access to continue" bar (only
+ *              seen on /billing, since every other tab bounces an expired guest
+ *              here).
  *
  * The countdown is recomputed on the client from `expiresAt` so it stays live
  * without a refresh and is robust to clock skew between render and view.
@@ -82,8 +84,8 @@ export function GuestTrialBanner({ expiresAt }: { expiresAt: string }) {
           </p>
           <p className="text-xs leading-[18px] text-muted">
             {expired
-              ? "Subscribe to unlock the dashboard, deploy bots, and track live performance."
-              : "You're exploring in read-only Guest Mode. Become a member to deploy bots and unlock every tab."}
+              ? "Request access to unlock the dashboard, deploy bots, and track live performance."
+              : "You're exploring in read-only Guest Mode. Request access to deploy bots and unlock every tab."}
           </p>
         </div>
       </div>
@@ -95,7 +97,7 @@ export function GuestTrialBanner({ expiresAt }: { expiresAt: string }) {
           expired ? "bg-[#D2031E] text-white" : "bg-accent text-[#06141a]",
         )}
       >
-        Become a member
+        Request access
       </Link>
     </div>
   );

@@ -34,7 +34,7 @@ export async function POST(request: NextRequest) {
 
   const existing = await prisma.user.findUnique({
     where: { email },
-    select: { id: true, role: true, status: true },
+    select: { id: true, role: true, status: true, emailVerified: true },
   });
 
   if (role === "ADMIN") {
@@ -46,10 +46,34 @@ export async function POST(request: NextRequest) {
       // Only force a re-login when the role/standing actually changes, so a
       // simple re-invite doesn't sign an active admin out for nothing.
       const changed = existing.role !== "ADMIN" || existing.status !== "ACTIVE";
-      await prisma.user.update({
-        where: { id: existing.id },
-        data: { role: "ADMIN", status: "ACTIVE", ...(changed && { sessionsValidFrom: new Date() }) },
-      });
+      await prisma.$transaction([
+        prisma.user.update({
+          where: { id: existing.id },
+          data: {
+            role: "ADMIN",
+            status: "ACTIVE",
+            // Mark the address verified, exactly as the create branch below does.
+            // Not cosmetic: /api/auth/signup treats a row with `emailVerified: null`
+            // as an unclaimed pending registration and lets ANY anonymous caller
+            // overwrite its passwordHash and recompute its role — which would
+            // silently strip admin rights from the person just promoted. Promotion
+            // is an admin asserting this address is theirs, and admin sign-in is a
+            // one-time code emailed to it, so ownership is proven at first use.
+            // Coalesced so an already-verified account keeps its original timestamp.
+            emailVerified: existing.emailVerified ?? new Date(),
+            ...(changed && { sessionsValidFrom: new Date() }),
+          },
+        }),
+        // Promotion IS the answer to any access request they had open. Resolve
+        // it in the same write, because afterwards nothing can: /api/admin/members
+        // refuses every subscription action against an ADMIN row, so a request
+        // left PENDING here would sit in the dashboard's counter forever with no
+        // UI able to clear it.
+        prisma.subscriptionRequest.updateMany({
+          where: { userId: existing.id, status: "PENDING" },
+          data: { status: "APPROVED", resolvedAt: new Date() },
+        }),
+      ]);
     } else {
       // Create the account up front so the passwordless admin code sign-in
       // recognises them (it requires an existing ADMIN, ACTIVE user row).

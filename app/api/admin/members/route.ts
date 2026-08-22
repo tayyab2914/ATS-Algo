@@ -3,7 +3,6 @@ import { ok, fail, zodFail } from "@/lib/api";
 import { isSuperAdminEmail } from "@/lib/auth/account";
 import { getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
-import { BillingPlan, SubscriptionStatus } from "@/lib/generated/prisma/enums";
 import { adminMemberActionSchema } from "@/lib/validation";
 
 /**
@@ -13,8 +12,10 @@ import { adminMemberActionSchema } from "@/lib/validation";
  * - suspend / ban   — set account standing and kill any live session
  * - reactivate      — clear a suspension/ban
  * - forceLogout     — invalidate existing sessions without changing standing
- * - grantFree       — give the member a free (comp) subscription, no Stripe
- * - revokeFree      — remove a previously granted comp subscription
+ * - grantFree       — grant access for N months (0 = no expiry); also approves
+ *                     any pending access request
+ * - revokeFree      — end a granted access immediately
+ * - declineRequest  — dismiss a pending access request without granting
  * - delete          — permanently remove the account (superadmin only)
  * - demote          — strip ADMIN back to USER (any admin, except self / superadmin)
  *
@@ -32,7 +33,13 @@ export async function POST(request: NextRequest) {
 
   const member = await prisma.user.findUnique({
     where: { id: memberId },
-    select: { id: true, email: true, role: true, subscription: { select: { isComp: true } } },
+    select: {
+      id: true,
+      email: true,
+      role: true,
+      // Existence is the grant, so only the id is needed to know there is one.
+      subscription: { select: { id: true } },
+    },
   });
   if (!member) return fail("Member not found", 404);
 
@@ -98,36 +105,59 @@ export async function POST(request: NextRequest) {
     }
 
     case "grantFree": {
-      // Don't clobber a real Stripe subscription (Stripe would keep billing
-      // while our cache claimed the access was free).
-      if (member.subscription && !member.subscription.isComp) {
-        return fail("This member already has a paid subscription", 409);
-      }
+      // Re-granting REPLACES the end date rather than adding to it — the admin
+      // picks the window they want from now, which is what the menu's wording
+      // ("Grant access for…") promises.
       const months = durationMonths ?? 0;
       const periodEnd =
         months > 0 ? new Date(Date.now() + months * 30 * 24 * 60 * 60 * 1000) : null;
-      const data = {
-        stripeSubscriptionId: null,
-        stripePriceId: null,
-        plan: months >= 12 ? BillingPlan.YEARLY : BillingPlan.MONTHLY,
-        status: SubscriptionStatus.ACTIVE,
-        currentPeriodEnd: periodEnd,
-        cancelAtPeriodEnd: false,
-        isComp: true,
-      };
-      await prisma.subscription.upsert({
-        where: { userId: member.id },
-        create: { userId: member.id, ...data },
-        update: data,
-      });
+      const data = { currentPeriodEnd: periodEnd };
+      // One transaction so a granted member can never be left still showing as
+      // "pending" in the requests card — the two writes land together or not at
+      // all. `updateMany` (not `update`) because most grants have no request
+      // behind them at all, and a missing row must not throw.
+      await prisma.$transaction([
+        prisma.subscription.upsert({
+          where: { userId: member.id },
+          create: { userId: member.id, ...data },
+          update: data,
+        }),
+        prisma.subscriptionRequest.updateMany({
+          where: { userId: member.id, status: "PENDING" },
+          data: { status: "APPROVED", resolvedAt: new Date() },
+        }),
+      ]);
       return ok({ ok: true });
     }
 
     case "revokeFree": {
-      if (!member.subscription?.isComp) {
-        return fail("This member has no granted subscription to revoke", 409);
+      if (!member.subscription) {
+        return fail("This member has no access to revoke", 409);
       }
-      await prisma.subscription.delete({ where: { userId: member.id } });
+      // `deleteMany`, not `delete`: two admins revoking at once would otherwise
+      // race, and the loser's `delete` on an already-gone row throws P2025 → 500.
+      await prisma.$transaction([
+        prisma.subscription.deleteMany({ where: { userId: member.id } }),
+        // Revoking access must also disarm real-money trading. `liveArmed` is a
+        // deliberate opt-in for a LIVE key (see UserBot.liveArmed) and the whole
+        // point of revoking is that this person is no longer entitled to run —
+        // leaving it set would keep their bots opening real positions behind a
+        // locked UI they can no longer reach. Open positions are untouched: the
+        // reconcile job keeps managing their stops and take-profits to the exit.
+        prisma.userBot.updateMany({
+          where: { userId: member.id, liveArmed: true },
+          data: { liveArmed: false },
+        }),
+      ]);
+      return ok({ ok: true });
+    }
+
+    case "declineRequest": {
+      const { count } = await prisma.subscriptionRequest.updateMany({
+        where: { userId: member.id, status: "PENDING" },
+        data: { status: "DECLINED", resolvedAt: new Date() },
+      });
+      if (count === 0) return fail("This member has no pending access request", 409);
       return ok({ ok: true });
     }
 

@@ -176,9 +176,6 @@ certbot rewrites the server block in place to add the 443 listener and the
 
 ## 7. Cutover checklist
 
-- [ ] Stripe: point the webhook at `https://yourdomain.com/api/stripe/webhook`
-      and swap `STRIPE_WEBHOOK_SECRET` — the signing secret is per-endpoint, the
-      old one will not verify.
 - [ ] Tell existing members the whitelist IP changed to the Elastic IP, or their
       IP-restricted exchange keys start failing auth.
 - [ ] Confirm `STATIC_EGRESS_IP` matches real egress:
@@ -195,8 +192,13 @@ sudo -u ats -H /srv/ats-algo/deploy/update.sh
 
 ## Notes
 
-- **Database URL.** Keep `DATABASE_URL` on Supabase's transaction pooler (6543);
-  `lib/db.ts` documents why. Migrations keep using `DIRECT_URL`.
+- **Database URL.** Point `DATABASE_URL` straight at RDS (5432) — there is no
+  pooler in front of it and none is needed now the app is a long-lived process;
+  `lib/db.ts` documents why. Migrations use `DIRECT_URL` (same host). This note
+  previously said to keep it on Supabase's transaction pooler (6543), which was
+  left over from the serverless setup and contradicted both `lib/db.ts` and the
+  RDS URLs at the top of this file — following it would point production at the
+  wrong database.
 - **Boot failures.** `instrumentation.ts` throws if `APP_URL` is unset or
   localhost in production, so the unit won't start. That's deliberate — the
   alternative is days of verification emails linking to localhost.

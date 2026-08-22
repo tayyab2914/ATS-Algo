@@ -34,10 +34,8 @@ export default async function AdminDashboardPage() {
     topBotsRaw,
     revisionsRaw,
     signupsRaw,
-    canceledCount,
-    pastDueCount,
-    notRenewingCount,
-    churnRaw,
+    pendingRequestCount,
+    pendingRequestsRaw,
     runningDeploymentsRaw,
     totalDeployments,
     openPositions,
@@ -51,10 +49,13 @@ export default async function AdminDashboardPage() {
     // deploy a bot and switch it on before it trades. See `runningDeployments`.
     prisma.bot.count({ where: { status: "ACTIVE" } }),
     prisma.user.count({ where: { role: "USER" } }),
-    // "Paying" excludes admin-granted comps (isComp) — they're free, not revenue —
-    // and a raw status:ACTIVE also counts comps whose grant has lapsed (their row
-    // stays ACTIVE; the entitlement check expires them at read time, not in the DB).
-    prisma.subscription.count({ where: { status: "ACTIVE", isComp: false } }),
+    // Members whose grant is LIVE right now. A lapsed grant leaves its row in
+    // place — nothing rewrites it, the entitlement check just stops honouring it
+    // — so the end-date predicate here has to mirror `isSubscriptionActive`
+    // exactly, or this tile would count people who can no longer get in.
+    prisma.subscription.count({
+      where: { OR: [{ currentPeriodEnd: null }, { currentPeriodEnd: { gt: new Date() } }] },
+    }),
     prisma.user.count({ where: { role: "USER", createdAt: { gte: thirtyDaysAgo } } }),
     prisma.bot.groupBy({ by: ["category"], _count: { _all: true } }),
     prisma.bot.groupBy({ by: ["riskClass"], _count: { _all: true } }),
@@ -77,28 +78,25 @@ export default async function AdminDashboardPage() {
         name: true,
         email: true,
         createdAt: true,
-        subscription: { select: { status: true, isComp: true, currentPeriodEnd: true } },
+        subscription: { select: { currentPeriodEnd: true } },
       },
     }),
-    // Subscriptions that ended (cancelled / unpaid), are failing to renew
-    // (past due), or are set to lapse at period end.
-    prisma.subscription.count({ where: { status: { in: ["CANCELED", "INCOMPLETE_EXPIRED"] } } }),
-    prisma.subscription.count({ where: { status: { in: ["PAST_DUE", "UNPAID"] } } }),
-    prisma.subscription.count({ where: { status: "ACTIVE", cancelAtPeriodEnd: true } }),
-    prisma.subscription.findMany({
-      where: {
-        OR: [
-          { status: { in: ["CANCELED", "INCOMPLETE_EXPIRED", "PAST_DUE", "UNPAID"] } },
-          { status: "ACTIVE", cancelAtPeriodEnd: true },
-        ],
-      },
-      orderBy: { updatedAt: "desc" },
+    // Members waiting on an access decision. With nothing to buy, this queue —
+    // not churn — is the number that needs an operator to do something.
+    //
+    // The `role` filter matches the actionable queue on Members Management: an
+    // ADMIN row is refused every subscription action, so counting one here would
+    // show a warning tile the operator has no way to clear.
+    prisma.subscriptionRequest.count({
+      where: { status: "PENDING", user: { role: { not: "ADMIN" } } },
+    }),
+    prisma.subscriptionRequest.findMany({
+      where: { status: "PENDING", user: { role: { not: "ADMIN" } } },
+      orderBy: { requestedAt: "asc" },
       take: 5,
       select: {
         id: true,
-        status: true,
-        cancelAtPeriodEnd: true,
-        currentPeriodEnd: true,
+        requestedAt: true,
         user: { select: { name: true, email: true } },
       },
     }),
@@ -159,22 +157,13 @@ export default async function AdminDashboardPage() {
       date: shortDate(u.createdAt),
       type: isSubscriptionActive(u.subscription) ? ("member" as const) : ("guest" as const),
     })),
-    churn: {
-      canceled: canceledCount,
-      pastDue: pastDueCount,
-      notRenewing: notRenewingCount,
-      recent: churnRaw.map((s) => ({
-        id: s.id,
-        name: s.user.name?.trim() || s.user.email,
-        email: s.user.email,
-        // A still-active row in this list is one set to cancel at period end.
-        status:
-          s.status === "ACTIVE" && s.cancelAtPeriodEnd
-            ? ("notRenewing" as const)
-            : s.status === "PAST_DUE" || s.status === "UNPAID"
-              ? ("pastDue" as const)
-              : ("canceled" as const),
-        date: s.currentPeriodEnd ? shortDate(s.currentPeriodEnd) : "—",
+    requests: {
+      pending: pendingRequestCount,
+      recent: pendingRequestsRaw.map((r) => ({
+        id: r.id,
+        name: r.user.name?.trim() || r.user.email,
+        email: r.user.email,
+        date: shortDate(r.requestedAt),
       })),
     },
   };

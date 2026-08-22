@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { EXCHANGES } from "@/lib/account";
+import { BOT_EXCHANGES } from "@/lib/bot-exchanges";
 import {
   DEFAULT_SLIPPAGE_PCT,
   minDistancePct,
@@ -82,6 +83,20 @@ export const emailChangeCodeSchema = z.object({
   code: z.string().regex(/^\d{6}$/, "Enter the 6-digit code from your email"),
 });
 
+/**
+ * The admin-allowed venue set on a bot.
+ *
+ * Capped at the number of venues that EXIST, never a literal. It was `.max(3)` inline in both
+ * admin bot routes, and that silently became a bug the moment a fourth venue was added: the
+ * editor offered BingX, an admin ticked it, and the save failed with a raw zod message ("Too
+ * big: expected array to have <=3 items") naming neither the field nor the real limit.
+ *
+ * Shared rather than duplicated per route so the create and update paths cannot drift, and so a
+ * test can assert it accepts every venue in the registry — which is what verify-bot-editing.ts
+ * now does.
+ */
+export const botExchangesSchema = z.array(z.string()).max(BOT_EXCHANGES.length);
+
 export const exchangeAddSchema = z
   .object({
     exchange: z.enum(EXCHANGES),
@@ -89,6 +104,13 @@ export const exchangeAddSchema = z
     apiSecret: z.string().trim().min(6, "API secret looks too short"),
     // Required only for venues that need it (e.g. Bitget) — enforced below.
     passphrase: z.string().trim().optional().or(z.literal("")),
+    /**
+     * The member declaring this is a demo/paper key. Only consulted for venues where the key
+     * itself cannot reveal it (BingX). Defaults to LIVE, which is the safe direction: a live
+     * key mislabelled demo would trade paper and confuse, but a demo key mislabelled live is
+     * caught at once because the live host holds no funds.
+     */
+    sandbox: z.boolean().optional(),
   })
   .superRefine((data, ctx) => {
     if (exchangeRequiresPassphrase(data.exchange) && !data.passphrase) {
@@ -357,20 +379,23 @@ export function botConfigError(config: unknown, riskClass?: RiskClass): string |
   return null;
 }
 
-// ── Billing ──────────────────────────────────────────────────────────────────
-
-/** Which plan a checkout request is for. Mirrors the `BillingPlan` enum. */
-export const checkoutSchema = z.object({
-  plan: z.enum(["MONTHLY", "YEARLY"]),
-});
-
 // ── Admin member management ───────────────────────────────────────────────────
 
 /** An action an admin takes on a member from the Admin Management screen. */
 export const adminMemberActionSchema = z.object({
   memberId: z.string().min(1, "Missing member id"),
-  action: z.enum(["suspend", "ban", "reactivate", "forceLogout", "grantFree", "revokeFree", "delete", "demote"]),
-  /** Length of a granted comp subscription; `0` (or omitted) means perpetual. */
+  action: z.enum([
+    "suspend",
+    "ban",
+    "reactivate",
+    "forceLogout",
+    "grantFree",
+    "revokeFree",
+    "declineRequest",
+    "delete",
+    "demote",
+  ]),
+  /** Length of the granted access in months; `0` (or omitted) means no expiry. */
   durationMonths: z.number().int().min(0).max(120).optional(),
 });
 
@@ -391,6 +416,5 @@ export type TwoFactorCodeInput = z.infer<typeof twoFactorCodeSchema>;
 export type TwoFactorToggleInput = z.infer<typeof twoFactorToggleSchema>;
 export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
 export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
-export type CheckoutInput = z.infer<typeof checkoutSchema>;
 export type AdminMemberActionInput = z.infer<typeof adminMemberActionSchema>;
 export type AdminSetRoleInput = z.infer<typeof adminSetRoleSchema>;

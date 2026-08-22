@@ -6,7 +6,7 @@ import { type BotConfig } from "@/lib/backtest/engine";
 import { backtestBotColumns } from "@/lib/backtest/bot-record";
 import { matchBotExchange } from "@/lib/bot-exchanges";
 import { prisma } from "@/lib/db";
-import { botConfigError } from "@/lib/validation";
+import { botConfigError, botExchangesSchema } from "@/lib/validation";
 
 /**
  * Create a bot: run the backtest on the uploaded JSON config + signal CSV for
@@ -18,7 +18,7 @@ const createBotSchema = z.object({
   name: z.string().trim().min(1, "Name is required").max(80),
   category: z.string().trim().min(1, "Category is required").max(60),
   timeframe: z.string().trim().min(1, "Timeframe is required").max(20),
-  exchanges: z.array(z.string()).max(3).optional(),
+  exchanges: botExchangesSchema.optional(),
   exchange: z.string().trim().max(40).optional(), // legacy / JSON-config fallback
   riskClass: z.enum(["LOW", "MEDIUM", "HIGH"]),
   config: z.any(),

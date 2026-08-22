@@ -5,36 +5,15 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { dropClientCacheAfterActivation } from "@/app/billing/actions";
 import { SettingsCard, PrimaryAction } from "@/components/account/SettingsCard";
 import { AuthRequiredDialog } from "@/components/billing/AuthRequiredDialog";
+import { RequestSentDialog } from "@/components/billing/RequestSentDialog";
 import { Notice, type NoticeData } from "@/components/ui/Notice";
 
-/** Client-safe view of the user's subscription (Stripe stays authoritative). */
+/** Client-safe view of the viewer's admin-granted access. */
 export type SubscriptionView = {
-  plan: "MONTHLY" | "YEARLY";
-  status: string;
+  /** Whether the grant currently opens the gated tabs. */
   active: boolean;
+  /** When it ends; null is an open-ended grant. */
   currentPeriodEnd: string | null;
-  cancelAtPeriodEnd: boolean;
-  /** Admin-granted free access — there is no Stripe customer/portal to manage. */
-  isComp: boolean;
-};
-
-type PlanKey = "MONTHLY" | "YEARLY";
-
-/** Presentational plan catalog. Stripe holds the real, charged amounts. */
-const PLANS: Record<PlanKey, { label: string; price: string; cadence: string; blurb: string }> = {
-  MONTHLY: { label: "Monthly", price: "$49", cadence: "/month", blurb: "Billed monthly. Cancel anytime." },
-  YEARLY: { label: "Yearly", price: "$559", cadence: "/year", blurb: "Two months free vs. monthly." },
-};
-
-const STATUS_LABEL: Record<string, string> = {
-  ACTIVE: "Active",
-  TRIALING: "Trial",
-  PAST_DUE: "Past due",
-  UNPAID: "Unpaid",
-  CANCELED: "Canceled",
-  INCOMPLETE: "Incomplete",
-  INCOMPLETE_EXPIRED: "Expired",
-  PAUSED: "Paused",
 };
 
 function formatDate(iso: string | null): string {
@@ -47,30 +26,30 @@ function formatDate(iso: string | null): string {
 
 export function BillingSection({
   subscription,
-  hasCustomer,
   authenticated,
+  requestPending,
   justActivated = false,
 }: {
   subscription: SubscriptionView | null;
-  hasCustomer: boolean;
-  /** False for a signed-out visitor browsing plans; gates the checkout action. */
+  /** False for a signed-out visitor; gates the request action behind sign-in. */
   authenticated: boolean;
+  /** A request is already with the admin — the button stays disabled and says so. */
+  requestPending: boolean;
   /**
-   * True when this render's server-side self-heal just flipped the user to
-   * active. The other tabs may still be cached as locked in this browser; we
-   * purge that cache once so they unlock without a manual refresh.
+   * True when this render consumed an APPROVED request, i.e. an admin granted
+   * access from THEIR browser. The other tabs may still be cached as locked in
+   * this one; we purge that cache once so they unlock without a manual refresh.
    */
   justActivated?: boolean;
 }) {
   const params = useSearchParams();
   const router = useRouter();
-  const returnStatus = params.get("status");
   const gated = params.get("gated");
   const expired = params.get("expired");
 
-  // One-shot: when a self-heal just activated the plan, drop the stale (locked)
-  // Router Cache for every other tab, then re-render the current route. Guarded
-  // so router.refresh()'s re-render can't retrigger it into a loop.
+  // One-shot: when a grant just landed, drop the stale (locked) Router Cache for
+  // every other tab, then re-render the current route. Guarded so
+  // router.refresh()'s re-render can't retrigger it into a loop.
   const bustedRef = useRef(false);
   useEffect(() => {
     if (!justActivated || bustedRef.current) return;
@@ -79,185 +58,101 @@ export function BillingSection({
   }, [justActivated, router]);
 
   const [banner, setBanner] = useState<NoticeData | null>(
-    returnStatus === "success"
-      ? { type: "success", message: "Payment received. Your subscription will appear here within a few seconds." }
-      : returnStatus === "cancelled"
-        ? { type: "info", message: "Checkout cancelled — you haven't been charged." }
-        : expired
-          ? {
-              type: "error",
-              message:
-                "Your free guest trial has ended. Subscribe to a plan to regain access to the dashboard and your bots.",
-            }
-          : gated
-            ? { type: "info", message: "Subscribe to unlock the dashboard, portfolio, and your bots." }
-            : null,
+    expired
+      ? {
+          type: "error",
+          message:
+            "Your free guest trial has ended. Request access to get back into the dashboard and your bots.",
+        }
+      : gated
+        ? { type: "info", message: "Request access to unlock the dashboard, portfolio, and your bots." }
+        : null,
   );
-  const [pending, setPending] = useState<"MONTHLY" | "YEARLY" | "portal" | null>(null);
-  // A signed-out visitor who clicked a plan: which plan, so the prompt can name
-  // it. Null when the prompt is closed.
-  const [authPromptPlan, setAuthPromptPlan] = useState<PlanKey | null>(null);
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [authPrompt, setAuthPrompt] = useState(false);
 
-  /** POST to an endpoint that returns `{ url }` and redirect the browser there. */
-  async function redirectTo(endpoint: string, body?: object, key?: typeof pending) {
-    setPending(key ?? null);
+  /** Ask an admin for access. Idempotent server-side, so a re-click is harmless. */
+  async function requestAccess() {
+    // Visitors can read the page, but a request needs an account to attach to.
+    // Rather than bounce them to login (which feels like the click was ignored),
+    // explain why and offer both log in and sign up.
+    if (!authenticated) {
+      setAuthPrompt(true);
+      return;
+    }
+    setSending(true);
     setBanner(null);
     try {
-      const res = await fetch(endpoint, {
-        method: "POST",
-        headers: body ? { "Content-Type": "application/json" } : undefined,
-        body: body ? JSON.stringify(body) : undefined,
-      });
-      const data = (await res.json().catch(() => null)) as { url?: string; error?: string } | null;
-      if (res.ok && data?.url) {
-        window.location.assign(data.url);
+      const res = await fetch("/api/billing/request-access", { method: "POST" });
+      const data = (await res.json().catch(() => null)) as { error?: string } | null;
+      if (!res.ok) {
+        setBanner({ type: "error", message: data?.error ?? "Something went wrong. Please try again." });
         return;
       }
-      setBanner({ type: "error", message: data?.error ?? "Something went wrong. Please try again." });
+      setSent(true);
+      // Re-render the server component so the button settles into its
+      // "Request pending" state instead of inviting another click.
+      router.refresh();
     } catch {
       setBanner({ type: "error", message: "Network error. Please try again." });
     } finally {
-      setPending(null);
+      setSending(false);
     }
   }
 
-  const subscribe = (plan: PlanKey) => {
-    // Guests can browse plans, but checkout needs an account. Rather than bounce
-    // them straight to login (which feels like the click was ignored), surface a
-    // prompt that explains why and offers both log in and sign up.
-    if (!authenticated) {
-      setAuthPromptPlan(plan);
-      return;
-    }
-    redirectTo("/api/billing/checkout", { plan }, plan);
-  };
-  const openPortal = () => redirectTo("/api/billing/portal", undefined, "portal");
-
   const active = subscription?.active ?? false;
-  // A subscription that exists but does NOT grant access because payment lapsed.
-  // Kept separate from `active` so the card never claims "Current Plan" while the
-  // gated tabs are locked — instead we show an honest "restore access" state.
-  const paymentProblem =
-    !!subscription &&
-    !active &&
-    (subscription.status === "PAST_DUE" || subscription.status === "UNPAID");
 
   return (
     <>
       <AuthRequiredDialog
-        open={authPromptPlan !== null}
-        onClose={() => setAuthPromptPlan(null)}
+        open={authPrompt}
+        onClose={() => setAuthPrompt(false)}
         loginHref={`/login?next=${encodeURIComponent("/billing")}`}
         signupHref="/signup"
-        planLabel={authPromptPlan ? PLANS[authPromptPlan].label : undefined}
       />
+      <RequestSentDialog open={sent} onClose={() => setSent(false)} />
 
       {banner && <Notice notice={banner} />}
 
-      {subscription && active ? (
-        <SettingsCard
-          title="Current Plan"
-          subtitle="Your subscription is managed securely through Stripe."
-        >
+      {active ? (
+        <SettingsCard title="Your access" subtitle="Access to ATS-ALGO is granted by an admin.">
           <div className="flex flex-col gap-4 rounded-xl border border-line bg-background/40 p-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex flex-col gap-1.5">
               <div className="flex items-center gap-2.5">
-                <span className="text-base font-semibold text-white">
-                  {subscription.isComp ? "Complimentary access" : `${PLANS[subscription.plan].label} plan`}
-                </span>
+                <span className="text-base font-semibold text-white">Full access</span>
                 <span className="rounded-full bg-success/15 px-2 py-0.5 text-[11px] font-medium text-success">
-                  {subscription.isComp ? "Granted" : STATUS_LABEL[subscription.status] ?? subscription.status}
+                  Granted
                 </span>
               </div>
               <span className="text-xs text-muted">
-                {subscription.isComp
-                  ? subscription.currentPeriodEnd
-                    ? `Granted by your team · access until ${formatDate(subscription.currentPeriodEnd)}`
-                    : "Granted by your team · no expiry"
-                  : subscription.cancelAtPeriodEnd
-                    ? `Access ends ${formatDate(subscription.currentPeriodEnd)}`
-                    : `Renews ${formatDate(subscription.currentPeriodEnd)}`}
+                {subscription?.currentPeriodEnd
+                  ? `Granted by your team · access until ${formatDate(subscription.currentPeriodEnd)}`
+                  : "Granted by your team · no expiry"}
               </span>
             </div>
-            {/* Comp access has no Stripe customer, so there's nothing to manage. */}
-            {!subscription.isComp && (
-              <PrimaryAction onClick={openPortal} disabled={pending !== null}>
-                {pending === "portal" ? "Opening…" : "Manage billing"}
-              </PrimaryAction>
-            )}
-          </div>
-        </SettingsCard>
-      ) : paymentProblem ? (
-        // Has a subscription, but a lapsed payment means access is paused. Be
-        // honest: this is NOT an active plan (the tabs are locked), so don't show
-        // a reassuring "Current Plan" card — point them at fixing the payment.
-        <SettingsCard
-          title="Payment problem"
-          subtitle="Your subscription is past due, so access is paused until payment goes through."
-        >
-          <div className="flex flex-col gap-4 rounded-xl border border-red-500/30 bg-red-500/5 p-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex flex-col gap-1.5">
-              <div className="flex items-center gap-2.5">
-                <span className="text-base font-semibold text-white">
-                  {PLANS[subscription.plan].label} plan
-                </span>
-                <span className="rounded-full bg-red-500/15 px-2 py-0.5 text-[11px] font-medium text-red-400">
-                  {STATUS_LABEL[subscription.status] ?? subscription.status}
-                </span>
-              </div>
-              <span className="text-xs text-muted">
-                Update your payment method to restore access to the dashboard and your bots.
-              </span>
-            </div>
-            <PrimaryAction onClick={openPortal} disabled={pending !== null}>
-              {pending === "portal" ? "Opening…" : "Update payment"}
-            </PrimaryAction>
           </div>
         </SettingsCard>
       ) : (
         <SettingsCard
-          title="Choose a Plan"
-          subtitle="Unlock automated trading, live performance, and your full bot library."
+          title="Request access"
+          subtitle="Access to ATS-ALGO is granted by an admin — there is nothing to pay for here."
         >
-          <div className="grid gap-4 sm:grid-cols-2">
-            {(Object.keys(PLANS) as PlanKey[]).map((key) => {
-              const plan = PLANS[key];
-              const isPending = pending === key;
-              return (
-                <div
-                  key={key}
-                  className="flex flex-col gap-4 rounded-xl border border-line bg-background/40 p-5"
-                >
-                  <div className="flex flex-col gap-1">
-                    <span className="text-sm font-semibold text-white">{plan.label}</span>
-                    <div className="flex items-baseline gap-1">
-                      <span className="text-3xl font-semibold text-white">{plan.price}</span>
-                      <span className="text-sm text-muted">{plan.cadence}</span>
-                    </div>
-                    <span className="text-xs text-muted">{plan.blurb}</span>
-                  </div>
-                  <PrimaryAction onClick={() => subscribe(key)} disabled={pending !== null}>
-                    {isPending
-                      ? "Redirecting…"
-                      : authenticated
-                        ? `Subscribe ${plan.label.toLowerCase()}`
-                        : "Sign in to subscribe"}
-                  </PrimaryAction>
-                </div>
-              );
-            })}
+          <div className="flex flex-col gap-4 rounded-xl border border-line bg-background/40 p-5">
+            <div className="flex flex-col gap-1.5">
+              <span className="text-base font-semibold text-white">
+                {requestPending ? "Request with the admin" : "You do not have access yet"}
+              </span>
+              <span className="text-xs leading-[18px] text-muted">
+                {requestPending
+                  ? "Your request has been sent and is waiting on an admin. You will get the dashboard, your bots and live performance the moment it is approved."
+                  : "Send a request and an admin will review it. Once approved you unlock the dashboard, deploy bots, and track live performance."}
+              </span>
+            </div>
+            <PrimaryAction onClick={requestAccess} disabled={sending || requestPending}>
+              {requestPending ? "Request pending" : sending ? "Sending…" : "Request access"}
+            </PrimaryAction>
           </div>
-
-          {hasCustomer && (
-            <button
-              type="button"
-              onClick={openPortal}
-              disabled={pending !== null}
-              className="w-fit text-xs text-muted underline-offset-4 transition-colors hover:text-white hover:underline disabled:opacity-60"
-            >
-              {pending === "portal" ? "Opening…" : "View billing history & invoices"}
-            </button>
-          )}
         </SettingsCard>
       )}
     </>

@@ -49,6 +49,31 @@ const BYBIT_MARGIN_MODES: Record<string, string> = {
   PORTFOLIO_MARGIN: "portfolio",
 };
 
+/**
+ * What an API key is actually ALLOWED to do, as the venue itself reports it.
+ *
+ * Only BingX can answer this. The connect flow has always wanted it — the owner asked for
+ * withdraw-enabled keys to be blocked — and on Bitget, Bybit and BloFin there is simply no safe
+ * endpoint that reports the CURRENT key's own scope, so those venues degrade to a "withdrawal
+ * unverified" label plus guidance. Where it CAN be read, it is enforced instead of labelled.
+ */
+export type KeyScope = {
+  read: boolean;
+  /** Perpetual-futures trading. Without it a key validates fine and then cannot place an order. */
+  trade: boolean;
+  withdraw: boolean;
+  /** Whether the key is pinned to an IP allow-list. Drives the key-expiry warning on BingX. */
+  ipRestricted: boolean;
+};
+
+/** BingX permission codes, from BingX's own subAccount `apiKey/create` reference. */
+const BINGX_PERMISSIONS = { SPOT: 1, READ: 2, PERP: 3, UNIVERSAL_TRANSFER: 4, WITHDRAW: 5, INTERNAL_TRANSFER: 7 } as const;
+
+/** ccxt implicit method for GET /openApi/v1/account/apiPermissions. */
+type ApiPermissionsExchange = Exchange & {
+  accountV1PrivateGetAccountApiPermissions(params?: Record<string, unknown>): Promise<unknown>;
+};
+
 /** The parts of an order the entry path needs: what actually filled, and at what price. */
 export type FillRead = {
   average?: number;
@@ -219,6 +244,39 @@ type VenueAdapter = {
    * "isolated" here would let a bot trade on cross.
    */
   readMarginMode?(ex: Exchange, symbol: string): Promise<string | null>;
+  /**
+   * The same set-vs-check decision, for ONE-WAY position mode — and it is a separate axis from
+   * margin mode, because the venues split differently on the two.
+   *
+   * `"set"`   — per-symbol, or the venue pins it to one-way anyway once a position exists.
+   * `"check"` — ACCOUNT-GLOBAL. BingX is why this exists: `POST swap/v1/positionSide/dual`
+   *             carries NO symbol (proven on the wire), so flipping it would switch the
+   *             member's ENTIRE account out of hedge mode — including manual positions that
+   *             depend on it. That is a bigger intrusion than the margin-mode one we already
+   *             refuse to make, so it gets the same answer: read it, and decline to trade.
+   *
+   * Bitget stays `"set"` — it defaults to hedge and rejects one-way orders with 40774 until the
+   * flip, which is per-productType and was the venue this engine was built on.
+   *
+   * ⚠ BloFin is `"set"` here but its position mode is ACCOUNT-GLOBAL too, so it has the same
+   * blast radius as BingX. That is PRE-EXISTING behaviour on a proven venue, left alone
+   * deliberately rather than changed as a side effect of adding a fourth exchange — flipping it
+   * to `"check"` would refuse to trade for any member whose account is in hedge mode, and that
+   * needs its own decision and its own re-proof.
+   */
+  positionModePolicy: "set" | "check";
+  /**
+   * Read whether the account is in HEDGE mode, for a `"check"` venue. True = hedge (which every
+   * bot here is incompatible with — see the swing/one-way reversal in dispatch.ts), false =
+   * one-way, null = unknown.
+   */
+  readPositionMode?(ex: Exchange, symbol: string): Promise<boolean | null>;
+  /**
+   * Read what this key is permitted to do, where the venue exposes it. Undefined elsewhere —
+   * and that is the honest state, not a TODO: no safe endpoint on the other three reports the
+   * current key's own scope.
+   */
+  readKeyScope?(ex: Exchange): Promise<KeyScope | null>;
 };
 
 const ADAPTERS: Record<string, VenueAdapter> = {
@@ -234,6 +292,9 @@ const ADAPTERS: Record<string, VenueAdapter> = {
     readFill: fillViaFetchOrder({}),
     // Per-symbol on Bitget, so applying it touches only this bot's instrument.
     marginModePolicy: "set",
+    // Bitget defaults to HEDGE and rejects one-way orders with 40774 until it is flipped, so
+    // setting it is what makes the venue usable at all.
+    positionModePolicy: "set",
   },
   Bybit: {
     ccxtId: "bybit",
@@ -261,6 +322,8 @@ const ADAPTERS: Record<string, VenueAdapter> = {
       if (!raw) return null;
       return BYBIT_MARGIN_MODES[raw] ?? raw.toLowerCase();
     },
+    // Per-symbol on Bybit, with distinct no-change codes (110024/110025/110028) — safe to set.
+    positionModePolicy: "set",
   },
   Blofin: {
     ccxtId: "blofin",
@@ -294,6 +357,86 @@ const ADAPTERS: Record<string, VenueAdapter> = {
       const read = await ex.fetchMarginMode(symbol);
       const mode = read?.marginMode ?? (read?.info as { marginMode?: string } | undefined)?.marginMode;
       return mode ? String(mode).toLowerCase() : null;
+    },
+    // PRE-EXISTING, and knowingly inconsistent — see the ⚠ on `positionModePolicy`. BloFin's
+    // position mode is account-global, so this reaches as far as BingX's does; it is left as it
+    // was rather than changed underneath a venue that is already proven and trading.
+    positionModePolicy: "set",
+  },
+  Bingx: {
+    ccxtId: "bingx",
+    // ccxt's bingx defaults to `'spot'` (bingx.js:610) — the ONLY venue here that defaults to
+    // the wrong book. Left unset, every private call would read and trade spot.
+    options: { defaultType: "swap" },
+    // A pure hostname swap to open-api-vst. `setSandboxMode` is correct here — unlike Bybit,
+    // where it selects testnet (a different exchange) rather than the demo engine.
+    paperMode: (ex, on) => ex.setSandboxMode(on),
+    // VST lists 593 USDT perps against 823 live. Not the thin subset Bitget's paper venue is,
+    // but 7 named instruments are live-only, so the substitution still has to exist.
+    demoFallbackSymbol: "BTC/USDT:USDT",
+    // Nothing extra. ccxt derives `positionSide: "BOTH"` for a one-way account by itself
+    // (bingx.js:3221), and injecting Bitget's `marginMode`/`oneWayMode` here would leak them
+    // into the query string as junk fields — BingX signs every param it is handed.
+    orderParams: () => ({}),
+    // MANDATORY, and it is a hard throw rather than a silent wrong-book write like BloFin's:
+    // ccxt's bingx `setLeverage` raises ArgumentsRequired ("requires a side argument, one of
+    // (LONG, SHORT, BOTH)") before any round-trip. `BOTH` is the one-way value, matching the
+    // `positionSide` every order carries.
+    leverageParams: () => ({ side: "BOTH" }),
+    // FIVE. The tightest of any venue here (Bitget 50, Bybit 10) and ccxt THROWS InvalidOrder
+    // above it rather than truncating — so a 6-rung ladder is two calls, not one.
+    batchMax: 5,
+    fetchOrderParams: {},
+    readFill: fillViaFetchOrder({}),
+    // PER-SYMBOL, proven on the wire: `swap/v2/trade/marginType` carries the symbol. So unlike
+    // Bybit and BloFin this one is safe to set on the member's behalf, like Bitget.
+    marginModePolicy: "set",
+    // ACCOUNT-GLOBAL, proven on the wire: `swap/v1/positionSide/dual` carries no symbol.
+    positionModePolicy: "check",
+    async readPositionMode(ex, symbol) {
+      // ccxt types this method's return as `{}`, so the shape has to be asserted. It genuinely
+      // carries `hedged`, normalised from BingX's `dualSidePosition` string.
+      const read = (await ex.fetchPositionMode(symbol)) as { hedged?: unknown };
+      // Anything that is not a real boolean is UNKNOWN rather than "one-way" — a wrong `false`
+      // here would let a bot trade in hedge mode, where its reversal opens a second position
+      // instead of closing the first.
+      return typeof read?.hedged === "boolean" ? read.hedged : null;
+    },
+    async readKeyScope(ex) {
+      const raw = (await (ex as ApiPermissionsExchange).accountV1PrivateGetAccountApiPermissions()) as {
+        permissions?: unknown;
+        ipAddresses?: unknown;
+        // BingX's PUBLISHED shape for this endpoint is Binance-style booleans. The endpoint
+        // actually returns the numeric array below — both are read, because the doc and the
+        // venue disagree and only one of them was verified.
+        enableReading?: unknown;
+        enableFutures?: unknown;
+        enableWithdrawals?: unknown;
+        ipRestrict?: unknown;
+      } | null;
+      if (!raw) return null;
+
+      const ips = Array.isArray(raw.ipAddresses) ? raw.ipAddresses : [];
+      if (Array.isArray(raw.permissions)) {
+        const codes = new Set(raw.permissions.map(Number));
+        return {
+          read: codes.has(BINGX_PERMISSIONS.READ),
+          trade: codes.has(BINGX_PERMISSIONS.PERP),
+          withdraw: codes.has(BINGX_PERMISSIONS.WITHDRAW),
+          ipRestricted: ips.length > 0 || raw.ipRestrict === true,
+        };
+      }
+      if (typeof raw.enableReading === "boolean" || typeof raw.enableFutures === "boolean") {
+        return {
+          read: raw.enableReading === true,
+          trade: raw.enableFutures === true,
+          withdraw: raw.enableWithdrawals === true,
+          ipRestricted: ips.length > 0 || raw.ipRestrict === true,
+        };
+      }
+      // An unrecognised shape is UNKNOWN, never "no withdraw permission" — the caller decides
+      // what to do with that, and guessing the safe-sounding answer here would be a lie.
+      return null;
     },
   },
 };

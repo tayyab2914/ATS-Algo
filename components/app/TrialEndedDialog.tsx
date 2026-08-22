@@ -9,7 +9,7 @@ import { createPortal } from "react-dom";
  * click navigate — which bounced through the destination's dark loading skeleton
  * before the server redirect landed them back on Billing (a jarring black flash)
  * — the {@link Sidebar} intercepts the click and pops this instead. The only way
- * forward is to subscribe, so the single CTA routes to Billing.
+ * forward is an admin granting access, so the single CTA routes to Billing.
  *
  * Mirrors {@link AuthRequiredDialog}'s mechanics: portalled to `document.body` so
  * it escapes the sidebar's stacking context, Escape/backdrop dismiss, and body
@@ -53,8 +53,8 @@ export function TrialEndedDialog({ open, onClose }: { open: boolean; onClose: ()
           Your free trial has ended
         </h2>
         <p className="mt-2 text-sm leading-[21px] text-muted">
-          Subscribe to unlock the dashboard, deploy bots, and track live performance. Until then,
-          only Billing is available.
+          Request access to unlock the dashboard, deploy bots, and track live performance. Until
+          then, only Billing is available.
         </p>
         <div className="mt-6 flex flex-col gap-3">
           <Link
@@ -62,7 +62,7 @@ export function TrialEndedDialog({ open, onClose }: { open: boolean; onClose: ()
             onClick={onClose}
             className="flex h-12 w-full items-center justify-center rounded-2xl bg-accent px-4 text-base font-semibold leading-6 text-[#121212] transition-opacity hover:opacity-90"
           >
-            Become a member
+            Request access
           </Link>
           <button
             type="button"

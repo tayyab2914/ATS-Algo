@@ -41,6 +41,7 @@ const SKIP_REASONS: Record<string, string> = {
   noConnection: "no exchange API key connected",
   notReady: "deployment not fully configured",
   liveNotArmed: "live trading not armed (real funds protected)",
+  notEntitled: "member's access has lapsed",
   positionAlreadyOpen: "already holds an open position",
 };
 

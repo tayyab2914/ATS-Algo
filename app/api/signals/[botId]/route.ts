@@ -22,7 +22,7 @@ import {
  * and is compared in constant time. `proxy.ts` does not guard `/api/*`, which is
  * what makes this reachable at all.
  *
- * The body is read with `request.text()` and parsed once, mirroring the Stripe
+ * The body is read with `request.text()` and parsed once, the standard signed-
  * webhook. Status codes are chosen for the sender's retry logic: 4xx means "never
  * send this again", 5xx means "try again".
  *

@@ -80,7 +80,7 @@ export type MoveWorkingResult =
       /** Older generations actually cancelled. Always empty on a venue that overwrites. */
       canceled: string[];
     }
-  | { moved: false; reason: "wrongSideRace" | "notConfirmed" };
+  | { moved: false; reason: "wrongSideRace" | "notConfirmed" | "positionGone" };
 
 export type StopStrategy = {
   venue: string;
@@ -445,7 +445,157 @@ async function tpslByAge(ex: Exchange, symbol: string): Promise<RestingStop[]> {
     });
 }
 
-const STRATEGIES: Record<string, StopStrategy> = { Bitget: bitget, Bybit: bybit, Blofin: blofin };
+// ── BingX ────────────────────────────────────────────────────────────────────
+
+/**
+ * Structurally BloFin's shape, arrived at independently — every claim below was established with
+ * real orders on the VST demo engine (scripts/probe-bingx-stops.ts, scripts/probe-bingx-reversal.ts):
+ *
+ *   ONE ORDER FAMILY, AND `trigger` IS NOT A FILTER. `fetchOpenOrders(symbol)` and the same call
+ *     with `{trigger: true}` hit the SAME endpoint and return the SAME rows — the flag just rides
+ *     along in the query string. So there is no family to filter on: stops are told apart from
+ *     ladder legs by their raw `type` (`STOP_MARKET`), and from each other only by AGE.
+ *   STOPS STACK. Two rested simultaneously at 64662.5 and 69699.8 under separate ids, so the
+ *     ratchet must CANCEL-FIRST (Bitget/BloFin), never overwrite (Bybit).
+ *   SIZED, never sizeless. A sizeless mint is rejected before it leaves ccxt (amount below the
+ *     precision floor), so a stop carries a fixed size and goes stale as rungs fill beneath it.
+ *   NOT STARVED — the question that could have sunk the venue, and it was answered twice. A sized
+ *     reduce-only STOP_MARKET closed the WHOLE position with a full-size reduce-only ladder
+ *     resting. Bitget's equivalent shape fills a sliver and dies; BingX's does not.
+ *   THE BARE SWEEP IS SAFE HERE, and unusually so: `cancelAllOrders(symbol)` cleared the resting
+ *     reduce-only LIMIT legs but left BOTH stops untouched. So it removes the ladder without ever
+ *     stripping protection — the one venue where sweep-then-close is not merely tolerable but
+ *     strictly better.
+ *   STOPS ARE REAPED WITH THE POSITION. Closing a position removed both its stops with no cancel
+ *     from us, and a stop cannot even be MINTED while flat (`109420 position not exist`). So the
+ *     stray-stop-binds-to-a-reversal hazard that `clearWorking` exists for on Bitget cannot occur
+ *     here — which is why this venue needs no naked-position discipline of its own.
+ *
+ * As on BloFin, the entry's backstop is an ordinary cancellable stop, indistinguishable by kind
+ * from a ratchet generation. AGE is the only discriminator: the oldest resting stop is the
+ * backstop and is never cancelled; everything newer is a generation and may be.
+ */
+const bingx: StopStrategy = {
+  venue: "Bingx",
+  // Two EFFECTIVE slots, enforced here rather than by the venue — the oldest stop is held back
+  // from every cancel, so a ratchet mistake still leaves the entry's backstop in place.
+  slots: 2,
+  // PROVEN false, and it is the venue being safe rather than us avoiding the call: a bare
+  // `cancelAllOrders` took the ladder and left both stops resting on an open position.
+  bareSweepRemovesBackstop: false,
+
+  // ccxt folds this into the entry as a `stopLoss` JSON field whose `quantity` DEFAULTS to the
+  // entry amount (bingx.js:3189) — so it arrives as a sized STOP_MARKET with reduceOnly true,
+  // resting in the ordinary order list with its own id.
+  entryStopParams: (triggerPrice) => ({ stopLoss: { triggerPrice } }),
+
+  async findBackstop(ex, symbol) {
+    const [oldest] = await bingxStopsByAge(ex, symbol);
+    return oldest ? { ...oldest, slot: "BACKSTOP" } : null;
+  },
+
+  async findWorking(ex, symbol) {
+    // Everything EXCEPT the oldest. Empty while only the entry's stop rests, which is correct:
+    // the ratchet has not placed anything yet.
+    return (await bingxStopsByAge(ex, symbol)).slice(1);
+  },
+
+  async moveWorking(ex, args) {
+    // CANCEL-FIRST over ratchet generations only — never the oldest, which is the backstop.
+    const canceled: string[] = [];
+    const restingStops = await bingx.findWorking(ex, args.symbol);
+    const mine = restingStops.find((stop) => stop.clientOid === args.clientOid) ?? null;
+    for (const stale of restingStops) {
+      if (mine && stale.id === mine.id) continue; // never cancel our own generation
+      try {
+        await ex.cancelOrder(stale.id, args.symbol);
+        canceled.push(stale.id);
+      } catch {
+        /* already gone — it triggered, or the venue reaped it with the position */
+      }
+    }
+    // A crashed prior attempt already placed this exact generation — adopt it rather than
+    // re-place, exactly as on Bitget.
+    if (mine) return { moved: true, orderId: mine.id, adopted: true, canceled };
+
+    try {
+      // `reduceOnly` MUST be passed explicitly. ccxt sets a LOCAL reduceOnly=true on the
+      // stopLossPrice path (bingx.js:3144) but NEVER writes `request['reduceOnly']` — the flag
+      // reaches the wire only as passthrough of these params, and in hedge mode it is dropped
+      // entirely in favour of positionSide. Omitting it here would mint a plain STOP_MARKET.
+      await ex.createOrder(args.symbol, "market", args.exitSide, args.size, undefined, {
+        stopLossPrice: args.stopPrice,
+        reduceOnly: true,
+        clientOrderId: args.clientOid,
+      });
+    } catch (error) {
+      const raw = error instanceof Error ? error.message : String(error);
+      // WRONG-SIDE RACE. ccxt maps neither of these codes, so they arrive as a bare
+      // ExchangeError and must be matched by number and text:
+      //   110412  "Stop Loss price should be greater than the current price" (and its mirror
+      //           for a short) — the mark crossed the trigger between our guard and the venue's.
+      if (/\b110412\b|stop loss price should be (greater|less|lower|higher)/i.test(raw)) {
+        return { moved: false, reason: "wrongSideRace" };
+      }
+      // 109420 "position not exist" — the position closed between `ratchetStop`'s fresh read and
+      // this write (a rung completing it, or the backstop firing). Benign and expected under a
+      // filling ladder, and NOT a failure: there is nothing left to protect. Distinguished from
+      // the race above because it is not about price at all.
+      if (/\b109420\b|position not exist/i.test(raw)) return { moved: false, reason: "positionGone" };
+      throw error;
+    }
+
+    // Read back rather than trust the mint: the create response's id is not reliably the one the
+    // cancel path needs, and this also confirms the stop is really resting.
+    const after = await bingx.findWorking(ex, args.symbol);
+    const placed = after.find((s) => s.clientOid === args.clientOid) ?? after[after.length - 1];
+    if (!placed) return { moved: false, reason: "notConfirmed" };
+    return { moved: true, orderId: placed.id, adopted: false, canceled };
+  },
+
+  async clearWorking(ex, symbol) {
+    // Ratchet generations only — the oldest is the backstop and dies with the position anyway.
+    for (const stop of await bingx.findWorking(ex, symbol)) {
+      await ex.cancelOrder(stop.id, symbol).catch(() => {});
+    }
+  },
+};
+
+/**
+ * Every resting STOP order, OLDEST FIRST.
+ *
+ * Age is load-bearing rather than cosmetic: it is the only thing telling the entry's backstop
+ * apart from a ratchet generation, because both are `STOP_MARKET` rows in the one order family.
+ *
+ * The type match is an exact allow-list, NOT a substring test on "STOP": `TRAILING_STOP_MARKET`
+ * would also contain it, and sweeping a trailing stop the member set by hand into our working set
+ * would let the ratchet cancel someone else's order.
+ */
+async function bingxStopsByAge(ex: Exchange, symbol: string): Promise<RestingStop[]> {
+  const orders = await ex.fetchOpenOrders(symbol).catch(() => []);
+  const STOP_TYPES = new Set(["STOP_MARKET", "STOP"]);
+  return orders
+    .filter((order) => {
+      const type = (rawOf(order) as { type?: string }).type;
+      return Boolean(order.id) && type !== undefined && STOP_TYPES.has(type);
+    })
+    .map((order) => ({
+      id: order.id as string,
+      clientOid: order.clientOrderId ?? (rawOf(order) as { clientOrderID?: string }).clientOrderID,
+      triggerPrice: numberOrNull((rawOf(order) as { stopPrice?: string }).stopPrice),
+      slot: "WORKING" as const,
+      _at: Number(order.timestamp ?? 0),
+    }))
+    // BingX ids are monotonic numeric strings of equal width, so they are a sound tie-break when
+    // two stops share a timestamp — which they can, the venue stamping only to the second.
+    .sort((a, b) => a._at - b._at || String(a.id).localeCompare(String(b.id)))
+    .map(({ _at, ...stop }) => {
+      void _at;
+      return stop;
+    });
+}
+
+const STRATEGIES: Record<string, StopStrategy> = { Bitget: bitget, Bybit: bybit, Blofin: blofin, Bingx: bingx };
 
 /** The stop mechanics for a venue. Throws for a venue the engine cannot trade. */
 export function stopStrategyFor(exchange: string): StopStrategy {

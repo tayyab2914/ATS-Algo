@@ -44,6 +44,27 @@ export function isAdminEmail(email: string): boolean {
 }
 
 /**
+ * Every address that should be told about an admin-facing event, de-duplicated.
+ *
+ * The union of DB and env is not belt-and-braces — it is required. An admin
+ * configured only through `ADMIN_EMAIL`/`SUPERADMIN_EMAIL` has NO `users` row
+ * until the first time they sign in (the row is created lazily by the admin
+ * unlock route), so a DB-only query silently notifies nobody on a fresh
+ * deployment. Conversely, admins promoted from Members Management exist only in
+ * the DB. Suspended/banned admins are excluded.
+ */
+export async function adminEmails(): Promise<string[]> {
+  const rows = await prisma.user.findMany({
+    where: { role: "ADMIN", status: "ACTIVE" },
+    select: { email: true },
+  });
+  const configured = [process.env.SUPERADMIN_EMAIL, process.env.ADMIN_EMAIL]
+    .map((e) => (e ?? "").trim().toLowerCase())
+    .filter((e) => e.length > 0);
+  return [...new Set([...configured, ...rows.map((r) => r.email.trim().toLowerCase())])];
+}
+
+/**
  * Does this email belong to an admin who may use passwordless admin sign-in?
  * True for the configured ADMIN_EMAIL, or any account explicitly granted the
  * ADMIN role from Admin Management — provided that account is in good standing.

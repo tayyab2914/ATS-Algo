@@ -99,7 +99,7 @@ export function AddToMyBotsButton({
       onClick={handleClick}
       disabled={pending}
       aria-pressed={added}
-      title={locked ? "Deploying bots is a members-only feature" : undefined}
+      title={locked ? "Deploying bots needs access granted by an admin" : undefined}
       className={cn(
         "inline-flex h-11 items-center justify-center gap-2 rounded-full px-5 text-sm font-semibold transition-colors disabled:opacity-70",
         locked
@@ -110,7 +110,7 @@ export function AddToMyBotsButton({
       )}
     >
       {locked ? <LockIcon /> : added ? <CheckIcon /> : <PlusIcon />}
-      {locked ? "Become a member to deploy" : added ? "Added to My Bots" : "Add to My Bots"}
+      {locked ? "Request access to deploy" : added ? "Added to My Bots" : "Add to My Bots"}
     </button>
   );
 }

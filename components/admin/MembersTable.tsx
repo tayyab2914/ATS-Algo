@@ -18,12 +18,14 @@ import { cn } from "@/lib/cn";
 export type MemberStatus = "ACTIVE" | "SUSPENDED" | "BANNED";
 
 export type MemberSubscription = {
-  /** Short pill text, e.g. "Yearly", "Free grant", "Free". */
+  /** Short pill text, e.g. "Access granted", "Access ended", "Requested". */
   label: string;
-  /** Whether the plan currently grants access. */
+  /** Whether the grant currently opens the gated tabs. */
   active: boolean;
-  /** Granted by an admin (no Stripe charge). */
-  isComp: boolean;
+  /** A grant row exists at all — it may have lapsed. This is what "Revoke" acts on. */
+  granted: boolean;
+  /** The member has an access request waiting on an admin. */
+  requested: boolean;
 };
 
 /** Guest Mode trial standing, present only for non-paying, non-admin accounts. */
@@ -68,7 +70,7 @@ const TYPE_LABEL: Record<MemberType, string> = {
   GUEST: "Guest",
 };
 
-/** Admin → ADMIN; a non-admin with active access → MEMBER; otherwise → GUEST. */
+/** Admin → ADMIN; a non-admin with live granted access → MEMBER; otherwise → GUEST. */
 function memberType(m: MemberRow): MemberType {
   if (m.role === "ADMIN") return "ADMIN";
   return m.guest ? "GUEST" : "MEMBER";
@@ -81,6 +83,7 @@ type MemberAction =
   | "forceLogout"
   | "grantFree"
   | "revokeFree"
+  | "declineRequest"
   | "delete"
   | "demote";
 
@@ -96,9 +99,11 @@ function successMessage(member: MemberRow, action: MemberAction): string {
     case "forceLogout":
       return `${who} has been signed out of all sessions.`;
     case "grantFree":
-      return `Free access granted to ${who}.`;
+      return `Access granted to ${who}.`;
     case "revokeFree":
-      return `Free access revoked from ${who}.`;
+      return `Access revoked from ${who}. Their live-trading arm was switched off.`;
+    case "declineRequest":
+      return `Access request from ${who} declined.`;
     case "delete":
       return `${who} has been permanently deleted.`;
     case "demote":
@@ -134,7 +139,7 @@ function guestTrialText(guest: MemberGuest): string {
   return guest.daysLeft === 1 ? "1 day left" : `${guest.daysLeft} days left`;
 }
 
-/** Free-subscription grant lengths offered in the row menu. `0` = perpetual. */
+/** Access grant lengths offered in the row menu. `0` = no expiry. */
 const GRANT_OPTIONS: { label: string; months: number }[] = [
   { label: "1 month", months: 1 },
   { label: "3 months", months: 3 },
@@ -183,10 +188,10 @@ export function MembersTable({
   /** Download the currently-filtered members as a CSV (emails for marketing etc.). */
   function exportCsv() {
     const cell = (v: string) => `"${String(v).replace(/"/g, '""')}"`;
-    const header = ["Name", "Email", "Type", "Plan", "Trial days left", "Status", "Session", "Joined"];
+    const header = ["Name", "Email", "Type", "Access", "Trial days left", "Status", "Session", "Joined"];
     const rows = filtered.map((m) => {
       const type = memberType(m);
-      const plan = type === "MEMBER" ? m.subscription.label : "";
+      const access = type === "MEMBER" ? m.subscription.label : m.subscription.requested ? "Requested" : "";
       const trial = m.guest
         ? m.guest.state === "expired"
           ? "expired"
@@ -194,7 +199,7 @@ export function MembersTable({
             ? "not started"
             : String(m.guest.daysLeft)
         : "";
-      return [m.name, m.email, TYPE_LABEL[type], plan, trial, STATUS_LABEL[m.status], m.loggedIn ? "Signed in" : "Signed out", m.joined];
+      return [m.name, m.email, TYPE_LABEL[type], access, trial, STATUS_LABEL[m.status], m.loggedIn ? "Signed in" : "Signed out", m.joined];
     });
     const csv = [header, ...rows].map((r) => r.map(cell).join(",")).join("\r\n");
     // Prepend a BOM so Excel reads UTF-8 emails/names correctly.
@@ -301,7 +306,7 @@ export function MembersTable({
               <th className="px-4 py-3 font-semibold">Name</th>
               <th className="px-4 py-3 text-center font-semibold">Email</th>
               <th className="px-4 py-3 text-center font-semibold">Role</th>
-              <th className="px-4 py-3 text-center font-semibold">Plan</th>
+              <th className="px-4 py-3 text-center font-semibold">Access</th>
               <th className="px-4 py-3 text-center font-semibold">Joined</th>
               <th className="px-4 py-3 text-center font-semibold">Session</th>
               <th className="px-4 py-3 text-center font-semibold">Status</th>
@@ -332,10 +337,19 @@ export function MembersTable({
                       <Pill className={TYPE_PILL[type]}>{TYPE_LABEL[type]}</Pill>
                     </td>
                     <td className="px-4 py-4 text-center">
-                      {type === "GUEST" ? (
-                        <span className="text-xs text-muted">{member.guest ? guestTrialText(member.guest) : "—"}</span>
-                      ) : type === "ADMIN" ? (
+                      {type === "ADMIN" ? (
                         <span className="text-sm text-muted">—</span>
+                      ) : type === "GUEST" ? (
+                        // A guest who has asked for access is the one an admin
+                        // needs to spot in this table, so the request outranks
+                        // the trial countdown in the cell.
+                        member.subscription.requested ? (
+                          <Pill className="bg-[#F4A825]/10 text-[#F4A825]">Requested</Pill>
+                        ) : (
+                          <span className="text-xs text-muted">
+                            {member.guest ? guestTrialText(member.guest) : "—"}
+                          </span>
+                        )
                       ) : (
                         <Pill className="bg-accent/10 text-accent">{member.subscription.label}</Pill>
                       )}
@@ -427,8 +441,10 @@ function RowMenu({
   onAction: (member: MemberRow, action: MemberAction, durationMonths?: number) => void;
 }) {
   const isAdmin = member.role === "ADMIN";
-  const hasComp = member.subscription.isComp;
-  const canGrant = !member.subscription.active || hasComp;
+  // A row exists (live or lapsed) — that is what there is to revoke. Granting is
+  // always available: on a live grant it re-dates the window, which is how an
+  // admin extends or shortens someone's access.
+  const granted = member.subscription.granted;
 
   // Fixed to the viewport, anchored under (or above) the trigger so the table's
   // horizontal-scroll container can't clip it.
@@ -462,7 +478,7 @@ function RowMenu({
           </>
         ) : view === "grant" ? (
           <>
-            <p className="px-3 py-2 text-xs font-semibold text-muted">Grant free access for…</p>
+            <p className="px-3 py-2 text-xs font-semibold text-muted">Grant access for…</p>
             {GRANT_OPTIONS.map((opt) => (
               <MenuItem
                 key={opt.label}
@@ -533,19 +549,29 @@ function RowMenu({
 
             <div className="my-1 h-px bg-line" />
 
-            {hasComp ? (
+            <MenuItem
+              icon={<GiftIcon />}
+              label={granted ? "Extend / change access" : "Grant access"}
+              disabled={busy}
+              onClick={() => onView("grant")}
+            />
+
+            {granted && (
               <MenuItem
-                icon={<GiftIcon />}
-                label="Revoke free access"
+                icon={<BanIcon />}
+                label="Revoke access"
+                tone="danger"
                 disabled={busy}
                 onClick={() => onAction(member, "revokeFree")}
               />
-            ) : (
+            )}
+
+            {member.subscription.requested && (
               <MenuItem
-                icon={<GiftIcon />}
-                label="Grant free subscription"
-                disabled={busy || !canGrant}
-                onClick={() => onView("grant")}
+                icon={<BanIcon />}
+                label="Decline request"
+                disabled={busy}
+                onClick={() => onAction(member, "declineRequest")}
               />
             )}
 

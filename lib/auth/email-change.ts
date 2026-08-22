@@ -167,8 +167,7 @@ export type ConfirmNewResult =
  * Verify the stage-2 code (sent to the new address) and commit the change:
  * write `users.email`, mark it verified (ownership was just proven), and clear
  * the pending request plus any stale verification link. The session is re-issued
- * by the caller. Returns the updated user so the route can refresh the cookie
- * and sync Stripe.
+ * by the caller. Returns the updated user so the route can refresh the cookie.
  */
 export async function confirmNewEmail(userId: string, code: string): Promise<ConfirmNewResult> {
   const req = await prisma.emailChangeRequest.findUnique({ where: { userId } });

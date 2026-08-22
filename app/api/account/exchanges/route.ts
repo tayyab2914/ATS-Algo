@@ -26,18 +26,18 @@ export async function POST(request: NextRequest) {
   const parsed = exchangeAddSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return zodFail(parsed.error);
 
-  const { exchange, apiKey, apiSecret, passphrase } = parsed.data;
+  const { exchange, apiKey, apiSecret, passphrase, sandbox } = parsed.data;
 
   if (!exchangeEnabled(exchange)) {
     return fail(`${exchange} connections aren't available yet.`, 400);
   }
 
   // Validate the key against the exchange (read-only) before persisting anything.
-  const result = await validateExchangeKey(exchange, {
-    apiKey,
-    apiSecret,
-    passphrase: passphrase || undefined,
-  });
+  const result = await validateExchangeKey(
+    exchange,
+    { apiKey, apiSecret, passphrase: passphrase || undefined },
+    sandbox,
+  );
   if (!result.ok) return fail(result.message, result.status);
 
   // Bind ciphertext to this user+exchange so a leaked row can't be replayed.
@@ -47,7 +47,10 @@ export async function POST(request: NextRequest) {
     apiKeyEnc: encryptSecret(apiKey, aad),
     apiSecretEnc: encryptSecret(apiSecret, aad),
     passphraseEnc: passphrase ? encryptSecret(passphrase, aad) : null,
-    sandbox: result.sandbox, // auto-detected: demo (true) vs live (false) key
+    // Auto-detected where the venue allows it, and taken from the member's declaration where
+    // it does not (BingX) — either way `result.sandbox` is the value that was actually PROVEN
+    // against a host, never the raw request field.
+    sandbox: result.sandbox,
     keyVersion: CURRENT_KEY_VERSION,
     permissions: result.permissions,
     lastVerifiedAt: new Date(),

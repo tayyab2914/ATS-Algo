@@ -8,7 +8,10 @@ import { prisma } from "../lib/db";
 
 async function main() {
   const email = (process.env.CHECK_EMAIL ?? "you@example.com").toLowerCase();
-  const u = await prisma.user.findUnique({ where: { email }, include: { subscription: true } });
+  const u = await prisma.user.findUnique({
+    where: { email },
+    include: { subscription: true, subscriptionRequest: true },
+  });
   if (!u) {
     console.log(`No user found for ${email}`);
     return;
@@ -24,10 +27,18 @@ async function main() {
         guestExpiresAt: u.guestExpiresAt,
         subscription: u.subscription
           ? {
-              status: u.subscription.status,
-              isComp: u.subscription.isComp,
-              plan: u.subscription.plan,
               currentPeriodEnd: u.subscription.currentPeriodEnd,
+              // The whole entitlement rule, inlined so the output answers the
+              // question without the reader having to date-compare by eye.
+              active:
+                u.subscription.currentPeriodEnd === null ||
+                u.subscription.currentPeriodEnd > new Date(),
+            }
+          : null,
+        accessRequest: u.subscriptionRequest
+          ? {
+              status: u.subscriptionRequest.status,
+              requestedAt: u.subscriptionRequest.requestedAt,
             }
           : null,
       },

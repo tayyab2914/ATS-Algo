@@ -7,7 +7,6 @@ import { cn } from "@/lib/cn";
 const RISK_LABEL = { LOW: "Low", MEDIUM: "Medium", HIGH: "High" } as const;
 
 export type SignupType = "member" | "guest";
-export type ChurnKind = "canceled" | "pastDue" | "notRenewing";
 
 export type EngineHealth = {
   /** Distinct bots a member has deployed AND switched on. */
@@ -34,18 +33,12 @@ export type AdminOverviewData = {
   topBots: { id: string; name: string; category: string; winRate: number; profitFactor: number; d30: number }[];
   revisions: { id: string; botId: string; botName: string; message: string; date: string }[];
   signups: { id: string; name: string; date: string; type: SignupType }[];
-  churn: {
-    canceled: number;
-    pastDue: number;
-    notRenewing: number;
-    recent: { id: string; name: string; email: string; status: ChurnKind; date: string }[];
+  /** Members waiting on an access decision. Replaced the churn card: with nothing
+   *  to buy there is no past-due or non-renewal to chase, but there IS a queue. */
+  requests: {
+    pending: number;
+    recent: { id: string; name: string; email: string; date: string }[];
   };
-};
-
-const CHURN_BADGE: Record<ChurnKind, { label: string; className: string }> = {
-  canceled: { label: "Cancelled", className: "bg-[#D2031E]/10 text-[#D2031E]" },
-  pastDue: { label: "Past due", className: "bg-[#F4A825]/10 text-[#F4A825]" },
-  notRenewing: { label: "Not renewing", className: "bg-[#F4A825]/10 text-[#F4A825]" },
 };
 
 const pct = (x: number) => `${x >= 0 ? "+" : ""}${x.toFixed(2)}%`;
@@ -60,7 +53,7 @@ export function AdminOverview({ data }: { data: AdminOverviewData }) {
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <KpiTile label="Published Bots" value={String(data.publishedBots)} sub={`of ${data.totalBots} total`} Icon={ToggleIcon} />
         <KpiTile label="Users" value={data.users.toLocaleString("en-US")} Icon={ShieldUsersIcon} />
-        <KpiTile label="Paying Subscribers" value={data.subscribers.toLocaleString("en-US")} Icon={GiftIcon} />
+        <KpiTile label="Members with Access" value={data.subscribers.toLocaleString("en-US")} Icon={GiftIcon} />
         <KpiTile label="New Signups" value={data.newSignups.toLocaleString("en-US")} sub="last 30 days" Icon={UserIcon} />
       </div>
 
@@ -231,35 +224,44 @@ export function AdminOverview({ data }: { data: AdminOverviewData }) {
         </AdminCard>
       </div>
 
-      {/* Cancellations & non-renewals */}
+      {/* Access requests */}
       <AdminCard
-        title="Cancellations & non-renewals"
-        subtitle="Subscriptions that ended, are failing to renew, or are set to lapse — prime re-engagement targets."
+        title="Access requests"
+        subtitle="Members who have asked for access and are waiting on a decision."
       >
         <div className="flex flex-col gap-5">
-          <div className="grid grid-cols-3 gap-3">
-            <MiniStat label="Cancelled" value={data.churn.canceled} tone="danger" Icon={GiftIcon} />
-            <MiniStat label="Past due" value={data.churn.pastDue} tone="warning" Icon={ClockIcon} />
-            <MiniStat label="Set to cancel" value={data.churn.notRenewing} tone="warning" Icon={ToggleIcon} />
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <MiniStat
+              label="Pending"
+              value={data.requests.pending}
+              tone={data.requests.pending > 0 ? "warning" : "muted"}
+              Icon={ClockIcon}
+            />
+            <MiniStat label="With access" value={data.subscribers} tone="success" Icon={GiftIcon} />
           </div>
 
-          {data.churn.recent.length === 0 ? (
-            <p className="text-sm text-muted">No cancellations or lapses — nice.</p>
+          {data.requests.recent.length === 0 ? (
+            <p className="text-sm text-muted">Nobody is waiting — the queue is clear.</p>
           ) : (
             <div className="flex flex-col gap-2">
-              <p className="text-xs font-semibold text-muted">Most recent</p>
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-semibold text-muted">Waiting longest</p>
+                <Link href="/admin/management" className="text-xs font-semibold text-accent hover:underline">
+                  Review in Members
+                </Link>
+              </div>
               <ul className="flex flex-col gap-3">
-                {data.churn.recent.map((c) => (
-                  <li key={c.id} className="flex items-center justify-between gap-3">
+                {data.requests.recent.map((r) => (
+                  <li key={r.id} className="flex items-center justify-between gap-3">
                     <span className="flex min-w-0 flex-col">
-                      <span className="truncate text-sm font-semibold text-white">{c.name}</span>
-                      <span className="truncate text-xs text-muted">{c.email}</span>
+                      <span className="truncate text-sm font-semibold text-white">{r.name}</span>
+                      <span className="truncate text-xs text-muted">{r.email}</span>
                     </span>
                     <span className="flex shrink-0 items-center gap-2">
-                      <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-semibold", CHURN_BADGE[c.status].className)}>
-                        {CHURN_BADGE[c.status].label}
+                      <span className="rounded-full bg-[#F4A825]/10 px-2 py-0.5 text-[11px] font-semibold text-[#F4A825]">
+                        Pending
                       </span>
-                      <span className="text-xs text-muted">{c.date}</span>
+                      <span className="text-xs text-muted">{r.date}</span>
                     </span>
                   </li>
                 ))}

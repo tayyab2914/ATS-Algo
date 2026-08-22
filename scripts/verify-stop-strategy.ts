@@ -14,6 +14,11 @@
 //                      entry's backstop is an ordinary cancellable member of it. The strategy
 //                      holds back the OLDEST as the backstop so a ratchet cancel can never take
 //                      it; without that, cancelling the family leaves the position naked.
+//   BingX  (slots 2, enforced by US) — structurally BloFin's shape, reached independently: one
+//                      order family, stops STACK, all sized, oldest held back as the backstop.
+//                      It differs in what it does NOT need — the venue reaps stops with the
+//                      position and refuses to mint one while flat, so no stray stop can bind to
+//                      a reversal.
 //
 // Only ever the paper engines: each venue's client is checked for its own paper marker before a
 // single order goes out. Everything through ccxt.
@@ -21,6 +26,7 @@
 //   NODE_OPTIONS="--conditions=react-server" npx tsx scripts/verify-stop-strategy.ts
 import "dotenv/config";
 import type { Exchange } from "ccxt";
+import ccxt, { type MarketInterface } from "ccxt";
 import { adapterFor, exchangeClient, getMarket, livePosition, type TradeCreds } from "../lib/execution/client";
 import { stopStrategyFor } from "../lib/execution/stops";
 
@@ -75,7 +81,36 @@ const CASES: VenueCase[] = [
     assertPaper: (ex) => JSON.stringify(ex.urls.api).includes("api-demo"),
     sizeMultiple: 5, // 0.005
   },
+  {
+    venue: "Bingx",
+    creds: {
+      apiKey: process.env.BINGX_DEMO_KEY ?? "", apiSecret: process.env.BINGX_DEMO_SECRET ?? "", sandbox: true,
+    },
+    // BingX swaps HOST to the VST engine. NOTE the same key also works on production, so this
+    // assertion is the ONLY thing standing between this suite and real money.
+    assertPaper: (ex) => JSON.stringify(ex.urls.api).includes("open-api-vst"),
+    sizeMultiple: 40, // minAmount 0.0001 -> 0.004 BTC, clearing the 2 USDT per-rung floor
+  },
 ];
+
+/**
+ * The paper market descriptor, WITHOUT requiring a database.
+ *
+ * `getMarket` reads (and writes) the `market_cache` table, so with the database unavailable this
+ * whole venue proof could not run — even though every question it answers is about the exchange.
+ * The cache is still preferred when it is reachable, because that is the path production takes.
+ */
+async function marketFor(venue: string): Promise<MarketInterface | undefined> {
+  const cached = await getMarket(venue, SYMBOL, true).catch(() => null);
+  if (cached) return cached;
+  const adapter = adapterFor(venue);
+  const Ctor = (ccxt as unknown as Record<string, new (c: Record<string, unknown>) => Exchange>)[adapter.ccxtId];
+  const pub = new Ctor({ enableRateLimit: true, timeout: 20_000, options: { ...adapter.options } });
+  pub.has["fetchCurrencies"] = false;
+  adapter.paperMode(pub, true);
+  await pub.loadMarkets();
+  return pub.markets[SYMBOL] as MarketInterface | undefined;
+}
 
 async function flatten(ex: Exchange, venue: string, symbol: string) {
   const strategy = stopStrategyFor(venue);
@@ -114,7 +149,7 @@ async function runVenue(testCase: VenueCase) {
   }
 
   const strategy = stopStrategyFor(venue);
-  const market = await getMarket(venue, SYMBOL, true);
+  const market = await marketFor(venue);
   if (!market) { check(`${venue}: demo lists ${SYMBOL}`, false, "no market"); return; }
   const ex = await exchangeClient(venue, creds, [market]);
   if (!testCase.assertPaper(ex)) throw new Error(`REFUSING TO RUN: ${venue} client is not on the paper engine`);
@@ -126,10 +161,20 @@ async function runVenue(testCase: VenueCase) {
 
   // Prep. Errors that mean "already correct" are expected and swallowed — a no-op leverage
   // change is 110043/BadRequest on Bybit, not a no-change.
-  await ex.setPositionMode(false, SYMBOL).catch(() => {});
+  const adapter = adapterFor(venue);
+  // Only where the engine itself would set it. On a `"check"` venue (BingX) position mode is
+  // ACCOUNT-GLOBAL, so even a test fixture must not flip it — the run refuses instead.
+  if (adapter.positionModePolicy === "set") {
+    await ex.setPositionMode(false, SYMBOL).catch(() => {});
+  } else {
+    const hedged = await adapter.readPositionMode?.(ex, SYMBOL).catch(() => null);
+    if (hedged !== false) throw new Error(`${venue} account is not in one-way mode (hedged=${hedged}) — switch it, then re-run`);
+    check("account is one-way (checked, not set)", true);
+  }
   await ex.setMarginMode(MARGIN_MODE, SYMBOL).catch(() => {});
-  // marginMode is mandatory for BloFin: ccxt defaults setLeverage to CROSS.
-  await ex.setLeverage(LEVERAGE, SYMBOL, { marginMode: MARGIN_MODE }).catch(() => {});
+  // The venue's OWN leverage params — mandatory on two venues for opposite reasons: BloFin
+  // defaults to CROSS without `marginMode`, and BingX THROWS without `side`.
+  await ex.setLeverage(LEVERAGE, SYMBOL, adapter.leverageParams(MARGIN_MODE)).catch(() => {});
 
   const minAmount = Number(market.limits?.amount?.min ?? 0.001);
   const size = Number(ex.amountToPrecision(SYMBOL, minAmount * testCase.sizeMultiple));
@@ -139,9 +184,11 @@ async function runVenue(testCase: VenueCase) {
 
   try {
     // ── entry, with the venue's own attached-stop params ──────────────────────
+    // The venue's OWN order params. Hardcoding Bitget's `marginMode` + `oneWayMode` here used to
+    // be harmless because the other adapters ignored them — but BingX SIGNS every parameter it is
+    // handed, so junk fields ride into the signed query string.
     const entry = await ex.createOrder(SYMBOL, "market", "buy", size, undefined, {
-      marginMode: MARGIN_MODE,
-      oneWayMode: true,
+      ...adapter.orderParams(MARGIN_MODE),
       ...strategy.entryStopParams(backstopPrice),
     });
     check("entry filled", Boolean(entry.id), `id=${entry.id?.slice(0, 12)}`);

@@ -16,7 +16,8 @@
 // Run: npx tsx scripts/verify-bot-editing.ts
 import { readFileSync } from "node:fs";
 import { profileLeverage, withLeverage, withRatchetPct, type BotConfig } from "../lib/bot-config.ts";
-import { botConfigError, ladderGeometryError, leverageError } from "../lib/validation.ts";
+import { BOT_EXCHANGES } from "../lib/bot-exchanges.ts";
+import { botConfigError, botExchangesSchema, ladderGeometryError, leverageError } from "../lib/validation.ts";
 
 let failures = 0;
 const check = (label: string, pass: boolean, detail = "") => {
@@ -81,6 +82,27 @@ check("125x is the ceiling", leverageError(125) === null && leverageError(126) !
 check("NaN is refused", leverageError(Number.NaN) !== null);
 check("the schema agrees at the edges", botConfigError(withLeverage(modern, "MEDIUM", 125), "MEDIUM") === null);
 check("…and rejects beyond them", botConfigError(withLeverage(modern, "MEDIUM", 200), "MEDIUM") !== null);
+
+
+console.log("\n7. The admin-allowed exchange set tracks the venue registry");
+// THE REGRESSION THIS SECTION EXISTS FOR: the cap was the literal `3` inline in both admin bot
+// routes. Adding a fourth venue made the editor offer BingX and then refuse to save it, with a
+// raw zod message that named neither the field nor the limit. Nothing here covered it, because
+// the schema lived inside a route file where a test could not reach it.
+const allVenues = BOT_EXCHANGES.map((e) => e.value);
+check(
+  `every venue in the registry can be selected at once (${allVenues.length} of them)`,
+  botExchangesSchema.safeParse(allVenues).success,
+  allVenues.join(", "),
+);
+check("one venue is fine", botExchangesSchema.safeParse([allVenues[0]]).success);
+check("an empty set is allowed (the bot falls back to its legacy single exchange)",
+  botExchangesSchema.safeParse([]).success);
+check(
+  "…but MORE entries than there are venues is still refused",
+  !botExchangesSchema.safeParse([...allVenues, "Nonexistent"]).success,
+);
+check("BingX specifically is accepted", botExchangesSchema.safeParse(["Bingx"]).success);
 
 console.log(failures === 0 ? "\nPASS" : `\nFAIL (${failures})`);
 process.exit(failures === 0 ? 0 : 1);
