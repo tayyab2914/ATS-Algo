@@ -1,9 +1,9 @@
 // Guards the rules that decide whether a bot can be SAVED.
 //
 // The bug this file exists for: the editor validated the config already stored on
-// the row, on mount. Any bot whose JSON predates the current schema — the ones with
-// no `fees` block, say — therefore had "Save" permanently disabled behind a stop-
-// ladder message, no matter what was edited. Renaming such a bot was impossible.
+// the row, on mount. Any bot whose JSON cannot clear today's upload bar therefore
+// had "Save" permanently disabled behind a stop-ladder message, no matter what was
+// edited. Renaming such a bot was impossible.
 //
 // The rule that replaces it, enforced identically here and in the PATCH route:
 //
@@ -11,7 +11,7 @@
 //   - A config already ON THE ROW is grandfathered. Retuning its ladder or its
 //     leverage is held to the ladder's GEOMETRY only — the bar the row already
 //     meets — so an old bot stays editable without being rewritten first.
-//   - Metadata (name, timeframe, category) is never held to the config at all.
+//   - Metadata (name, category) is never held to the config at all.
 //
 // Run: npx tsx scripts/verify-bot-editing.ts
 import { readFileSync } from "node:fs";
@@ -26,8 +26,27 @@ const check = (label: string, pass: boolean, detail = "") => {
 };
 
 const modern = JSON.parse(readFileSync("fixtures/BTC.json", "utf8")) as BotConfig;
-/** The real shape of a grandfathered row: one profile, no `fees` block. */
-const legacy = JSON.parse(readFileSync("fixtures/stale-single-profile.json", "utf8")) as BotConfig;
+const stale = JSON.parse(readFileSync("fixtures/stale-single-profile.json", "utf8")) as BotConfig;
+/**
+ * The real shape of a grandfathered row: one profile, and a ladder whose weights
+ * do not sum to 1.
+ *
+ * It used to be "one profile, no `fees` block" — an absent fees block was what
+ * separated a half-built config from a finished one. That is no longer true: the
+ * official Bot Sim output ships without fees ON PURPOSE (those costs are inside
+ * the numbers it emits), so a fees-less config now clears the upload bar like any
+ * other, and this file's subject would have had no subject left.
+ *
+ * What is still true — and is the whole point here — is that some stored configs
+ * cannot clear that bar, and such a bot must stay renameable and retunable anyway.
+ * Weights summing to 1.01 is not a hypothetical: the Bot Sim has emitted exactly
+ * that. Geometry never reads `w`, so this passes the geometry bar, which is
+ * precisely the split being tested.
+ */
+const legacy: BotConfig = {
+  ...stale,
+  profiles: { ...stale.profiles, safe: { ...stale.profiles.safe, w: [0.1, 0.1, 0.15, 0.2, 0.22, 0.24] } },
+};
 
 console.log("\n1. The two bars are genuinely different");
 check("a legacy config FAILS the upload bar", botConfigError(legacy) !== null, botConfigError(legacy) ?? "");

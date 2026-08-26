@@ -23,6 +23,18 @@ export const RISK_TO_PROFILE: Record<RiskClass, RiskKey> = {
 
 export const RISK_KEYS: RiskKey[] = ["safe", "balanced", "aggressive"];
 
+/** {@link RISK_TO_PROFILE} the other way round: which risk class trades a profile. */
+export const PROFILE_TO_RISK: Record<RiskKey, RiskClass> = {
+  safe: "LOW",
+  balanced: "MEDIUM",
+  aggressive: "HIGH",
+};
+
+/** The profile keys a config actually carries, in risk order. */
+export function profileKeys(config: { profiles?: Partial<Record<RiskKey, unknown>> | null }): RiskKey[] {
+  return RISK_KEYS.filter((key) => Boolean(config.profiles?.[key]));
+}
+
 /** Which way a position points. Declared locally to keep this file import-free. */
 export type StopSide = "LONG" | "SHORT";
 
@@ -80,11 +92,56 @@ export type BotConfig = {
   exchange?: string;
   timeframe?: string;
   optimized_period?: number;
+  /**
+   * Maker/taker costs, when the simulator still emits them.
+   *
+   * OPTIONAL since the Bot Sim's official output dropped the block — those costs
+   * are now baked into the numbers the simulator hands over, so a `fees` object
+   * would double-count them. Absent, the stop buffer falls back to fee-free
+   * (`?? 0`), which is exactly right for a config whose fees are already inside
+   * its take-profit distances.
+   */
   fees?: { maker_fee_pct?: number; taker_fee_pct?: number };
   /** Assumed adverse fill on a market stop, per TICKER. Feeds the stop buffer. */
   slippage_pct?: number;
+  /**
+   * The ATR multiple the strategy's stop was derived from — a property of the
+   * BOT, not of a profile, so it sits at the top level next to the ticker.
+   *
+   * Member-facing (Bot Trading Metrics) and read-only here: nothing in execution
+   * consumes it, because the stop the executor places is `profile.sl`, already
+   * resolved to a percentage by the simulator. `ATR_value` is the provenance of
+   * that number, shown so a member can see what the stop was sized from.
+   */
+  ATR_value?: number;
+  /**
+   * Simulator provenance for `profile.sl`: the ATR-derived stop it started from
+   * (`reference_sl`) and the one it settled on (`picked_sl`, which is what lands
+   * in every profile's `sl`). Carried so a stored config keeps its whole audit
+   * trail; nothing reads them.
+   */
+  reference_sl?: number;
+  picked_sl?: number;
+  /** Which way this bot is allowed to trade, per the simulator ("both" / "long" / "short"). */
+  direction?: string;
   profiles: Record<RiskKey, ProfileConfig>;
 };
+
+/**
+ * The ATR multiple behind this bot's stop, or null when the config predates the
+ * field.
+ *
+ * Reads `ATR_value` (the official Bot Sim output) and falls back to the older
+ * `stoploss_value`, which earlier files carried alongside `stoploss_type: "ATR"`
+ * — same number, different spelling, and both are still on disk.
+ */
+export function configAtrValue(config: BotConfig): number | null {
+  const raw = config as BotConfig & { stoploss_type?: string; stoploss_value?: number };
+  const legacy =
+    typeof raw.stoploss_type === "string" && raw.stoploss_type.toUpperCase() === "ATR" ? raw.stoploss_value : undefined;
+  const value = raw.ATR_value ?? legacy;
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
 
 /** The single profile this bot trades, selected by its risk class. */
 export function profileFor(config: BotConfig, riskClass: RiskClass): ProfileConfig | undefined {

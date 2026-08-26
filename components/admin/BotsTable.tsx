@@ -15,7 +15,6 @@ export type BotTableRow = {
   ticker: string | null;
   exchange: string | null; // display-primary (exchanges[0]); kept for sorting/search
   exchanges: string[]; // admin-allowed venues
-  timeframe: string;
   riskClass: "LOW" | "MEDIUM" | "HIGH";
   status: "ACTIVE" | "DISABLED";
   trades: number;
@@ -34,7 +33,6 @@ export type BotTableRow = {
 type SortKey =
   | "name"
   | "exchange"
-  | "timeframe"
   | "riskClass"
   | "winRate"
   | "profitFactor"
@@ -48,7 +46,6 @@ type SortKey =
 const COLUMNS: { label: string; sort: SortKey | null }[] = [
   { label: "Bot Name", sort: "name" },
   { label: "Exchange", sort: "exchange" },
-  { label: "Timeframe", sort: "timeframe" },
   { label: "Risk Class", sort: "riskClass" },
   { label: "Win Rate", sort: "winRate" },
   { label: "PF", sort: "profitFactor" },
@@ -69,8 +66,8 @@ const STATUS_ORDER: Record<BotTableRow["status"], number> = { ACTIVE: 0, DISABLE
 /** Compare two rows by `key`, honouring direction. */
 function compareRows(a: BotTableRow, b: BotTableRow, key: SortKey, dir: "asc" | "desc"): number {
   const mul = dir === "asc" ? 1 : -1;
-  if (key === "name" || key === "timeframe") {
-    return a[key].localeCompare(b[key]) * mul;
+  if (key === "name") {
+    return a.name.localeCompare(b.name) * mul;
   }
   if (key === "exchange") {
     return (a.exchange ?? "").localeCompare(b.exchange ?? "") * mul;
@@ -100,6 +97,7 @@ export function BotsTable({
   subtitle = "Every bot you've created, with its latest backtest metrics.",
   showStatus = true,
   showUsers = true,
+  showRunning = true,
   botHref,
   renderAction,
 }: {
@@ -111,6 +109,15 @@ export function BotsTable({
   showStatus?: boolean;
   /** Show the adoption ("Users" / running) column. */
   showUsers?: boolean;
+  /**
+   * Show the "N running" badge beside the user count.
+   *
+   * Admin-only by default. On the member-facing library the count is adoption —
+   * how many people use this bot — and the extra badge read as live-trading
+   * telemetry about other members' accounts, which is neither the question a
+   * member is asking there nor ours to answer.
+   */
+  showRunning?: boolean;
   /** Link target for the bot name. Rendered as plain text when omitted. */
   botHref?: (bot: BotTableRow) => string;
   /** Render the per-row Action cell. Defaults to the admin kebab menu. */
@@ -141,7 +148,7 @@ export function BotsTable({
   return (
     <AdminCard title={title} subtitle={subtitle}>
       <div className="max-h-[520px] overflow-auto">
-        <table className="w-full min-w-[980px] text-left">
+        <table className="w-full min-w-[900px] text-left">
           <thead className="sticky top-0 z-10 bg-surface">
             <tr className="border-b border-line text-xs font-semibold text-muted">
               {columns.map((col, i) => {
@@ -197,7 +204,6 @@ export function BotsTable({
                   <td className="px-4 py-4">
                     <span className="flex justify-center"><ExchangeCluster exchanges={b.exchanges} /></span>
                   </td>
-                  <td className="px-4 py-4 text-center text-sm text-muted">{b.timeframe}</td>
                   <td className="px-4 py-4 text-center">
                     <span className={cn("rounded-full px-2.5 py-1 text-xs font-semibold", riskBadgeClass(b.riskClass))}>
                       {RISK_LABEL[b.riskClass]}
@@ -212,7 +218,7 @@ export function BotsTable({
                   {showUsers && (
                     <td className="px-4 py-4 text-center text-sm">
                       <span className="text-white">{b.users}</span>
-                      {b.running > 0 && (
+                      {showRunning && b.running > 0 && (
                         <span className="ml-1.5 rounded-full bg-success/10 px-1.5 py-0.5 text-[10px] font-semibold text-success">
                           {b.running} running
                         </span>

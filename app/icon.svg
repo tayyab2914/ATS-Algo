@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="ATS-ALGO">
+  <!--
+    The browser-tab / bookmark icon, picked up by Next's `app/icon` file convention.
+    It is the ATS mark on the product's own dark chip, because a bare glyph
+    disappears against a light tab bar at 16px.
+
+    `app/favicon.ico` (16/32/48/64) and `app/apple-icon.png` (180) are rasterised
+    from THIS file — regenerate both when it changes, or the tab and the bookmark
+    will disagree. `public/brand/ats-mark.svg` stays the in-page lockup glyph.
+  -->
+  <rect width="512" height="512" rx="112" fill="#0A0A0A"/>
+  <path d="M64 176 L200 64 L448 64 L336 176 Z" fill="#3B82F6"/>
+  <path d="M64 176 L336 176 L248 264 L64 264 Z" fill="#2563EB"/>
+  <path d="M176 336 L448 336 L336 448 L64 448 Z" fill="#2F7BFF"/>
+</svg>

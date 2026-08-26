@@ -17,7 +17,11 @@ import { botConfigError, botExchangesSchema } from "@/lib/validation";
 const createBotSchema = z.object({
   name: z.string().trim().min(1, "Name is required").max(80),
   category: z.string().trim().min(1, "Category is required").max(60),
-  timeframe: z.string().trim().min(1, "Timeframe is required").max(20),
+  // OPTIONAL: the wizard no longer asks. A bot's candle interval is not shown to
+  // members anywhere, so it is derived from the config below rather than typed —
+  // the column stays populated for internal use (support, the signal routes' logs)
+  // and an explicit value still wins if a caller sends one.
+  timeframe: z.string().trim().max(20).optional(),
   exchanges: botExchangesSchema.optional(),
   exchange: z.string().trim().max(40).optional(), // legacy / JSON-config fallback
   riskClass: z.enum(["LOW", "MEDIUM", "HIGH"]),
@@ -57,11 +61,16 @@ export async function POST(request: NextRequest) {
     return fail("Backtest failed — check that the CSV matches the expected signal format.", 422);
   }
 
+  // The simulator writes a bare number of minutes ("170"); store it as "170m" the
+  // way the wizard used to, so old and new rows read alike.
+  const rawTimeframe = timeframe?.trim() || (cfg.timeframe ? String(cfg.timeframe).trim() : "");
+  const storedTimeframe = rawTimeframe ? (/^\d+$/.test(rawTimeframe) ? `${rawTimeframe}m` : rawTimeframe) : "—";
+
   const bot = await prisma.bot.create({
     data: {
       name,
       category,
-      timeframe,
+      timeframe: storedTimeframe,
       riskClass,
       ticker: cfg.ticker ?? null,
       assetType: cfg.type ?? null,

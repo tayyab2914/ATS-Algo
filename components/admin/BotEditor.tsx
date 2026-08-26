@@ -30,7 +30,6 @@ export type BotEditorData = {
   id: string;
   name: string;
   category: string;
-  timeframe: string;
   exchanges: string[];
   riskClass: RiskClass;
   status: "ACTIVE" | "DISABLED";
@@ -55,7 +54,6 @@ export function BotEditor({ bot, categories }: { bot: BotEditorData; categories:
 
   const [name, setName] = useState(bot.name);
   const [category, setCategory] = useState(bot.category);
-  const [timeframe, setTimeframe] = useState(bot.timeframe);
   const [exchanges, setExchanges] = useState<string[]>(bot.exchanges);
   const [riskClass, setRiskClass] = useState<RiskClass>(bot.riskClass);
   const [enabled, setEnabled] = useState(bot.status === "ACTIVE");
@@ -126,7 +124,6 @@ export function BotEditor({ bot, categories }: { bot: BotEditorData; categories:
   const dirty =
     name !== bot.name ||
     category !== bot.category ||
-    timeframe !== bot.timeframe ||
     !sameSet(exchanges, bot.exchanges) ||
     riskClass !== bot.riskClass ||
     configChanged ||
@@ -163,7 +160,6 @@ export function BotEditor({ bot, categories }: { bot: BotEditorData; categories:
     const parts: string[] = [];
     if (name !== bot.name) parts.push(`renamed “${bot.name}” → “${name}”`);
     if (category !== bot.category) parts.push(`category ${bot.category} → ${category}`);
-    if (timeframe !== bot.timeframe) parts.push(`timeframe ${bot.timeframe} → ${timeframe}`);
     if (!sameSet(exchanges, bot.exchanges))
       parts.push(`exchanges ${bot.exchanges.join(", ") || "none"} → ${exchanges.join(", ") || "none"}`);
     if (riskClass !== bot.riskClass) parts.push(`risk class ${bot.riskClass} → ${riskClass}`);
@@ -300,7 +296,6 @@ export function BotEditor({ bot, categories }: { bot: BotEditorData; categories:
         body: JSON.stringify({
           name,
           category,
-          timeframe,
           exchanges,
           riskClass,
           message: message.trim() || describeChanges(),
@@ -368,10 +363,6 @@ export function BotEditor({ bot, categories }: { bot: BotEditorData; categories:
             <input value={name} onChange={(e) => setName(e.target.value)} className={inputCls} />
           </label>
           <label className="flex flex-col gap-2">
-            <span className={labelCls}>Timeframe</span>
-            <input value={timeframe} onChange={(e) => setTimeframe(e.target.value)} className={inputCls} />
-          </label>
-          <label className="flex flex-col gap-2">
             <span className={labelCls}>Category</span>
             <select value={category} onChange={(e) => setCategory(e.target.value)} className={cn(inputCls, "appearance-none pr-10")}>
               {categoryOptions.map((c) => <option key={c} value={c}>{c}</option>)}
@@ -425,7 +416,7 @@ export function BotEditor({ bot, categories }: { bot: BotEditorData; categories:
             </p>
           )}
           {result ? (
-            <BacktestResults name={name} timeframe={timeframe} riskClass={riskClass} result={result} />
+            <BacktestResults name={name} riskClass={riskClass} result={result} />
           ) : (
             <p className="text-xs text-muted">Run the backtest to preview the updated metrics before saving.</p>
           )}

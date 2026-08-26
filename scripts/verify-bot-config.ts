@@ -19,8 +19,7 @@ const mutate = (fn: (c: any) => void) => {
   fn(c);
   return c;
 };
-// The real single-profile shape an admin can upload: `profiles` wrapper, one key,
-// plus the fees block the generator's raw strategy_profiles.json omits.
+// The real single-profile shape an admin can upload: `profiles` wrapper, one key.
 const oneProfile = { ...clone(good), profiles: { balanced: clone(good).profiles.balanced } };
 
 /** [label, config, riskClass | undefined, shouldPass] */
@@ -38,10 +37,17 @@ const cases: [string, unknown, RiskClass | undefined, boolean][] = [
   ["missing aggressive, HIGH bot needs it → rejected", mutate((c) => delete c.profiles.aggressive), "HIGH", false],
   ["single balanced profile, HIGH bot → rejected", oneProfile, "HIGH", false],
 
-  ["stale strategy_profiles.json (no fees)", stale, undefined, false],
+  // `fees` USED TO BE the thing that told a finished config from a half-built one,
+  // and these two cases pinned that. It no longer can: the official Bot Sim output
+  // ships WITHOUT a fees block, because those costs are baked into the take-profit
+  // distances it emits. A config with no fees is now a normal config, and there is
+  // nothing structural left that distinguishes the generator's intermediate file —
+  // so it is accepted, and the ladder rules below carry the whole weight.
+  ["single-profile config with no fees block (the official Bot Sim shape)", stale, undefined, true],
+  ["fees omitted → valid; the costs are already inside the numbers", mutate((c) => delete c.fees), undefined, true],
+  ["fees present but malformed is still rejected", mutate((c) => (c.fees = { maker_fee_pct: -1, taker_fee_pct: 0 })), undefined, false],
   ["null", null, undefined, false],
   ["not an object", "nope", undefined, false],
-  ["missing fees block", mutate((c) => delete c.fees), undefined, false],
   ["no profiles object at all", mutate((c) => delete c.profiles), undefined, false],
   ["empty profiles object", mutate((c) => (c.profiles = {})), undefined, false],
   ["tp/w length mismatch", mutate((c) => c.profiles.balanced.w.pop()), undefined, false],

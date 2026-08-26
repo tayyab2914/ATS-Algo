@@ -80,9 +80,9 @@ check("a bot that never lost has an infinite profit factor", allWins.profitFacto
 console.log("\n── catalogue aggregation ──");
 check("no bots → zeros, no NaN", aggregateCatalogue([], "d30").bots === 0 && aggregateCatalogue([], "d30").winRate === 0);
 const bots = [
-  { timeframe: "150m", trades: 900, winRate: 60, profitFactor: 1.5, d30: 4, d90: 12, d180: 20, d360: 40 },
-  { timeframe: "150m", trades: 100, winRate: 90, profitFactor: 2.5, d30: 8, d90: 2, d180: 30, d360: 10 },
-  { timeframe: "15m", trades: 500, winRate: 50, profitFactor: 0.9, d30: 1, d90: 30, d180: 5, d360: 90 },
+  { name: "Alpha", trades: 900, winRate: 60, profitFactor: 1.5, d30: 4, d90: 12, d180: 20, d360: 40 },
+  { name: "Bravo", trades: 100, winRate: 90, profitFactor: 2.5, d30: 8, d90: 2, d180: 30, d360: 10 },
+  { name: "Charlie", trades: 500, winRate: 50, profitFactor: 0.9, d30: 1, d90: 30, d180: 5, d360: 90 },
 ];
 const cat = aggregateCatalogue(bots, "d30");
 check("total trades summed", cat.totalTrades === 1500);
@@ -90,8 +90,10 @@ check("total trades summed", cat.totalTrades === 1500);
 // A 100-trade bot must not sway the platform win rate like a 900-trade one.
 check("win rate is trade-weighted, not a naive mean", near(cat.winRate, 88_000 / 1500, 1e-9), `${cat.winRate.toFixed(3)} (naive would be 66.667)`);
 check("avg d30 return", near(cat.avgReturn, (4 + 8 + 1) / 3));
-check("best timeframe by mean return", cat.bestTimeframe === "150m", String(cat.bestTimeframe));
-check("best timeframe follows the column", aggregateCatalogue(bots, "d360").bestTimeframe === "15m");
+// Replaced "best timeframe": members neither see nor choose a bot's candle interval.
+check("best bot is the top of the selected column", cat.bestBot?.name === "Bravo" && cat.bestBot?.returnPct === 8, JSON.stringify(cat.bestBot));
+check("best bot follows the column", aggregateCatalogue(bots, "d360").bestBot?.name === "Charlie");
+check("no bots → no best bot, not a fabricated one", aggregateCatalogue([], "d30").bestBot === null);
 // Four columns must produce four genuinely different aggregates.
 const perPeriod = (["d30", "d90", "d180", "d360"] as const).map((c) => aggregateCatalogue(bots, c).avgReturn);
 check("every period yields a distinct average return", new Set(perPeriod).size === 4, perPeriod.map((v) => v.toFixed(2)).join(" | "));
@@ -99,7 +101,7 @@ check("every period yields a distinct average return", new Set(perPeriod).size =
 const lifetimes = (["d30", "d90", "d180", "d360"] as const).map((c) => aggregateCatalogue(bots, c).winRate);
 check("win rate is lifetime — identical across every period", new Set(lifetimes).size === 1, "must never look windowed");
 // An unbeaten bot's Infinity would swallow the mean profit factor.
-const withInfinite = aggregateCatalogue([...bots, { timeframe: "1h", trades: 10, winRate: 100, profitFactor: Infinity, d30: 1, d90: 1, d180: 1, d360: 1 }], "d30");
+const withInfinite = aggregateCatalogue([...bots, { name: "Delta", trades: 10, winRate: 100, profitFactor: Infinity, d30: 1, d90: 1, d180: 1, d360: 1 }], "d30");
 check("an infinite profit factor is excluded from the mean", Number.isFinite(withInfinite.profitFactor) && near(withInfinite.profitFactor, (1.5 + 2.5 + 0.9) / 3));
 
 console.log("\n── monthly equity curve ──");

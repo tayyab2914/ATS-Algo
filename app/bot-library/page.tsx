@@ -1,5 +1,6 @@
 import { AppShell } from "@/components/app/AppShell";
 import { BotLibraryBrowser } from "@/components/bot-library/BotLibraryBrowser";
+import { GettingStarted } from "@/components/bot-library/GettingStarted";
 import { type BotTableRow } from "@/components/admin/BotsTable";
 import { blockExpiredGuest, getPageAccess } from "@/lib/auth/guards";
 import { countFor, deploymentCounts } from "@/lib/bots/deployment-counts";
@@ -31,7 +32,6 @@ export default async function BotLibraryPage() {
       ticker: true,
       exchange: true,
       exchanges: true,
-      timeframe: true,
       riskClass: true,
       status: true,
       trades: true,
@@ -60,6 +60,8 @@ export default async function BotLibraryPage() {
           Browse automated trading bots available for deployment.
         </p>
       </header>
+
+      <GettingStarted />
 
       <BotLibraryBrowser bots={rows} categories={categories} />
     </AppShell>

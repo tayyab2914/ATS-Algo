@@ -57,10 +57,6 @@ export function TopActiveBots({ bots, running, deployed }: { bots: TopBot[]; run
 
               <div className="relative z-[1] flex items-center gap-4">
                 <span className="flex items-center gap-1.5 text-xs text-muted">
-                  <TAG_ICONS.clock className="text-accent" />
-                  {bot.timeframe}
-                </span>
-                <span className="flex items-center gap-1.5 text-xs text-muted">
                   <TAG_ICONS.risk className="text-accent" />
                   {bot.risk}
                 </span>

@@ -2,10 +2,12 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { ApiGuideDialog } from "@/components/account/ApiGuideDialog";
 import { DangerAction, PrimaryAction, SettingsCard } from "@/components/account/SettingsCard";
 import { Notice, type NoticeData } from "@/components/ui/Notice";
 import { type ExchangeName } from "@/lib/account";
 import { BOT_EXCHANGES, exchangeEnabled, exchangeRequiresPassphrase } from "@/lib/bot-exchanges";
+import { guideFor, type ExchangeGuide } from "@/lib/exchange-guides";
 
 type Connections = Partial<Record<ExchangeName, { permissions: string }>>;
 
@@ -30,6 +32,9 @@ export function ExchangeSection({
   const [sandbox, setSandbox] = useState(false);
   const [banner, setBanner] = useState<NoticeData | null>(null);
   const [pending, setPending] = useState(false);
+  // The open walkthrough, if any. One dialog for the whole list rather than one
+  // per row — only ever one is open.
+  const [guide, setGuide] = useState<ExchangeGuide | null>(null);
 
   function openForm(exchange: ExchangeName) {
     setBanner(null);
@@ -100,6 +105,7 @@ export function ExchangeSection({
           // execution path isn't wired must not offer a form, or the key validates and
           // then every signal is silently dropped.
           const canConnect = exchangeEnabled(exchange);
+          const venueGuide = guideFor(exchange);
           return (
             <li
               key={exchange}
@@ -115,6 +121,23 @@ export function ExchangeSection({
                         ? `API Connected • ${connection.permissions}`
                         : "Not connected"}
                   </span>
+                  {canConnect && venue.thirdPartyAppName && (
+                    <span className="text-xs text-[#F4A825]">
+                      Create the key under{" "}
+                      <span className="text-white">&ldquo;Connect to Third-Party Applications&rdquo;</span> and choose{" "}
+                      <span className="font-semibold text-white">{venue.thirdPartyAppName}</span> — a key scoped to
+                      anything else is rejected when we place orders.
+                    </span>
+                  )}
+                  {canConnect && venueGuide && (
+                    <button
+                      type="button"
+                      onClick={() => setGuide(venueGuide)}
+                      className="w-fit text-xs font-medium text-accent transition-opacity hover:opacity-80"
+                    >
+                      Full guide: how to set up the {venue.label} API →
+                    </button>
+                  )}
                 </div>
 
                 {!canConnect ? (
@@ -224,6 +247,8 @@ export function ExchangeSection({
           );
         })}
       </ul>
+
+      <ApiGuideDialog open={guide !== null} guide={guide} onClose={() => setGuide(null)} />
     </SettingsCard>
   );
 }

@@ -10,7 +10,7 @@ import { parseTightenInput, StopLadderField } from "@/components/admin/StopLadde
 import { CheckIcon } from "@/components/admin/admin-icons";
 import { ExchangeMultiSelect } from "@/components/admin/ExchangeMultiSelect";
 import { Notice, type NoticeData } from "@/components/ui/Notice";
-import { configRatchetPct, profileLeverage, withLeverage, withRatchetPct } from "@/lib/bot-config";
+import { configRatchetPct, PROFILE_TO_RISK, profileKeys, profileLeverage, withLeverage, withRatchetPct } from "@/lib/bot-config";
 import { matchBotExchange } from "@/lib/bot-exchanges";
 import { runBacktest, type BacktestResult, type BotConfig, type RiskClass } from "@/lib/backtest/engine";
 import { cn } from "@/lib/cn";
@@ -48,7 +48,6 @@ export function BotWizard({ categories }: { categories: string[] }) {
   const [category, setCategory] = useState("");
   const [config, setConfig] = useState<BotConfig | null>(null);
   const [name, setName] = useState("");
-  const [timeframe, setTimeframe] = useState("");
   const [exchanges, setExchanges] = useState<string[]>([]);
   const [riskClass, setRiskClass] = useState<RiskClass>("MEDIUM");
   const [csvText, setCsvText] = useState("");
@@ -82,17 +81,31 @@ export function BotWizard({ categories }: { categories: string[] }) {
     setNotice(null);
     try {
       const parsed = JSON.parse(await file.text()) as BotConfig;
+
+      // Adopt the file's own risk class when it leaves no choice.
+      //
+      // The official Bot Sim output ships exactly ONE profile ("safe"), while this
+      // wizard opens on MEDIUM. Validating against MEDIUM rejected that file with
+      // "no balanced profile" — and the Risk Class selector only renders once a
+      // config has loaded, so there was no way to change it first. A dead end on
+      // the only file the admins are going to upload.
+      //
+      // A file with two or more profiles is left alone: there the admin's pick is a
+      // real choice, and the selector is about to appear for them to make it.
+      const keys = profileKeys(parsed);
+      const risk = keys.length === 1 ? PROFILE_TO_RISK[keys[0]] : riskClass;
+
       // Same rules the API enforces, so a bad ladder is caught before upload.
-      const configError = botConfigError(parsed, riskClass);
+      const configError = botConfigError(parsed, risk);
       if (configError) {
         setNotice({ type: "error", message: configError });
         return;
       }
       setConfig(parsed);
+      setRiskClass(risk);
       setTightenPct(String(configRatchetPct(parsed) ?? ""));
-      setLeveragePct(String(profileLeverage(parsed, riskClass) ?? ""));
+      setLeveragePct(String(profileLeverage(parsed, risk) ?? ""));
       setName((n) => n || (parsed.name ? cleanBotName(parsed.name) : ""));
-      setTimeframe((t) => t || (parsed.timeframe ? `${parsed.timeframe}m` : ""));
       setExchanges((xs) => {
         if (xs.length) return xs;
         const m = matchBotExchange(parsed.exchange);
@@ -142,7 +155,9 @@ export function BotWizard({ categories }: { categories: string[] }) {
       const res = await fetch("/api/admin/bots", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, category, timeframe, exchanges, riskClass, config: effectiveConfig, csvText, csvFilename }),
+        // No `timeframe`: it is not shown to members, so it is not asked for. The
+        // route still records the config's own timeframe on the row for internal use.
+        body: JSON.stringify({ name, category, exchanges, riskClass, config: effectiveConfig, csvText, csvFilename }),
       });
       const data = (await res.json().catch(() => null)) as { error?: string } | null;
       if (!res.ok) {
@@ -161,7 +176,7 @@ export function BotWizard({ categories }: { categories: string[] }) {
 
   const canNext = [
     Boolean(category),
-    Boolean(config && name.trim() && timeframe.trim() && exchanges.length > 0),
+    Boolean(config && name.trim() && exchanges.length > 0),
     Boolean(csvText),
   ];
 
@@ -198,10 +213,6 @@ export function BotWizard({ categories }: { categories: string[] }) {
                 <label className="flex flex-col gap-2">
                   <span className={labelCls}>Bot Name</span>
                   <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Alpha BTC" className={inputCls} />
-                </label>
-                <label className="flex flex-col gap-2">
-                  <span className={labelCls}>Timeframe</span>
-                  <input value={timeframe} onChange={(e) => setTimeframe(e.target.value)} placeholder="e.g. 5m" className={inputCls} />
                 </label>
                 <div className="flex flex-col gap-2 lg:col-span-2">
                   <span className={labelCls}>Exchanges — allowed venues (users pick one)</span>
@@ -247,7 +258,7 @@ export function BotWizard({ categories }: { categories: string[] }) {
         )}
 
         {step === 3 && result && (
-          <BacktestResults name={name} timeframe={timeframe} riskClass={riskClass} result={result} />
+          <BacktestResults name={name} riskClass={riskClass} result={result} />
         )}
 
         {step === 3 && effectiveConfig && (

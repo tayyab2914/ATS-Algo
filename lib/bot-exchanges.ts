@@ -54,6 +54,18 @@ export type BotExchange = {
    * the browser (the form) need it, and `lib/execution/client.ts` is server-only.
    */
   paperDetectableFromKey: boolean;
+  /**
+   * The name the member must pick under the venue's "Connect to Third-Party
+   * Applications" step when creating the key, or undefined where the venue has no
+   * such step.
+   *
+   * It is "CCXT" — the library this platform trades through — and getting it wrong
+   * is not a soft failure: the key is issued scoped to a different integration and
+   * every order we place is rejected, with nothing on the venue's side saying why.
+   * The member cannot discover this from our form, so the form has to say it,
+   * which is why it is a field here and not a line buried in the guide.
+   */
+  thirdPartyAppName?: string;
 };
 
 export const BOT_EXCHANGES: BotExchange[] = [
@@ -62,7 +74,7 @@ export const BOT_EXCHANGES: BotExchange[] = [
   // Wired 2026-08-03. Proven end-to-end on the demo engine by
   // scripts/verify-executor-bybit-demo.ts (entry + attached backstop + 6-rung ladder + ratchet
   // + flatten) and scripts/verify-stop-strategy.ts (the one-slot stop model).
-  { value: "Bybit", label: "Bybit", logo: "/exchanges/bybit.svg", ccxtId: "bybit", requiresPassphrase: false, connectable: true, wired: true, paperDetectableFromKey: true },
+  { value: "Bybit", label: "Bybit", logo: "/exchanges/bybit.svg", ccxtId: "bybit", requiresPassphrase: false, connectable: true, wired: true, paperDetectableFromKey: true, thirdPartyAppName: "CCXT" },
   { value: "Bitget", label: "Bitget", logo: "/exchanges/bitget.svg", ccxtId: "bitget", requiresPassphrase: true, connectable: true, wired: true, paperDetectableFromKey: true },
   // Blofin DOES require a passphrase — confirmed against the installed ccxt adapter, which sets
   // `requiredCredentials.password: true` and sends it as ACCESS-PASSPHRASE. The member CHOOSES it
@@ -73,7 +85,7 @@ export const BOT_EXCHANGES: BotExchange[] = [
   // venue needs because it has no fetchOrder, entry + 6-rung ladder + two ratchet generations
   // with the backstop surviving both, flatten) and scripts/probe-blofin-stops.ts (a sized
   // reduce-only TPSL is NOT starved by a full ladder — the question that could have sunk it).
-  { value: "Blofin", label: "Blofin", logo: "/exchanges/blofin.svg", ccxtId: "blofin", requiresPassphrase: true, connectable: true, wired: true, paperDetectableFromKey: true },
+  { value: "Blofin", label: "Blofin", logo: "/exchanges/blofin.svg", ccxtId: "blofin", requiresPassphrase: true, connectable: true, wired: true, paperDetectableFromKey: true, thirdPartyAppName: "CCXT" },
   // BingX needs NO passphrase (ccxt's bingx adapter inherits `password: false`).
   //
   // Wired + connectable 2026-08-20. Proven end-to-end on the VST demo engine by

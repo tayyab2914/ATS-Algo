@@ -9,6 +9,7 @@ import { TradingViewSetup } from "@/components/admin/TradingViewSetup";
 import { EquityChart } from "@/components/bot-library/EquityChart";
 import { RISK_TO_PROFILE, type BotConfig } from "@/lib/backtest/engine";
 import { buildBotEquity } from "@/lib/backtest/equity-view";
+import { configAtrValue, ratchetPct } from "@/lib/bot-config";
 import { getSession } from "@/lib/auth/session";
 import { cn } from "@/lib/cn";
 import { prisma } from "@/lib/db";
@@ -38,7 +39,6 @@ export default async function ViewBotPage({ params }: { params: Promise<{ id: st
       assetType: true,
       category: true,
       riskClass: true,
-      timeframe: true,
       config: true,
       signalMap: true,
       csvData: true,
@@ -77,9 +77,21 @@ export default async function ViewBotPage({ params }: { params: Promise<{ id: st
 
   const equity = bot.csvData ? buildBotEquity(config, bot.csvData, riskKey) : null;
 
+  // Mirrors what the member sees on /bot-library/[id] — same names, so an admin
+  // reading this page is reading the page their members read.
+  const atr = configAtrValue(config);
+  const tighten = profile ? ratchetPct(profile) : null;
+  const breakEven: Stat = tighten
+    ? { label: "Break-even System", value: `${tighten}% / TP`, tone: "success" }
+    : profile?.be
+      ? { label: "Break-even System", value: `From TP${profile.be}`, tone: "success" }
+      : { label: "Break-even System", value: "Off" };
+
   const metrics: Stat[] = [
     { label: "Stop Loss", value: profile?.sl != null ? `${profile.sl}%` : "—", tone: "danger" },
-    { label: "SL to BE", value: profile?.be ? `TP${profile.be}` : "—" },
+    { label: "TP Levels", value: tps.length ? `${tps.length} levels` : "—" },
+    breakEven,
+    { label: "ATR Value", value: atr != null ? String(atr) : "—" },
     { label: "Leverage", value: profile?.lev != null ? `${profile.lev}x` : "—" },
     { label: "Trade Count", value: bot.trades.toLocaleString("en-US") },
     { label: "Winrate", value: `${bot.winRate.toFixed(1)}%`, tone: "success" },
@@ -109,7 +121,7 @@ export default async function ViewBotPage({ params }: { params: Promise<{ id: st
         <header className="flex flex-col gap-1">
           <h1 className="text-2xl font-semibold leading-[31px] text-white sm:text-3xl">{bot.name}</h1>
           <p className="text-sm leading-[21px] text-muted">
-            {subtitle || "—"} · <span className={cn("font-semibold", RISK_TEXT_CLASS[bot.riskClass])}>{RISK_LABEL[bot.riskClass]}</span> risk · {bot.timeframe}
+            {subtitle || "—"} · <span className={cn("font-semibold", RISK_TEXT_CLASS[bot.riskClass])}>{RISK_LABEL[bot.riskClass]}</span> risk
           </p>
           <div className="mt-1.5 flex flex-wrap items-center gap-2">
             <span className="text-sm text-muted">Runs on</span>

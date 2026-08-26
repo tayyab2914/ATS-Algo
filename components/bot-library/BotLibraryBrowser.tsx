@@ -78,6 +78,7 @@ export function BotLibraryBrowser({ bots, categories }: { bots: BotTableRow[]; c
       <BotsTable
         bots={rows}
         showStatus={false}
+        showRunning={false}
         title="Available Bots"
         subtitle="Browse automated trading bots and view their latest backtest metrics."
         emptyLabel={filtered ? "No bots match your filter." : "No bots are available yet. Check back soon."}

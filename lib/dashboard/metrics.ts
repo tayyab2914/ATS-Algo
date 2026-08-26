@@ -55,7 +55,7 @@ export type DashboardMetric = {
   tone?: "success" | "danger";
 };
 
-export type TopBot = { id: string; name: string; pair: string; timeframe: string; risk: string; returnPct: number };
+export type TopBot = { id: string; name: string; pair: string; risk: string; returnPct: number };
 export type MyBotRow = { id: string; name: string; profile: string; capital: number; pnl: number; active: boolean };
 export type AllocationSlice = { id: string; label: string; color: string; capital: number; pct: number };
 export type TopPerformer = { id: string; name: string; pnl: number; trades: number };
@@ -148,7 +148,8 @@ export function aggregateLive(positions: ClosedPosition[]): LiveAggregate {
 }
 
 export type CatalogueBot = {
-  timeframe: string;
+  /** Identifies the bot behind the "Best Bot" tile. */
+  name: string;
   /** Lifetime figures — they do not vary with a window. */
   trades: number;
   winRate: number;
@@ -169,7 +170,16 @@ export type CatalogueAggregate = {
   winRate: number;
   profitFactor: number;
   avgReturn: number;
-  bestTimeframe: string | null;
+  /**
+   * The single best-returning bot over the selected window, or null for an empty
+   * pool.
+   *
+   * This replaced "best timeframe". Members do not choose, see, or care about a
+   * bot's candle interval — it is an implementation detail of the strategy — so
+   * ranking by it told them nothing they could act on. The same "best of the pool
+   * by the windowed column" idea, grouped by something they actually pick.
+   */
+  bestBot: { name: string; returnPct: number } | null;
 };
 
 /**
@@ -185,7 +195,7 @@ export function activeBotCount(runningBotIds: Iterable<string>): number {
 
 export function aggregateCatalogue(bots: CatalogueBot[], column: CatalogueColumn): CatalogueAggregate {
   if (bots.length === 0) {
-    return { bots: 0, totalTrades: 0, winRate: 0, profitFactor: 0, avgReturn: 0, bestTimeframe: null };
+    return { bots: 0, totalTrades: 0, winRate: 0, profitFactor: 0, avgReturn: 0, bestBot: null };
   }
 
   const totalTrades = bots.reduce((sum, bot) => sum + bot.trades, 0);
@@ -197,24 +207,16 @@ export function aggregateCatalogue(bots: CatalogueBot[], column: CatalogueColumn
 
   const avgReturn = bots.reduce((sum, bot) => sum + bot[column], 0) / bots.length;
 
-  const byTimeframe = new Map<string, { sum: number; n: number }>();
+  // First past the post wins ties, which keeps the tile stable for a pool whose
+  // order doesn't change between renders.
+  let bestBot: CatalogueAggregate["bestBot"] = null;
   for (const bot of bots) {
-    const entry = byTimeframe.get(bot.timeframe) ?? { sum: 0, n: 0 };
-    entry.sum += bot[column];
-    entry.n++;
-    byTimeframe.set(bot.timeframe, entry);
-  }
-  let bestTimeframe: string | null = null;
-  let best = -Infinity;
-  for (const [timeframe, { sum, n }] of byTimeframe) {
-    const mean = sum / n;
-    if (mean > best) {
-      best = mean;
-      bestTimeframe = timeframe;
+    if (bestBot === null || bot[column] > bestBot.returnPct) {
+      bestBot = { name: bot.name, returnPct: bot[column] };
     }
   }
 
-  return { bots: bots.length, totalTrades, winRate, profitFactor, avgReturn, bestTimeframe };
+  return { bots: bots.length, totalTrades, winRate, profitFactor, avgReturn, bestBot };
 }
 
 export type DatedPnl = { closedAt: Date; realizedPnl: number };
@@ -272,7 +274,7 @@ export async function loadDashboard(
     // unpublished — their own bot must not drop out of their own numbers.
     prisma.bot.findMany({
       where: userId ? { OR: [{ status: "ACTIVE" }, { userBots: { some: { userId } } }] } : { status: "ACTIVE" },
-      select: { id: true, name: true, ticker: true, timeframe: true, riskClass: true, trades: true, winRate: true, profitFactor: true, d30: true, d90: true, d180: true, d360: true },
+      select: { id: true, name: true, ticker: true, riskClass: true, trades: true, winRate: true, profitFactor: true, d30: true, d90: true, d180: true, d360: true },
     }),
     // Every panel below hangs off these. One row per bot (UserBot is unique on
     // [userId, botId]), so a deployment count IS a bot count.
@@ -387,12 +389,13 @@ export async function loadDashboard(
       tone: (hasLive ? live.profitFactor : catalogue.profitFactor) >= 1 ? "success" : "danger",
     },
     {
-      id: "best-timeframe",
-      label: "Best Timeframe",
+      id: "best-bot",
+      label: "Best Bot",
       icon: "activity",
-      value: catalogue.bestTimeframe ?? "—",
-      delta: catalogue.bestTimeframe ? windowedNote : undefined,
-      source: catalogue.bestTimeframe ? "backtest" : "none",
+      value: catalogue.bestBot ? signedPct(catalogue.bestBot.returnPct) : "—",
+      delta: catalogue.bestBot ? `${catalogue.bestBot.name} · ${windowedNote}` : undefined,
+      source: catalogue.bestBot ? "backtest" : "none",
+      tone: catalogue.bestBot && catalogue.bestBot.returnPct >= 0 ? "success" : undefined,
     },
   ];
 
@@ -410,7 +413,6 @@ export async function loadDashboard(
       id: bot.id,
       name: bot.name,
       pair: bot.ticker ?? "—",
-      timeframe: bot.timeframe,
       risk: RISK_LABEL[bot.riskClass] ?? bot.riskClass,
       returnPct: bot[column],
     }));

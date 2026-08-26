@@ -222,15 +222,31 @@ export const botConfigSchema = z
       exchange: z.string().optional(),
       timeframe: z.string().optional(),
       optimized_period: z.number().optional(),
-      // Missing fees silently backtest as fee-free, which overstates every
-      // published return — so they are required, not defaulted.
-      fees: z.object(
-        {
+      // OPTIONAL, and it was not always so.
+      //
+      // It used to be required, on the reasoning that a missing block silently
+      // backtests fee-free and overstates every published return. That reasoning
+      // was right for the configs of the day and is wrong for the official Bot Sim
+      // output, which DELETED the block precisely because the fees are now inside
+      // the numbers it emits — the take-profit distances and the picked stop are
+      // already net. Requiring it would have rejected the finished file outright,
+      // and adding one back would double-count.
+      //
+      // So: absent is fine, present is still held to shape. Everything downstream
+      // already reads it as `config.fees?.taker_fee_pct ?? 0` — see `snapshotProfile`
+      // and `ladderGeometryError` — so a fees-less config simply carries no extra
+      // stop buffer, which is the correct reading of "already integrated".
+      fees: z
+        .object({
           maker_fee_pct: z.number().min(0, "fees.maker_fee_pct must be zero or greater"),
           taker_fee_pct: z.number().min(0, "fees.taker_fee_pct must be zero or greater"),
-        },
-        { error: "Config JSON needs a `fees` block with maker_fee_pct and taker_fee_pct." },
-      ),
+        })
+        .optional(),
+      // The ATR multiple the simulator sized this bot's stop from. Surfaced to
+      // members on the bot's info page; never read by the executor, which places
+      // `profile.sl`. Its siblings (reference_sl / picked_sl / direction) ride
+      // through on `.loose()` like the other provenance fields.
+      ATR_value: z.number().positive("ATR_value must be a positive number").optional(),
       // Assumed adverse fill on a market stop — an INSTRUMENT property, so it lives
       // per ticker rather than as a platform constant. Feeds the stop buffer that the
       // ladder's geometry is validated against.

@@ -6,6 +6,7 @@ import { AddToMyBotsButton } from "@/components/bot-library/AddToMyBotsButton";
 import { EquityChart } from "@/components/bot-library/EquityChart";
 import { RISK_TO_PROFILE, type BotConfig } from "@/lib/backtest/engine";
 import { buildBotEquity } from "@/lib/backtest/equity-view";
+import { configAtrValue, ratchetPct } from "@/lib/bot-config";
 import { blockExpiredGuest, getPageAccess } from "@/lib/auth/guards";
 import { cn } from "@/lib/cn";
 import { prisma } from "@/lib/db";
@@ -27,7 +28,6 @@ async function getActiveBot(id: string) {
       assetType: true,
       category: true,
       riskClass: true,
-      timeframe: true,
       config: true,
       csvData: true,
       trades: true,
@@ -74,8 +74,11 @@ export default async function BotDetailPage({ params }: PageProps<"/bot-library/
   const config = bot.config as unknown as BotConfig;
   const riskKey = RISK_TO_PROFILE[bot.riskClass];
   const profile = config.profiles?.[riskKey];
-  const tps = profile?.tp ?? [];
-  const weights = profile?.w ?? [];
+  // The take-profit ladder is deliberately NOT rendered here — see the metrics
+  // block below. Only how MANY rungs there are is public.
+  const tpLevels = profile?.tp?.length ?? 0;
+  const atr = configAtrValue(config);
+  const tighten = profile ? ratchetPct(profile) : null;
 
   const subtitle = [bot.ticker, bot.assetType ?? bot.category].filter(Boolean).join(" · ");
 
@@ -90,11 +93,46 @@ export default async function BotDetailPage({ params }: PageProps<"/bot-library/
 
   const equity = bot.csvData ? buildBotEquity(config, bot.csvData, riskKey) : null;
 
+  /**
+   * The break-even tile, in the two shapes a stored config can take.
+   *
+   * The progressive ladder (`sl_tighten_pct`) tightens the stop after EVERY rung;
+   * a legacy config moves it once, to entry, when its `be`-th rung fills. Both are
+   * "the stop follows your take-profits", so both are shown under one honest name
+   * rather than under two pieces of internal jargon.
+   */
+  const breakEven: Stat = tighten
+    ? {
+        label: "Break-even System",
+        value: `${tighten}% / TP`,
+        tone: "success",
+        hint: `With every TP hit, the stop loss moves ${tighten}% of its original distance closer to your entry level — and past it, into profit, once enough rungs have filled.`,
+      }
+    : profile?.be
+      ? {
+          label: "Break-even System",
+          value: `From TP${profile.be}`,
+          tone: "success",
+          hint: `When take-profit ${profile.be} is hit, the stop loss moves to your entry level, so the rest of the trade can no longer lose.`,
+        }
+      : {
+          label: "Break-even System",
+          value: "Off",
+          hint: "This bot keeps its original stop loss for the whole trade.",
+        };
+
   const metrics: Stat[] = [
     { label: "Stop Loss", value: profile?.sl != null ? `${profile.sl}%` : "—", tone: "danger" },
-    profile?.sl_tighten_pct
-      ? { label: "Stop ratchet", value: `${profile.sl_tighten_pct}%/TP`, tone: "success" }
-      : { label: "SL to BE", value: profile?.be ? `TP${profile.be}` : "—" },
+    // Count only. The rungs' distances and their position weights are the
+    // strategy's edge and are NOT published: given the ladder, the entry rule can
+    // be reverse-engineered from the trade history.
+    {
+      label: "TP Levels",
+      value: tpLevels ? `${tpLevels} levels` : "—",
+      hint: tpLevels ? `This bot scales out of every position across ${tpLevels} take-profit levels.` : undefined,
+    },
+    breakEven,
+    { label: "ATR Value", value: atr != null ? String(atr) : "—", hint: atr != null ? "The ATR multiple this bot's stop loss is sized from." : undefined },
     { label: "Leverage", value: profile?.lev != null ? `${profile.lev}x` : "—" },
     { label: "Trade Count", value: bot.trades.toLocaleString("en-US") },
     { label: "Winrate", value: `${bot.winRate.toFixed(1)}%`, tone: "success" },
@@ -120,7 +158,7 @@ export default async function BotDetailPage({ params }: PageProps<"/bot-library/
       <header className="flex flex-col gap-1">
         <h1 className="text-2xl font-semibold leading-[31px] text-white sm:text-3xl">{bot.name}</h1>
         <p className="text-sm leading-[21px] text-muted">
-          {subtitle || "—"} · <span className={cn("font-semibold", RISK_TEXT_CLASS[bot.riskClass])}>{RISK_LABEL[bot.riskClass]}</span> risk · {bot.timeframe}
+          {subtitle || "—"} · <span className={cn("font-semibold", RISK_TEXT_CLASS[bot.riskClass])}>{RISK_LABEL[bot.riskClass]}</span> risk
         </p>
         <div className="mt-1.5 flex flex-wrap items-center gap-2">
           <span className="text-sm text-muted">Runs on</span>
@@ -153,58 +191,26 @@ export default async function BotDetailPage({ params }: PageProps<"/bot-library/
         </section>
       )}
 
-      {/* trade profile + trading metrics, side by side */}
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-        {/* trade profile */}
-        <section className="rounded-2xl border border-line bg-surface p-4 sm:p-6">
-          <h2 className="mb-4 text-base font-semibold text-white">Trade Profile</h2>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-70 border-collapse">
-              <thead>
-                <tr className="border-b border-line text-xs font-semibold text-muted">
-                  <th className="px-2 py-3 text-left">Take Profit</th>
-                  <th className="px-2 py-3 text-left">Target</th>
-                  <th className="px-2 py-3 text-right">Allocation</th>
-                </tr>
-              </thead>
-              <tbody>
-                {tps.length === 0 ? (
-                  <tr>
-                    <td colSpan={3} className="px-2 py-6 text-center text-sm text-muted">
-                      No take-profit ladder in this bot&apos;s config.
-                    </td>
-                  </tr>
-                ) : (
-                  tps.map((target, i) => (
-                    <tr key={i} className="border-b border-line last:border-b-0">
-                      <td className="px-2 py-4 text-sm font-semibold text-white">Take profit {i + 1}</td>
-                      <td className="px-2 py-4 text-sm font-semibold text-success">{target}%</td>
-                      <td className="px-2 py-4 text-right text-sm text-muted">
-                        {Math.round((weights[i] ?? 0) * 100)}% of assets
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </section>
-
-        {/* trading metrics */}
-        <section className="rounded-2xl border border-line bg-surface p-4 sm:p-6">
-          <div className="mb-4 flex items-center gap-3">
-            <h2 className="text-base font-semibold text-white">Bot Trading Metrics</h2>
-            <span className={cn("rounded-full px-2.5 py-1 text-xs font-semibold", riskBadgeClass(bot.riskClass))}>
-              {RISK_LABEL[bot.riskClass]} profile
-            </span>
-          </div>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-            {metrics.map((m) => (
-              <StatTile key={m.label} {...m} />
-            ))}
-          </div>
-        </section>
-      </div>
+      {/*
+        Bot trading metrics.
+        The take-profit ladder that used to sit beside this — every rung's target
+        and its share of the position — is NOT published. Those numbers plus the
+        public trade history are enough to reconstruct how the bot enters, so only
+        the NUMBER of levels is shown ("TP Levels" below).
+      */}
+      <section className="rounded-2xl border border-line bg-surface p-4 sm:p-6">
+        <div className="mb-4 flex items-center gap-3">
+          <h2 className="text-base font-semibold text-white">Bot Trading Metrics</h2>
+          <span className={cn("rounded-full px-2.5 py-1 text-xs font-semibold", riskBadgeClass(bot.riskClass))}>
+            {RISK_LABEL[bot.riskClass]} profile
+          </span>
+        </div>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {metrics.map((m) => (
+            <StatTile key={m.label} {...m} />
+          ))}
+        </div>
+      </section>
 
       {/* strategy update / change log */}
       <section className="rounded-2xl border border-line bg-surface p-4 sm:p-6">
@@ -246,7 +252,13 @@ export default async function BotDetailPage({ params }: PageProps<"/bot-library/
 }
 
 type Tone = "default" | "success" | "danger";
-type Stat = { label: string; value: string; tone?: Tone };
+type Stat = {
+  label: string;
+  value: string;
+  tone?: Tone;
+  /** One-line plain-English explanation, shown under the value. */
+  hint?: string;
+};
 
 const TONE: Record<Tone, string> = {
   default: "text-white",
@@ -254,11 +266,12 @@ const TONE: Record<Tone, string> = {
   danger: "text-[#D2031E]",
 };
 
-function StatTile({ label, value, tone = "default" }: Stat) {
+function StatTile({ label, value, tone = "default", hint }: Stat) {
   return (
     <div className="flex flex-col gap-1.5 rounded-xl border border-line bg-surface p-4">
       <span className="text-xs leading-[18px] text-muted">{label}</span>
       <span className={cn("text-lg font-semibold leading-6", TONE[tone])}>{value}</span>
+      {hint && <span className="text-xs leading-[18px] text-muted">{hint}</span>}
     </div>
   );
 }

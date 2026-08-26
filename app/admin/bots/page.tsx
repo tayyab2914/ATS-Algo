@@ -27,7 +27,6 @@ export default async function BotManagementPage() {
         ticker: true,
         exchange: true,
         exchanges: true,
-        timeframe: true,
         riskClass: true,
         status: true,
         trades: true,

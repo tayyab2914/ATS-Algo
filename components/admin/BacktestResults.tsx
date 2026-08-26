@@ -15,12 +15,10 @@ import { RISK_LABEL, riskBadgeClass } from "@/lib/risk";
  */
 export function BacktestResults({
   name,
-  timeframe,
   riskClass,
   result,
 }: {
   name: string;
-  timeframe: string;
   riskClass: RiskClass;
   result: BacktestResult;
 }) {
@@ -36,11 +34,10 @@ export function BacktestResults({
       </p>
 
       <div className="overflow-x-auto rounded-2xl border border-line">
-        <table className="w-full min-w-[860px] text-left text-sm">
+        <table className="w-full min-w-[760px] text-left text-sm">
           <thead>
             <tr className="border-b border-line text-xs font-semibold text-muted">
               <th className="px-4 py-3">Bot Name</th>
-              <th className="px-4 py-3 text-center">Timeframe</th>
               <th className="px-4 py-3 text-center">Risk Class</th>
               <th className="px-4 py-3 text-center">Trades</th>
               <th className="px-4 py-3 text-center">Win Rate</th>
@@ -52,7 +49,6 @@ export function BacktestResults({
           <tbody>
             <tr>
               <td className="px-4 py-4 font-semibold text-white">{name || "—"}</td>
-              <td className="px-4 py-4 text-center text-muted">{timeframe || "—"}</td>
               <td className="px-4 py-4 text-center">
                 <span className={cn("rounded-full px-2.5 py-1 text-xs font-semibold", riskBadgeClass(riskClass))}>
                   {RISK_LABEL[riskClass]}

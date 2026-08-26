@@ -76,7 +76,7 @@ function SidebarContent({
 }) {
   return (
     <>
-      <div className="flex h-24 items-center justify-center border-b border-line px-6">
+      <div className="flex h-24 items-center justify-center overflow-hidden border-b border-line px-4">
         <Logo />
       </div>
 
