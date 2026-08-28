@@ -10,10 +10,18 @@ import { BRAND_NAME, emailLogoUrl } from "@/lib/brand";
  * `from` to a bare address, so the inbox showed whatever the Google account happened
  * to be called — the mailbox name, usually — instead of the product.
  *
- * ── The sender AVATAR ────────────────────────────────────────────────────────
+ * ── The sender NAME and AVATAR, on Gmail ─────────────────────────────────────
+ * {@link fromHeader} sets the display name to the product, and on most transports
+ * that is what an inbox shows. Sending through smtp.gmail.com with an app password
+ * it is NOT: Gmail rewrites the From display name to the profile name of the Google
+ * account `SMTP_USER` signs in as, so a mailbox still named after a person shows up
+ * as that person even though this file sent "ATS-ALGO". The fix is to rename the
+ * sending Google account, or to send from a Workspace address on the product's own
+ * domain — both outside the application, like the avatar below.
+ *
  * The circular avatar Gmail draws next to the sender CANNOT be set from an SMTP
- * message; nothing in this file can influence it. It comes from one of two places,
- * both outside the application:
+ * message either; nothing in this file can influence it. It comes from one of two
+ * places, both outside the application:
  *
  *   1. The profile photo on the Google account `SMTP_USER` signs in as. Setting
  *      that photo to the ATS mark is the whole fix, and it takes effect at once.

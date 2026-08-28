@@ -331,7 +331,12 @@ function simulateTrade(candles: Candle[], t: RawTrade, profile: ProfileConfig): 
       const tpPrice = long ? entry * (1 + tp[k] / 100) : entry * (1 - tp[k] / 100);
       const hit = long ? c.high >= tpPrice : c.low <= tpPrice;
       if (!hit) continue;
-      const wk = w[k] ?? 0;
+      // Never scale out more than is still open. The validator accepts a weight
+      // sum within the simulator's 2-decimal rounding envelope (see
+      // `weightSumTolerance`), so a real config can sum to 1.01 — and without this
+      // clamp the last rung would book a slice the position never held, crediting
+      // profit on it. The live path clamps the same way, in `rungSizes`.
+      const wk = Math.min(w[k] ?? 0, remaining);
       realized += wk * (long ? (tpPrice / entry - 1) * 100 : (entry / tpPrice - 1) * 100);
       remaining -= wk;
       tpExecWeight += wk;

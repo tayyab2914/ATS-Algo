@@ -11,6 +11,11 @@ const good = JSON.parse(readFileSync("fixtures/BTC.json", "utf8"));
 // A single-profile, no-fees config the generator emits mid-pipeline — kept as a
 // fixture so this suite is self-contained (the source `TEST SIM/` tree is local-only).
 const stale = JSON.parse(readFileSync("fixtures/stale-single-profile.json", "utf8"));
+// The Bot Sim's FINISHED output, exactly as the client ships it: one `safe` profile,
+// no `fees` block (those costs are inside the numbers), `ATR_value` / `reference_sl` /
+// `picked_sl` provenance, and weights rounded to two decimals — which is why it sums
+// to 1.01. It must upload as-is; that is the whole point of the file.
+const official = JSON.parse(readFileSync("fixtures/bot-sim-official.json", "utf8"));
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const clone = (o: any) => JSON.parse(JSON.stringify(o));
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -26,6 +31,9 @@ const oneProfile = { ...clone(good), profiles: { balanced: clone(good).profiles.
 const cases: [string, unknown, RiskClass | undefined, boolean][] = [
   ["fixtures/BTC.json (the real config)", good, undefined, true],
   ["fixtures/BTC.json at every risk class", good, "HIGH", true],
+  ["the official Bot Sim file, uploaded as shipped", official, undefined, true],
+  ["the official Bot Sim file on a LOW bot (its only profile)", official, "LOW", true],
+  ["the official Bot Sim file on a HIGH bot → no aggressive profile", official, "HIGH", false],
   ["be = null means never", mutate((c) => (c.profiles.safe.be = null)), undefined, true],
   ["be = 0 means never", mutate((c) => (c.profiles.safe.be = 0)), undefined, true],
 
@@ -53,6 +61,12 @@ const cases: [string, unknown, RiskClass | undefined, boolean][] = [
   ["tp/w length mismatch", mutate((c) => c.profiles.balanced.w.pop()), undefined, false],
   ["weights sum to 0.9 (rungs left uncovered)", mutate((c) => (c.profiles.safe.w = [0.1, 0.1, 0.15, 0.2, 0.22, 0.13])), undefined, false],
   ["weights sum to 1.2 (would over-close)", mutate((c) => (c.profiles.safe.w = [0.3, 0.1, 0.15, 0.2, 0.22, 0.23])), undefined, false],
+  // The Bot Sim rounds every weight to two decimals, so its own official file sums
+  // to 1.01 on six rungs. That is rounding, not a wrong ladder, and rejecting it
+  // turned the finished config away at upload — see `weightSumTolerance`.
+  ["weights sum to 1.01 — the official file's 2-decimal rounding", mutate((c) => (c.profiles.safe.w = [0.08, 0.22, 0.19, 0.22, 0.22, 0.08])), undefined, true],
+  ["weights sum to 0.98 — rounding the other way", mutate((c) => (c.profiles.safe.w = [0.08, 0.22, 0.19, 0.22, 0.22, 0.05])), undefined, true],
+  ["weights sum to 1.05 — beyond what 6 rungs of rounding can explain", mutate((c) => (c.profiles.safe.w = [0.12, 0.22, 0.19, 0.22, 0.22, 0.08])), undefined, false],
   ["be beyond the rung count", mutate((c) => (c.profiles.aggressive.be = 9)), undefined, false],
   ["negative stop-loss", mutate((c) => (c.profiles.safe.sl = -4)), undefined, false],
   ["stop-loss of 100%", mutate((c) => (c.profiles.safe.sl = 100)), undefined, false],

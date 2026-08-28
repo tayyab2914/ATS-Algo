@@ -7,7 +7,7 @@ import { MonthlyBreakdown } from "@/components/my-bots/MonthlyBreakdown";
 import { TradeHistory } from "@/components/my-bots/TradeHistory";
 import { MultiLineChart } from "@/components/dashboard/MultiLineChart";
 import { blockExpiredGuest, getPageAccess } from "@/lib/auth/guards";
-import type { BotConfig } from "@/lib/bot-config";
+import { configAtrValue, ratchetPct, type BotConfig } from "@/lib/bot-config";
 import { chosenExchange } from "@/lib/bot-exchanges";
 import { cn } from "@/lib/cn";
 import { prisma } from "@/lib/db";
@@ -86,6 +86,42 @@ export default async function MyBotDetailPage({ params }: PageProps<"/my-bots/[b
       : open.stopPrice < open.entryPrice
     : false;
 
+  // The bot's own risk settings, presented exactly as the Bot Library presents
+  // them. This page used to print the ladder itself — every rung's target and its
+  // share of the position — which is the one thing that must NOT be published:
+  // those numbers next to the trade history are enough to reconstruct the entry
+  // rule. Only the COUNT is public here, same as on the library page.
+  const tpLevels = profile?.tp?.length ?? 0;
+  const atr = configAtrValue(bot.config as unknown as BotConfig);
+  const tighten = profile ? ratchetPct(profile) : null;
+
+  /**
+   * The break-even tile, in the two shapes a stored config can take — the
+   * progressive ladder (`sl_tighten_pct`, which tightens the stop after EVERY
+   * rung) and the legacy one-shot `be` (which moves it to entry when its rung
+   * fills). Both are "the stop follows your take-profits", so both are shown under
+   * one honest name rather than under the internal word "ratchet".
+   */
+  const breakEven: Stat = tighten
+    ? {
+        label: "Break-even System",
+        value: `${tighten}% / TP`,
+        tone: "success",
+        hint: `With every TP hit, the stop loss moves ${tighten}% of its original distance closer to your entry level — and past it, into profit, once enough rungs have filled.`,
+      }
+    : profile?.be
+      ? {
+          label: "Break-even System",
+          value: `From TP${profile.be}`,
+          tone: "success",
+          hint: `When take-profit ${profile.be} is hit, the stop loss moves to your entry level, so the rest of the trade can no longer lose.`,
+        }
+      : {
+          label: "Break-even System",
+          value: "Off",
+          hint: "This bot keeps its original stop loss for the whole trade.",
+        };
+
   return (
     <AppShell>
       {/* top bar */}
@@ -140,6 +176,17 @@ export default async function MyBotDetailPage({ params }: PageProps<"/my-bots/[b
               value={open.unrealizedPnl != null ? signed(open.unrealizedPnl) : "—"}
               tone={open.unrealizedPnl == null ? "default" : open.unrealizedPnl >= 0 ? "success" : "danger"}
             />
+            {/*
+              How far up the ladder this position has run. It replaces the per-rung
+              Filled/Resting column that used to sit in the Trade Profile table —
+              the live progress is the useful half of it, and it carries none of the
+              rung targets or weights that table published.
+            */}
+            <StatCard
+              label="Take-Profits Hit"
+              value={open.rungsTotal ? `${open.rungsFilled} / ${open.rungsTotal}` : "—"}
+              tone={open.rungsFilled > 0 ? "success" : "default"}
+            />
             {open.markPrice != null && (
               <StatCard label="Mark Price" value={`$${open.markPrice.toLocaleString("en-US")}`} />
             )}
@@ -156,69 +203,48 @@ export default async function MyBotDetailPage({ params }: PageProps<"/my-bots/[b
         </div>
       )}
 
-      {/* Trade Profile — the ladder this bot actually places, from its own config. */}
+      {/*
+        Bot trading metrics — the bot's own risk settings, then this deployment's
+        real record. The take-profit ladder that used to be tabulated here (every
+        rung's target and its share of the position) is NOT published; see
+        `tpLevels` above.
+      */}
       <section className="rounded-2xl border border-line bg-surface p-4 sm:p-6">
-        <h2 className="mb-4 text-base font-semibold text-white">Trade Profile</h2>
-        {profile ? (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[520px] text-left">
-              <thead>
-                <tr className="border-b border-line text-xs font-semibold text-muted">
-                  <th className="px-2 py-3 text-left">Take Profit</th>
-                  <th className="px-2 py-3 text-left">Target</th>
-                  <th className="px-2 py-3 text-right">Allocation</th>
-                  {open && <th className="px-2 py-3 text-right">Status</th>}
-                </tr>
-              </thead>
-              <tbody>
-                {profile.tp.map((target, i) => {
-                  const filled = open?.rungs.find((r) => r.rungIndex === i)?.filled ?? false;
-                  return (
-                    <tr key={i} className="border-b border-line/60 last:border-0">
-                      <td className="px-2 py-4 text-sm font-semibold text-white">Take profit {i + 1}</td>
-                      <td className="px-2 py-4 text-sm font-semibold text-success">{target}%</td>
-                      <td className="px-2 py-4 text-right text-sm text-muted">
-                        {Math.round((profile.w[i] ?? 0) * 100)}% of assets
-                      </td>
-                      {open && (
-                        <td className={cn("px-2 py-4 text-right text-sm", filled ? "text-success" : "text-muted")}>
-                          {filled ? "Filled" : "Resting"}
-                        </td>
-                      )}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <p className="text-sm text-muted">This bot&apos;s config has no {bot.riskClass.toLowerCase()} profile.</p>
+        <h2 className="mb-4 text-base font-semibold text-white">Bot Trading Metrics</h2>
+        {!profile && (
+          <p className="mb-4 text-sm text-muted">
+            This bot&apos;s config has no {bot.riskClass.toLowerCase()} profile, so its risk settings are unavailable.
+          </p>
         )}
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <StatCard label="Stop Loss" value={profile ? `${profile.sl}%` : "—"} tone="danger" />
+          <StatCard
+            label="TP Levels"
+            value={tpLevels ? `${tpLevels} levels` : "—"}
+            hint={tpLevels ? `This bot scales out of every position across ${tpLevels} take-profit levels.` : undefined}
+          />
+          <StatCard {...breakEven} />
+          <StatCard
+            label="ATR Value"
+            value={atr != null ? String(atr) : "—"}
+            hint={atr != null ? "The ATR multiple this bot's stop loss is sized from." : undefined}
+          />
+          <StatCard label="Leverage" value={profile ? `${profile.lev}x` : "—"} />
+          <StatCard label="Trades Closed" value={String(performance.trades)} />
+          <StatCard
+            label="Win Rate"
+            value={performance.trades ? `${performance.winRate.toFixed(1)}%` : "—"}
+            tone={performance.trades && performance.winRate >= 50 ? "success" : "default"}
+          />
+          <StatCard
+            label="Realized PnL"
+            value={performance.trades ? signed(performance.realizedPnl) : "—"}
+            tone={performance.realizedPnl >= 0 ? "success" : "danger"}
+          />
+          <StatCard label="Max Drawdown" value={performance.trades ? `-$${performance.maxDrawdown.toFixed(2)}` : "—"} tone="danger" />
+          <StatCard label="Avg. Trade" value={performance.trades ? signed(performance.avgTrade) : "—"} tone={performance.avgTrade >= 0 ? "success" : "danger"} />
+        </div>
       </section>
-
-      {/* Live metrics — the bot's own risk settings plus this deployment's real record. */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <StatCard label="Stop Loss" value={profile ? `${profile.sl}%` : "—"} tone="danger" />
-        {profile?.sl_tighten_pct ? (
-          <StatCard label="Stop ratchet" value={`${profile.sl_tighten_pct}%/TP`} tone="success" />
-        ) : (
-          <StatCard label="SL to BE" value={profile?.be ? `TP${profile.be}` : "Never"} />
-        )}
-        <StatCard label="Leverage" value={profile ? `${profile.lev}x` : "—"} />
-        <StatCard label="Trades Closed" value={String(performance.trades)} />
-        <StatCard
-          label="Win Rate"
-          value={performance.trades ? `${performance.winRate.toFixed(1)}%` : "—"}
-          tone={performance.trades && performance.winRate >= 50 ? "success" : "default"}
-        />
-        <StatCard
-          label="Realized PnL"
-          value={performance.trades ? signed(performance.realizedPnl) : "—"}
-          tone={performance.realizedPnl >= 0 ? "success" : "danger"}
-        />
-        <StatCard label="Max Drawdown" value={performance.trades ? `-$${performance.maxDrawdown.toFixed(2)}` : "—"} tone="danger" />
-        <StatCard label="Avg. Trade" value={performance.trades ? signed(performance.avgTrade) : "—"} tone={performance.avgTrade >= 0 ? "success" : "danger"} />
-      </div>
 
       {/* Performance Summary */}
       <section className="flex flex-col gap-4">
@@ -333,17 +359,26 @@ export default async function MyBotDetailPage({ params }: PageProps<"/my-bots/[b
 
 type Tone = "default" | "success" | "danger";
 
+type Stat = {
+  label: string;
+  value: string;
+  tone?: Tone;
+  /** One-line plain-English explanation, shown under the value. */
+  hint?: string;
+};
+
 const TONE_CLASS: Record<Tone, string> = {
   default: "text-white",
   success: "text-success",
   danger: "text-[#D2031E]",
 };
 
-function StatCard({ label, value, tone = "default" }: { label: string; value: string; tone?: Tone }) {
+function StatCard({ label, value, tone = "default", hint }: Stat) {
   return (
     <div className="flex flex-col gap-1.5 rounded-2xl border border-line bg-surface p-4">
       <span className="text-xs leading-[18px] text-muted">{label}</span>
       <span className={cn("text-lg font-semibold leading-6", TONE_CLASS[tone])}>{value}</span>
+      {hint && <span className="text-xs leading-[18px] text-muted">{hint}</span>}
     </div>
   );
 }

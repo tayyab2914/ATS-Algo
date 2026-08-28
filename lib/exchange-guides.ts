@@ -41,12 +41,20 @@ const paste = (venue: string): GuideStep => ({
 export const EXCHANGE_GUIDES: Record<string, ExchangeGuide> = {
   bybit: {
     title: "ATS-ALGO × Bybit",
+    // Bybit runs two separate platforms behind one brand and a member with an EU
+    // account will otherwise follow these steps on the wrong one, ending with a key
+    // that authenticates against nothing we trade.
+    note: "Use the global site, bybit.com. Bybit's EU platform (bybit.eu) is a separate account and is not supported yet.",
     steps: [
-      { text: "Log in to your Bybit account, or register one." },
+      { text: "Log in to your Bybit account on bybit.com, or register one." },
       { text: 'Move your cursor over your profile icon and select "API".', image: "/guides/bybit/step-2.png" },
       { text: 'Press "Create New Key".', image: "/guides/bybit/step-3.png" },
+      // NOT the "Connect to Third-Party Applications" route, and NOT CCXT — that
+      // pairing belongs to BloFin and was copied here by mistake. On Bybit it issues
+      // a key bound to someone else's integration, which our orders are rejected
+      // against, so the guide names the System-generated key and nothing else.
       { text: 'Choose the "System-generated API Keys" option.', image: "/guides/bybit/step-4.png" },
-      { text: 'Choose "Connect to Third-Party Applications" and find "CCXT" in the list. Enable the trading permissions, and add IP addresses for whitelisting if you have them.' },
+      { text: "Name the key, enable its trading permissions — a read-only key cannot place orders — and add IP addresses for whitelisting if you have them. Then create the key and pass the security verification." },
       paste("Bybit"),
     ],
   },

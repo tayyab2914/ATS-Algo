@@ -37,14 +37,31 @@ export const BRAND_MARK_SIZE = { width: 48, height: 40 } as const;
 export const BRAND_LOCKUP: { src: string; width: number; height: number } | null = null;
 
 /**
+ * The PNG this app serves as its own email logo, relative to the site root.
+ *
+ * PNG rather than the SVG mark on purpose: Gmail and Outlook do not render SVG in
+ * a message body at all. Regenerate it from `app/icon.svg` whenever the mark
+ * changes, so the tab icon and the email masthead stay the same artwork.
+ */
+export const BRAND_EMAIL_LOGO_PATH = "/brand/ats-email-logo.png";
+
+/**
  * Absolute URL of the logo to embed in emails, or null for the text lockup.
  *
- * Env-driven and off by default, on purpose. Email clients need an ABSOLUTE URL —
- * a relative path renders as a broken image — and Gmail and Outlook do not render
- * SVG at all, so this has to be a PNG that is actually reachable from the public
- * internet. A wrong value here is a broken image in every transactional email the
- * platform sends, which is worse than clean type. Set `BRAND_EMAIL_LOGO_URL` to a
- * hosted PNG once one exists.
+ * Email clients need an ABSOLUTE URL — a relative path renders as a broken image
+ * — and a wrong value here is a broken image in every transactional email the
+ * platform sends, which is worse than clean type. So the resolution is ordered
+ * from most explicit to least, and gives up rather than guessing:
+ *
+ *  1. `BRAND_EMAIL_LOGO_URL`, when set. An operator hosting the artwork elsewhere
+ *     (a CDN, a BIMI-aligned domain) has said so deliberately; nothing overrides it.
+ *  2. Otherwise `APP_URL` + {@link BRAND_EMAIL_LOGO_PATH} — the copy this very app
+ *     serves out of `public/`, which is reachable exactly when the app is. This is
+ *     the branch that carries the default deployment: the file already ships, and
+ *     needing a second env var to see it meant every email went out as bare type.
+ *  3. Null when `APP_URL` is unset or is not https. **Not** an oversight: an http
+ *     or localhost URL is either blocked by the client's image proxy or dead for
+ *     every recipient, and a broken masthead is worse than the type fallback.
  *
  * NOTE: this is the logo INSIDE the message. The little avatar Gmail draws next to
  * the sender is not settable from an SMTP message at all — it comes from the
@@ -52,6 +69,10 @@ export const BRAND_LOCKUP: { src: string; width: number; height: number } | null
  * `lib/email.ts`.
  */
 export function emailLogoUrl(): string | null {
-  const url = process.env.BRAND_EMAIL_LOGO_URL?.trim();
-  return url && /^https?:\/\//i.test(url) ? url : null;
+  const configured = process.env.BRAND_EMAIL_LOGO_URL?.trim();
+  if (configured && /^https?:\/\//i.test(configured)) return configured;
+
+  const base = process.env.APP_URL?.trim().replace(/\/+$/, "");
+  if (!base || !/^https:\/\//i.test(base)) return null;
+  return `${base}${BRAND_EMAIL_LOGO_PATH}`;
 }

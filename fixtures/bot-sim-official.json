@@ -1,0 +1,41 @@
+{
+  "name": "BTC",
+  "ticker": "BTC",
+  "csv_file": "BTC.csv",
+  "exchange": "Bitget",
+  "timeframe": "170",
+  "type": "Crypto",
+  "direction": "both",
+  "ATR_value": 4.0,
+  "reference_sl": 4.0,
+  "picked_sl": 2.5,
+  "optimized_period": 100,
+  "run_stamp": "2026-08-24_13-48-52",
+  "run_time_utc": "24.08.2026 11:48:52 UTC",
+  "profiles": {
+    "safe": {
+      "tp": [
+        0.75,
+        1.68,
+        1.93,
+        2.26,
+        2.65,
+        3.53
+      ],
+      "w": [
+        0.08,
+        0.22,
+        0.19,
+        0.22,
+        0.22,
+        0.08
+      ],
+      "sl": 2.5,
+      "be": 2,
+      "lev": 1,
+      "max_safe_lev": 3,
+      "optimized_period": 100,
+      "trades": 100
+    }
+  }
+}

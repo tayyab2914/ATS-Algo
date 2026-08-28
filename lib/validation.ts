@@ -132,6 +132,29 @@ export const exchangeRemoveSchema = z.object({
 const MAX_TP_RUNGS = 10;
 
 /**
+ * How far a ladder's weights may sum from 1 before it is a real error.
+ *
+ * It was an exact match (`1e-6`), and that rejected the Bot Sim's own official
+ * output: the simulator publishes each weight rounded to TWO DECIMALS, so
+ * `[0.08, 0.22, 0.19, 0.22, 0.22, 0.08]` — a ladder that sums to 1 before
+ * rounding — reaches us summing to 1.01, and the upload failed with "weights must
+ * sum to 1 but sum to 1.010000".
+ *
+ * The envelope is exactly what that rounding can hide: each of `n` weights can be
+ * off by up to half a step (0.005), so the sum can be off by up to `n * 0.005` —
+ * 0.03 across six rungs. Anything beyond that is not rounding, it is a wrong
+ * ladder, and is still rejected (a 0.9 or a 1.2 sum both remain errors).
+ *
+ * Accepting the drift is safe on both sides of the seam, and deliberately so
+ * rather than by luck: `rungSizes` clamps the total weight to 1 before splitting
+ * the position, so a 1.01 ladder still places exactly one position's worth, and
+ * the backtest clamps each rung to the size still open. Neither over-closes.
+ */
+function weightSumTolerance(rungs: number): number {
+  return rungs * 0.005 + 1e-6;
+}
+
+/**
  * One risk profile of an uploaded bot config. The live executor places a resting
  * limit order per `tp[k]` sized `w[k]` of the position, so a malformed ladder is
  * a real-money bug: mismatched `tp`/`w` lengths silently drop rungs, and weights
@@ -191,11 +214,14 @@ function profileConfigSchema(label: string) {
         return; // the remaining checks are meaningless once the ladder is misaligned
       }
       const sum = p.w.reduce((total, x) => total + x, 0);
-      if (Math.abs(sum - 1) > 1e-6) {
+      const tolerance = weightSumTolerance(p.w.length);
+      if (Math.abs(sum - 1) > tolerance) {
         ctx.addIssue({
           code: "custom",
           path: ["w"],
-          message: `${label}: weights must sum to 1 but sum to ${sum.toFixed(6)} — otherwise the ladder never closes the whole position`,
+          message:
+            `${label}: weights must sum to 1 but sum to ${sum.toFixed(6)} — that is more than rounding can explain ` +
+            `(at most ${tolerance.toFixed(2)} across ${p.w.length} rungs), so the ladder either leaves part of every position with no take-profit or tries to close more than it holds`,
         });
       }
       if (p.be != null && p.be > p.tp.length) {

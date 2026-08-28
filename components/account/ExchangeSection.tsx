@@ -121,6 +121,9 @@ export function ExchangeSection({
                         ? `API Connected • ${connection.permissions}`
                         : "Not connected"}
                   </span>
+                  {canConnect && venue.connectNote && (
+                    <span className="text-xs text-[#F4A825]">{venue.connectNote}</span>
+                  )}
                   {canConnect && venue.thirdPartyAppName && (
                     <span className="text-xs text-[#F4A825]">
                       Create the key under{" "}

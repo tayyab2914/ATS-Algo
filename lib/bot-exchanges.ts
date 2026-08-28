@@ -66,6 +66,17 @@ export type BotExchange = {
    * which is why it is a field here and not a line buried in the guide.
    */
   thirdPartyAppName?: string;
+  /**
+   * A one-line caveat about WHERE the key must be created, shown on the venue's
+   * card in Account → Exchange API Connections, or undefined where there is none.
+   *
+   * Exists for venues that run more than one entity behind one brand. Bybit is the
+   * case: bybit.com and the separate EU entity are different platforms with
+   * different accounts, and a key from the wrong one authenticates against nothing
+   * we talk to. The member cannot tell from our form which site we mean, so the
+   * form says it.
+   */
+  connectNote?: string;
 };
 
 export const BOT_EXCHANGES: BotExchange[] = [
@@ -74,7 +85,14 @@ export const BOT_EXCHANGES: BotExchange[] = [
   // Wired 2026-08-03. Proven end-to-end on the demo engine by
   // scripts/verify-executor-bybit-demo.ts (entry + attached backstop + 6-rung ladder + ratchet
   // + flatten) and scripts/verify-stop-strategy.ts (the one-slot stop model).
-  { value: "Bybit", label: "Bybit", logo: "/exchanges/bybit.svg", ccxtId: "bybit", requiresPassphrase: false, connectable: true, wired: true, paperDetectableFromKey: true, thirdPartyAppName: "CCXT" },
+  //
+  // NO `thirdPartyAppName`. It was "CCXT", copied across from BloFin, and it is
+  // wrong here: Bybit's "Connect to Third-Party Applications" route issues a key
+  // bound to a named integration, and it is not the route we want a member on —
+  // the System-generated key their guide walks through is. Naming CCXT on this card
+  // sent people down a path that produces a key we cannot use. It stays on BloFin,
+  // which is the venue that genuinely requires it.
+  { value: "Bybit", label: "Bybit", logo: "/exchanges/bybit.svg", ccxtId: "bybit", requiresPassphrase: false, connectable: true, wired: true, paperDetectableFromKey: true, connectNote: "Create the key on the global site, bybit.com. Bybit's separate EU platform (bybit.eu) is a different account and is not supported yet." },
   { value: "Bitget", label: "Bitget", logo: "/exchanges/bitget.svg", ccxtId: "bitget", requiresPassphrase: true, connectable: true, wired: true, paperDetectableFromKey: true },
   // Blofin DOES require a passphrase — confirmed against the installed ccxt adapter, which sets
   // `requiredCredentials.password: true` and sends it as ACCESS-PASSPHRASE. The member CHOOSES it
