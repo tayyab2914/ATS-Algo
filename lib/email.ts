@@ -1,5 +1,7 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import nodemailer, { type Transporter } from "nodemailer";
-import { BRAND_NAME, emailLogoUrl } from "@/lib/brand";
+import { BRAND_EMAIL_LOGO_PATH, BRAND_NAME, emailLogoUrl } from "@/lib/brand";
 
 /**
  * SMTP mailer (Gmail). The transporter is created lazily and cached so we don't
@@ -68,46 +70,119 @@ function fromHeader(): string {
 const BG = "#0a0a0a";
 const ACCENT = "#28b8d5";
 
+/** Content-ID the masthead `<img>` points at when the logo travels with the message. */
+const LOGO_CID = "ats-algo-logo";
+
 /**
- * The masthead every message opens with.
+ * The logo file, read off disk once and kept, or null when it cannot be read.
  *
- * Falls back to type when no logo URL is configured, and that fallback is the
- * default. An email client needs an ABSOLUTE url and most will not render SVG, so a
- * guessed path here would be a broken image in every message the platform sends —
- * clean type beats that. Set `BRAND_EMAIL_LOGO_URL` to a hosted PNG to switch it on.
+ * `undefined` means "not tried yet" and `null` means "tried and failed", so a
+ * missing file costs one syscall for the life of the process rather than one per
+ * message. Read from `public/` — the same file the site serves — so there is one
+ * piece of artwork to replace, not two.
  */
-function masthead(): string {
-  const logo = emailLogoUrl();
-  if (logo) {
-    return `<img src="${logo}" alt="${BRAND_NAME}" height="32" style="display:block;height:32px;width:auto;border:0;margin:0 0 20px" />`;
+let logoFile: Buffer | null | undefined;
+
+function embeddedLogo(): Buffer | null {
+  if (logoFile !== undefined) return logoFile;
+  try {
+    logoFile = readFileSync(join(process.cwd(), "public", BRAND_EMAIL_LOGO_PATH.replace(/^\/+/, "")));
+  } catch {
+    // A deployment that serves the app from somewhere the file isn't. Not fatal:
+    // the masthead falls back, and an email is still perfectly readable as type.
+    logoFile = null;
   }
-  return `<p style="margin:0 0 20px;font-size:15px;font-weight:700;letter-spacing:4px;color:${ACCENT}">${BRAND_NAME}</p>`;
+  return logoFile;
+}
+
+/**
+ * The masthead every message opens with, and the attachment it needs (if any).
+ *
+ * EMBEDDED BY DEFAULT, and that is the whole point. It used to be `<img src>`
+ * pointing at `https://<APP_URL>/brand/ats-email-logo.png` — a correct, publicly
+ * reachable URL that Gmail nonetheless drew as blank space, because a REMOTE image
+ * is a tracking pixel as far as a mail client is concerned and gets blocked on
+ * sight from a sender the recipient has never corresponded with. Nothing about the
+ * URL can fix that; the image has to travel INSIDE the message. So it does: the
+ * PNG rides along as a related part and the `<img>` addresses it by Content-ID,
+ * which every mail client renders without asking.
+ *
+ * The order is deliberate:
+ *  1. `BRAND_EMAIL_LOGO_URL`, when set — an operator hosting the artwork elsewhere
+ *     has said so on purpose, and that intent outranks our default. (It is a remote
+ *     image, so it inherits the blocking described above.)
+ *  2. The embedded file. The default, and the only option that always renders.
+ *  3. Type. Reached only when the file cannot be read; renders everywhere.
+ */
+function masthead(): { html: string; logo: Buffer | null } {
+  const style = "display:block;height:32px;width:auto;border:0;margin:0 0 20px";
+
+  const configured = emailLogoUrl();
+  if (configured) {
+    return { html: `<img src="${configured}" alt="${BRAND_NAME}" height="32" style="${style}" />`, logo: null };
+  }
+
+  const embedded = embeddedLogo();
+  if (embedded) {
+    return { html: `<img src="cid:${LOGO_CID}" alt="${BRAND_NAME}" height="32" style="${style}" />`, logo: embedded };
+  }
+
+  return {
+    html: `<p style="margin:0 0 20px;font-size:15px;font-weight:700;letter-spacing:4px;color:${ACCENT}">${BRAND_NAME}</p>`,
+    logo: null,
+  };
 }
 
 /**
  * Wrap body HTML in the branded card every message shares. Inline styles only:
  * `<style>` blocks and external stylesheets are stripped by most clients.
+ *
+ * Returns the attachment alongside the markup, because the two cannot be decided
+ * apart: the `cid:` reference is only valid if the part it names is actually on the
+ * message.
  */
-function shell(inner: string): string {
-  return `
+function shell(inner: string): { html: string; logo: Buffer | null } {
+  const brand = masthead();
+  return {
+    logo: brand.logo,
+    html: `
       <div style="font-family:Inter,Arial,sans-serif;background:${BG};color:#fff;padding:32px;border-radius:16px;max-width:480px">
-        ${masthead()}
+        ${brand.html}
         ${inner}
         <p style="margin:28px 0 0;padding-top:16px;border-top:1px solid #2a2a2a;color:#6b7280;font-size:11px">
           ${BRAND_NAME} — automated trading. This is an automated message; replies are not monitored.
         </p>
       </div>
-    `;
+    `,
+  };
 }
 
 /** Send one branded message. The single place `from` is decided. */
 async function send(options: { to: string; subject: string; text: string; html: string }): Promise<void> {
+  const body = shell(options.html);
   await getTransporter().sendMail({
     from: fromHeader(),
     to: options.to,
     subject: options.subject,
     text: options.text,
-    html: shell(options.html),
+    html: body.html,
+    // `cid` + `contentDisposition: "inline"` is what makes this a RELATED part the
+    // markup can address, rather than a file chip hanging off the bottom of the
+    // message. Omitted entirely when there is no logo, so no message carries an
+    // empty attachments array.
+    ...(body.logo
+      ? {
+          attachments: [
+            {
+              filename: "ats-algo.png",
+              content: body.logo,
+              cid: LOGO_CID,
+              contentType: "image/png",
+              contentDisposition: "inline" as const,
+            },
+          ],
+        }
+      : {}),
   });
 }
 

@@ -46,22 +46,20 @@ export const BRAND_LOCKUP: { src: string; width: number; height: number } | null
 export const BRAND_EMAIL_LOGO_PATH = "/brand/ats-email-logo.png";
 
 /**
- * Absolute URL of the logo to embed in emails, or null for the text lockup.
+ * An operator-supplied absolute URL for the email masthead logo, or null.
  *
- * Email clients need an ABSOLUTE URL — a relative path renders as a broken image
- * — and a wrong value here is a broken image in every transactional email the
- * platform sends, which is worse than clean type. So the resolution is ordered
- * from most explicit to least, and gives up rather than guessing:
+ * OPT-IN ONLY, and deliberately not a fallback chain. By default the masthead
+ * embeds {@link BRAND_EMAIL_LOGO_PATH} in the message itself (see `lib/email.ts`),
+ * which is the only form that reliably renders: a REMOTE image — however correct
+ * its URL, and this app's own `APP_URL`-derived one was correct and publicly
+ * reachable — is a tracking pixel as far as a mail client is concerned, and Gmail
+ * drew it as blank space. Deriving a URL here just produced a well-formed link to
+ * an image nobody saw.
  *
- *  1. `BRAND_EMAIL_LOGO_URL`, when set. An operator hosting the artwork elsewhere
- *     (a CDN, a BIMI-aligned domain) has said so deliberately; nothing overrides it.
- *  2. Otherwise `APP_URL` + {@link BRAND_EMAIL_LOGO_PATH} — the copy this very app
- *     serves out of `public/`, which is reachable exactly when the app is. This is
- *     the branch that carries the default deployment: the file already ships, and
- *     needing a second env var to see it meant every email went out as bare type.
- *  3. Null when `APP_URL` is unset or is not https. **Not** an oversight: an http
- *     or localhost URL is either blocked by the client's image proxy or dead for
- *     every recipient, and a broken masthead is worse than the type fallback.
+ * So this exists for the one case embedding cannot serve: artwork that must be
+ * fetched from somewhere specific — a CDN, or the BIMI-aligned host that a Verified
+ * Mark Certificate is issued against. Setting it accepts the blocking behaviour
+ * above in exchange for that.
  *
  * NOTE: this is the logo INSIDE the message. The little avatar Gmail draws next to
  * the sender is not settable from an SMTP message at all — it comes from the
@@ -70,9 +68,5 @@ export const BRAND_EMAIL_LOGO_PATH = "/brand/ats-email-logo.png";
  */
 export function emailLogoUrl(): string | null {
   const configured = process.env.BRAND_EMAIL_LOGO_URL?.trim();
-  if (configured && /^https?:\/\//i.test(configured)) return configured;
-
-  const base = process.env.APP_URL?.trim().replace(/\/+$/, "");
-  if (!base || !/^https:\/\//i.test(base)) return null;
-  return `${base}${BRAND_EMAIL_LOGO_PATH}`;
+  return configured && /^https?:\/\//i.test(configured) ? configured : null;
 }
