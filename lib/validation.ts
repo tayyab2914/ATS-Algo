@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { EXCHANGES } from "@/lib/account";
 import { BOT_EXCHANGES } from "@/lib/bot-exchanges";
+import { SLUG_MAX } from "@/lib/community/slug";
 import {
   DEFAULT_SLIPPAGE_PCT,
   minDistancePct,
@@ -28,6 +29,14 @@ export const signupSchema = z
     email,
     password,
     confirmPassword: z.string(),
+    /**
+     * Community Access Link slug the registration came through, from the
+     * landing page's `?ref=`. A HINT, never an authority: the signup route
+     * looks the slug up and checks the link is still active before it grants
+     * anything, so a hand-typed or stale value simply produces an ordinary
+     * read-only guest instead of an error.
+     */
+    ref: z.string().trim().toLowerCase().max(SLUG_MAX).optional(),
   })
   .refine((data) => data.password === data.confirmPassword, {
     message: "Passwords do not match",
@@ -447,6 +456,23 @@ export const adminSetRoleSchema = z.object({
   role: z.enum(["ADMIN", "USER"]),
 });
 
+/** Create a Community Access Link. The slug is normalised + vetted server-side. */
+export const communityLinkCreateSchema = z.object({
+  name: z.string().trim().min(2, "Name is required").max(60, "Name must be 60 characters or fewer"),
+  /** Raw text from the form; normalised with `normalizeSlug` before validation. */
+  slug: z.string().trim().max(80).optional(),
+});
+
+/**
+ * Edit an existing link. Every field optional so the row's Activate/Deactivate
+ * switch and its rename form can post to the same endpoint without either
+ * clobbering the other's value.
+ */
+export const communityLinkUpdateSchema = z.object({
+  name: z.string().trim().min(2, "Name is required").max(60, "Name must be 60 characters or fewer").optional(),
+  active: z.boolean().optional(),
+});
+
 export type LoginInput = z.infer<typeof loginSchema>;
 export type SignupInput = z.infer<typeof signupSchema>;
 export type ProfileInput = z.infer<typeof profileSchema>;
@@ -460,3 +486,5 @@ export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
 export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
 export type AdminMemberActionInput = z.infer<typeof adminMemberActionSchema>;
 export type AdminSetRoleInput = z.infer<typeof adminSetRoleSchema>;
+export type CommunityLinkCreateInput = z.infer<typeof communityLinkCreateSchema>;
+export type CommunityLinkUpdateInput = z.infer<typeof communityLinkUpdateSchema>;

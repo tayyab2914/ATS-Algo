@@ -8,7 +8,6 @@ import { getSession, hasLiveSession } from "@/lib/auth/session";
 import { isSubscriptionActive } from "@/lib/billing";
 import { prisma } from "@/lib/db";
 import type { SubscriptionModel } from "@/lib/generated/prisma/models";
-import { guestTrialFrom } from "@/lib/guest";
 
 function formatDate(date: Date): string {
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
@@ -68,9 +67,9 @@ export default async function AdminManagementPage() {
       lastLoginAt: true,
       sessionsValidFrom: true,
       createdAt: true,
-      guestExpiresAt: true,
       subscription: { select: { currentPeriodEnd: true } },
       subscriptionRequest: { select: { status: true, requestedAt: true } },
+      communityLink: { select: { id: true, name: true } },
     },
   });
 
@@ -81,10 +80,10 @@ export default async function AdminManagementPage() {
       user.subscription,
       user.subscriptionRequest?.status === "PENDING",
     );
-    // A non-admin without active access is a Guest. Surface their trial state so
-    // admins can tell explorers from granted members at a glance.
+    // A non-admin without live access is a read-only Guest. There is no trial to
+    // report any more — the platform is closed to individual members, so a guest
+    // simply stays one until an admin uses "Make member".
     const hasAccess = user.role === "ADMIN" || subscription.active;
-    const trial = guestTrialFrom(user.guestExpiresAt ?? null);
     return {
       id: user.id,
       name: user.name?.trim() || user.email.split("@")[0],
@@ -94,7 +93,10 @@ export default async function AdminManagementPage() {
       loggedIn: hasLiveSession(user),
       joined: formatDate(user.createdAt),
       subscription,
-      guest: hasAccess ? null : { state: trial.state, daysLeft: trial.daysLeft },
+      guest: !hasAccess,
+      // Which community's link brought them in. "Individual" (null) is now the
+      // exception worth spotting, not the norm.
+      community: user.communityLink,
       // The acting admin's own row (no self-targeting) and the protected superadmin.
       isSelf: user.id === session.sub,
       isProtected: isSuperAdminEmail(user.email),

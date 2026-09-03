@@ -5,15 +5,12 @@ import { PerformanceMetrics } from "@/components/dashboard/PerformanceMetrics";
 import { PortfolioAndHoldings } from "@/components/dashboard/PortfolioAndHoldings";
 import { TopActiveBots } from "@/components/dashboard/TopActiveBots";
 import { TopAssets } from "@/components/dashboard/TopAssets";
-import { blockExpiredGuest, getPageAccess } from "@/lib/auth/guards";
+import { getPageAccess } from "@/lib/auth/guards";
 import { loadDashboard } from "@/lib/dashboard/metrics";
 import { parsePeriod, parseTimeframe } from "@/lib/dashboard/window";
 
 export default async function DashboardPage({ searchParams }: PageProps<"/dashboard">) {
-  const { session, tier } = await getPageAccess();
-  // Expired guests are walled to Billing; visitors see the locked preview;
-  // active guests and members alike see the (read-only) dashboard content.
-  blockExpiredGuest(tier);
+  const { session } = await getPageAccess();
 
   const params = await searchParams;
   // Two controls, two windows. `p` picks a trailing period the catalogue can

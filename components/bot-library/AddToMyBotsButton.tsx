@@ -32,10 +32,14 @@ function LockIcon() {
 /**
  * "Add to My Bots" CTA, gated by what the viewer is allowed to do:
  *  - visitor   → routed to login (with a return path); the action needs an account.
- *  - guest     → deploying is a paid feature, so routed to Billing to upgrade.
+ *  - guest     → read-only, so the button says why instead of navigating anywhere.
  *  - member    → persists the add/remove to "My Bots" (optimistic, with revert).
  *
- * Guests can browse bot profiles read-only but can't deploy until they're members.
+ * Guests can browse bot profiles read-only but can't deploy until they're members —
+ * which happens by joining through a community invite link, or by an admin
+ * enabling it from Members Management. Neither is a page this button can send
+ * them to, so it reports the state in place rather than bouncing them to a
+ * dead end.
  */
 export function AddToMyBotsButton({
   botId,
@@ -61,8 +65,9 @@ export function AddToMyBotsButton({
       return;
     }
     if (!canDeploy) {
-      // Signed-in guest: deploying needs a membership.
-      router.push("/billing?gated=1");
+      // Signed-in guest: deploying needs a membership, and there is nowhere to
+      // send them to get one. Handled by the disabled render below, so this is
+      // only the belt to that braces.
       return;
     }
     if (pending) return;
@@ -99,7 +104,7 @@ export function AddToMyBotsButton({
       onClick={handleClick}
       disabled={pending}
       aria-pressed={added}
-      title={locked ? "Deploying bots needs access granted by an admin" : undefined}
+      title={locked ? "Deploying bots is enabled for community members — ask an admin to enable it for this account" : undefined}
       className={cn(
         "inline-flex h-11 items-center justify-center gap-2 rounded-full px-5 text-sm font-semibold transition-colors disabled:opacity-70",
         locked
@@ -110,7 +115,7 @@ export function AddToMyBotsButton({
       )}
     >
       {locked ? <LockIcon /> : added ? <CheckIcon /> : <PlusIcon />}
-      {locked ? "Request access to deploy" : added ? "Added to My Bots" : "Add to My Bots"}
+      {locked ? "Members only" : added ? "Added to My Bots" : "Add to My Bots"}
     </button>
   );
 }

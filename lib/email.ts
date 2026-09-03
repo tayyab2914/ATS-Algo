@@ -190,24 +190,6 @@ async function send(options: { to: string; subject: string; text: string; html: 
 const codeBlock = (code: string) =>
   `<p style="font-size:36px;font-weight:700;letter-spacing:8px;color:${ACCENT};margin:16px 0">${code}</p>`;
 
-/**
- * Escape a value before it goes into an HTML email body.
- *
- * Needed because one message — the access-request notification — carries a
- * string the sender chose themselves (their display name). Every other email in
- * this file interpolates only values we generated, so this is the single place
- * untrusted text reaches markup: unescaped, a member could name themselves an
- * `<a>` and have it render as a link inside a branded message to every admin.
- */
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
 /** The primary action button — the same treatment in every link email. */
 const cta = (href: string, label: string) =>
   `<a href="${href}" style="display:inline-block;margin-top:16px;background:${ACCENT};color:#121212;font-weight:600;text-decoration:none;padding:12px 24px;border-radius:12px">${label}</a>`;
@@ -319,39 +301,6 @@ export async function sendEmailChangeCode(
         <p style="color:#b5b5b5;font-size:14px;line-height:21px">${lead}</p>
         ${codeBlock(code)}
         <p style="color:#6b7280;font-size:12px">This code expires in 15 minutes. ${footer}</p>
-    `,
-  });
-}
-
-/**
- * Tell the admins that a member has asked for access.
- *
- * `to` may be a comma-joined list — every admin address at once, since any of
- * them can action it. Sent best-effort by the request route: the request row is
- * already committed before this runs, so a dead mailbox loses the notification,
- * never the request itself.
- */
-export async function sendSubscriptionRequestEmail(
-  to: string,
-  member: { name: string | null; email: string },
-  link: string,
-): Promise<void> {
-  const name = member.name?.trim();
-  const who = name ? `${name} (${member.email})` : member.email;
-  // The name is member-supplied; the plaintext part can take it verbatim, the
-  // HTML part cannot.
-  const whoHtml = escapeHtml(who);
-  await send({
-    to,
-    subject: `Access request from ${member.email}`,
-    text: `${who} has requested access to ${BRAND_NAME}.\n\nGrant or decline it from Members Management: ${link}`,
-    html: `
-        <h1 style="font-size:20px;margin:0 0 8px">New access request</h1>
-        <p style="color:#b5b5b5;font-size:14px;line-height:21px">
-          <span style="color:#fff;font-weight:600">${whoHtml}</span> has requested access to ${BRAND_NAME}.
-        </p>
-        ${cta(link, "Open Members Management")}
-        <p style="color:#6b7280;font-size:12px;margin-top:24px">Grant access for a fixed term or for good, or decline the request — both from the member's row menu.</p>
     `,
   });
 }

@@ -14,8 +14,13 @@ import { SESSION_COOKIE, verifyToken } from "@/lib/auth/jwt";
  * full access" overlay over a blurred preview; the policy gate only applies to
  * signed-in users (they carry a session). The Bot Library is otherwise public.
  * Authoritative checks still run in server components.
+ *
+ * Community Access Links (`/houseofcrypto`) are deliberately absent from the
+ * matcher: they are the public front door for an invited community, and running
+ * a signed-in redirect over them would break the landing route's own handling of
+ * a visitor who is already logged in.
  */
-const ADMIN_ONLY = ["/admin/dashboard", "/admin/management"];
+const ADMIN_ONLY = ["/admin/dashboard", "/admin/management", "/admin/community"];
 const AUTH_PAGES = ["/login", "/signup"];
 const POLICY_PATH = "/policy";
 
@@ -23,7 +28,7 @@ const POLICY_PATH = "/policy";
  * In-app routes a signed-in user may not reach until they accept the mandatory
  * Rules & Policy. Guests (no session) still pass through to the locked preview.
  */
-const POLICY_GATED = ["/dashboard", "/portfolio", "/my-bots", "/account", "/billing", "/bot-library"];
+const POLICY_GATED = ["/dashboard", "/portfolio", "/my-bots", "/account", "/bot-library"];
 
 /** Only allow internal, non-protocol-relative redirect targets. */
 function safeNext(value: string | null): string {
@@ -74,6 +79,7 @@ export const config = {
   matcher: [
     "/admin/dashboard/:path*",
     "/admin/management/:path*",
+    "/admin/community/:path*",
     "/login",
     "/signup",
     "/policy",
@@ -81,7 +87,6 @@ export const config = {
     "/portfolio/:path*",
     "/my-bots/:path*",
     "/account/:path*",
-    "/billing/:path*",
     "/bot-library/:path*",
   ],
 };

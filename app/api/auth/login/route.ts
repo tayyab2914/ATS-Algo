@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { ok, fail, zodFail } from "@/lib/api";
-import { startGuestTrialIfNeeded, toPublicUser } from "@/lib/auth/account";
+import { toPublicUser } from "@/lib/auth/account";
 import { verifyPassword } from "@/lib/auth/password";
 import { createSession } from "@/lib/auth/session";
 import { createAndSendTwoFactorCode, startPendingTwoFactor } from "@/lib/auth/two-factor";
@@ -54,9 +54,6 @@ export async function POST(request: NextRequest) {
     await startPendingTwoFactor(user.id);
     return ok({ twoFactorRequired: true });
   }
-
-  // First sign-in for a non-admin starts the 3-day Guest Mode trial clock.
-  await startGuestTrialIfNeeded(user);
 
   await createSession({
     sub: user.id,

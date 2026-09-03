@@ -8,7 +8,7 @@ import { BarChart } from "@/components/dashboard/BarChart";
 import { MultiLineChart } from "@/components/dashboard/MultiLineChart";
 import { PnlCalendar } from "@/components/portfolio/PnlCalendar";
 import { StatsWindowTabs } from "@/components/portfolio/StatsWindowTabs";
-import { blockExpiredGuest, getPageAccess } from "@/lib/auth/guards";
+import { getPageAccess } from "@/lib/auth/guards";
 import { cn } from "@/lib/cn";
 import {
   loadPortfolioAnalytics,
@@ -45,10 +45,7 @@ const toneOf = (n: number): Tone => (n > 0 ? "pos" : n < 0 ? "neg" : "neutral");
 const toneClass = (t: Tone) => (t === "pos" ? "text-success" : t === "neg" ? "text-[#D2031E]" : "text-white");
 
 export default async function PortfolioPage({ searchParams }: { searchParams: Promise<{ stats?: string }> }) {
-  const { session, tier, entitled } = await getPageAccess();
-  // Guests can't reach Portfolio — expired ones go to Billing, active ones see
-  // the members-only lock below.
-  blockExpiredGuest(tier);
+  const { session, entitled } = await getPageAccess();
 
   const statsWindow = parseStatWindow((await searchParams).stats);
   // One render-time clock for the whole page: the metric windows and the calendar's
@@ -334,10 +331,8 @@ function CustodyNote() {
         lose or freeze.
       </p>
       <p className="text-sm leading-[21px] text-muted">
-        Access to ATS-ALGO is granted by an admin, not sold — there is nothing to pay here either.{" "}
-        <Link href="/billing" className="font-semibold text-accent hover:underline">
-          View your access
-        </Link>
+        Access to ATS-ALGO comes with your community&apos;s invite, not a subscription — there is nothing to
+        pay here either.
       </p>
     </section>
   );

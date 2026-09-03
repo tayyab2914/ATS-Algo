@@ -1,12 +1,10 @@
 import { cookies } from "next/headers";
-import { redirect } from "next/navigation";
 import { NextResponse } from "next/server";
 import { cache } from "react";
 import { fail } from "@/lib/api";
 import { SESSION_COOKIE, verifyToken, type SessionPayload } from "@/lib/auth/jwt";
 import { isSubscriptionActive } from "@/lib/billing";
 import { prisma } from "@/lib/db";
-import { guestTrialFrom, type GuestTrial } from "@/lib/guest";
 
 /** The subscription columns the entitlement check needs. */
 type ViewerSubscription = { currentPeriodEnd: Date | null };
@@ -14,16 +12,23 @@ type ViewerSubscription = { currentPeriodEnd: Date | null };
 /**
  * Who is viewing a gated surface.
  *
- * - `visitor`      — signed out. Sees the "sign in to unlock" {@link GuestGate}.
- * - `guestActive`  — signed in, no active plan, trial still running. Read-only
- *                    access to the dashboard, bot library and bot profiles;
- *                    every other tab is locked until access is granted.
- * - `guestExpired` — signed in, no active plan, trial elapsed. Hard-walled to the
- *                    Billing tab — every other in-app route bounces there.
- * - `member`       — holds a live admin-granted subscription. Full access.
- * - `admin`        — full access, never a guest.
+ * - `visitor` — signed out. Sees the "sign in to unlock" {@link GuestGate}.
+ * - `guest`   — signed in, no access grant. Read-only: they may explore the
+ *               dashboard, bot library and bot profiles, but cannot deploy or
+ *               run anything. This is where an INDIVIDUAL sign-up now lands and
+ *               stays, indefinitely, until an admin makes them a member.
+ * - `member`  — holds a live access grant: either granted by an admin from
+ *               Members Management, or granted automatically at registration
+ *               because they came through a Community Access Link.
+ * - `admin`   — full access, never a guest.
+ *
+ * There is no expiring trial. The platform is sold to COMMUNITIES, so the way in
+ * is an invite link that grants access on the spot; an individual who finds the
+ * site keeps read-only access for as long as they like, which costs nothing and
+ * keeps their address on file. A countdown would only pressure the one audience
+ * the platform is not trying to convert.
  */
-export type ViewerTier = "visitor" | "guestActive" | "guestExpired" | "member" | "admin";
+export type ViewerTier = "visitor" | "guest" | "member" | "admin";
 
 /** The signed-in user's display fields for the sidebar profile footer. */
 export type ViewerProfile = { name: string | null; email: string; avatarUrl: string | null };
@@ -34,13 +39,11 @@ export type PageAccess = {
   /** The viewer's access tier. */
   tier: ViewerTier;
   /**
-   * True when the viewer may use paid (write) features: a member or an admin.
-   * Guests and visitors are always `false`. Kept as a convenience flag for the
-   * many call sites that only care "full access yes/no".
+   * True when the viewer may use write features: a member or an admin. Guests
+   * and visitors are always `false`. Kept as a convenience flag for the many call
+   * sites that only care "full access yes/no".
    */
   entitled: boolean;
-  /** Trial details when the viewer is a guest (`guestActive`/`guestExpired`); else null. */
-  guest: GuestTrial | null;
   /** Profile fields for the signed-in user (null for a visitor) — saves AppShell a query. */
   profile: ViewerProfile | null;
 };
@@ -49,11 +52,11 @@ export type PageAccess = {
  * Single per-request load of the viewer's row.
  *
  * One DB round-trip fetches everything the gated render needs — liveness
- * (`status`/`sessionsValidFrom`), entitlement (`subscription`), the guest trial
- * clock (`guestExpiresAt`) and the sidebar profile fields — instead of the three
- * separate `user.findUnique` calls this used to make per navigation (getSession
- * liveness + getPageAccess subscription + AppShell profile). Wrapped in React
- * `cache` so the page and {@link AppShell} share the one query.
+ * (`status`/`sessionsValidFrom`), entitlement (`subscription`) and the sidebar
+ * profile fields — instead of the separate `user.findUnique` calls this used to
+ * make per navigation (getSession liveness + getPageAccess subscription +
+ * AppShell profile). Wrapped in React `cache` so the page and {@link AppShell}
+ * share the one query.
  *
  * Returns `null` for a visitor OR a revoked session (deleted, suspended/banned,
  * or force-logged-out), replicating {@link getSession}'s liveness gate exactly.
@@ -62,7 +65,6 @@ const loadViewer = cache(
   async (): Promise<{
     session: SessionPayload;
     subscription: ViewerSubscription | null;
-    guestExpiresAt: Date | null;
     profile: ViewerProfile;
   } | null> => {
     const store = await cookies();
@@ -79,7 +81,6 @@ const loadViewer = cache(
         select: {
           status: true,
           sessionsValidFrom: true,
-          guestExpiresAt: true,
           name: true,
           email: true,
           avatarUrl: true,
@@ -109,23 +110,21 @@ const loadViewer = cache(
     return {
       session,
       subscription: user.subscription,
-      guestExpiresAt: user.guestExpiresAt,
       profile: { name: user.name, email: user.email, avatarUrl: user.avatarUrl },
     };
   },
 );
 
 /**
- * Resolve a viewer's access for a subscription-gated page WITHOUT redirecting.
+ * Resolve a viewer's access for a gated page WITHOUT redirecting.
  *
- * Pages render in place based on this — visitors get their "sign in" lock,
- * active guests get the read-only experience with a trial banner, expired guests
- * are bounced to billing (see {@link blockExpiredGuest}), members/admins get the
- * real content. Avoiding a redirect for the common cases keeps tab switches
- * instant (no blank flash while a server redirect bounces around).
+ * Pages render in place based on this — visitors get their "sign in" lock, guests
+ * get the read-only experience, members/admins get the real content. Nobody is
+ * ever bounced to another tab, which keeps tab switches instant (no blank flash
+ * while a server redirect bounces around).
  *
- * Authoritative: subscription state is read from the database each request, so
- * an admin's grant or revoke — and a grant simply reaching its end date — takes
+ * Authoritative: subscription state is read from the database each request, so an
+ * admin's grant or revoke — and a grant simply reaching its end date — takes
  * effect on the member's very next request, not at token expiry.
  *
  * Wrapped in React `cache` so the page and the surrounding {@link AppShell} (and
@@ -134,37 +133,20 @@ const loadViewer = cache(
 export const getPageAccess = cache(async (): Promise<PageAccess> => {
   const viewer = await loadViewer();
   if (!viewer) {
-    return { session: null, tier: "visitor", entitled: false, guest: null, profile: null };
+    return { session: null, tier: "visitor", entitled: false, profile: null };
   }
 
-  const { session, subscription, guestExpiresAt, profile } = viewer;
+  const { session, subscription, profile } = viewer;
   if (session.role === "ADMIN") {
-    return { session, tier: "admin", entitled: true, guest: null, profile };
+    return { session, tier: "admin", entitled: true, profile };
   }
 
-  // A live grant outranks the trial clock entirely.
   if (isSubscriptionActive(subscription)) {
-    return { session, tier: "member", entitled: true, guest: null, profile };
+    return { session, tier: "member", entitled: true, profile };
   }
 
-  const guest = guestTrialFrom(guestExpiresAt ?? null);
-  return {
-    session,
-    tier: guest.expired ? "guestExpired" : "guestActive",
-    entitled: false,
-    guest,
-    profile,
-  };
+  return { session, tier: "guest", entitled: false, profile };
 });
-
-/**
- * Hard paywall for expired guests: bounce every in-app route except Billing to
- * the Billing tab. Call near the top of a gated server component, passing the
- * tier from {@link getPageAccess}. A no-op for every other tier.
- */
-export function blockExpiredGuest(tier: ViewerTier): void {
-  if (tier === "guestExpired") redirect("/billing?expired=1");
-}
 
 /**
  * Mutation-route guard: allow only members and admins to write. Returns the
@@ -186,7 +168,8 @@ export async function requireMember(): Promise<
   return {
     error: NextResponse.json(
       {
-        error: "Your guest trial is read-only. Request access from the Billing tab to make changes.",
+        error:
+          "Your account has read-only guest access. Join through a community invite link, or ask an admin to enable bot access.",
         upgradeRequired: true,
       },
       { status: 403 },

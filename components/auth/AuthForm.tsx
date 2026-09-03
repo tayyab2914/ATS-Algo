@@ -28,6 +28,7 @@ export function AuthForm({
   next,
   initialEmail = "",
   lockEmail = false,
+  communityRef,
 }: {
   mode: AuthMode;
   notice?: NoticeData;
@@ -37,6 +38,13 @@ export function AuthForm({
   initialEmail?: string;
   /** Prevent the user from editing the email (invited members sign up as-is). */
   lockEmail?: boolean;
+  /**
+   * Community Access Link slug this registration came through (`/houseofcrypto`
+   * forwards here as `?ref=houseofcrypto`). Posted with the credentials so the
+   * server can attribute the account and grant it access; the server re-checks
+   * the slug, so passing a bad one is harmless.
+   */
+  communityRef?: string;
 }) {
   const isSignup = mode === "signup";
   const router = useRouter();
@@ -62,7 +70,9 @@ export function AuthForm({
     setPending(true);
     try {
       const endpoint = isSignup ? "/api/auth/signup" : "/api/auth/login";
-      const body = isSignup ? { email, password, confirmPassword } : { email, password };
+      const body = isSignup
+        ? { email, password, confirmPassword, ...(communityRef ? { ref: communityRef } : {}) }
+        : { email, password };
       const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

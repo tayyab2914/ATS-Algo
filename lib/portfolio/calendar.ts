@@ -280,7 +280,7 @@ export function buildYearView(days: DayPnl[], year: number, now: Date = new Date
  */
 export type CalendarBounds = { first: { year: number; month: number }; last: { year: number; month: number } };
 
-export function calendarBounds(days: DayPnl[], now: Date = new Date()): CalendarBounds {
+export function calendarBounds(days: readonly { date: string }[], now: Date = new Date()): CalendarBounds {
   const nowLocal = new Date(now.getTime() + OFFSET_MS);
   const last = { year: nowLocal.getUTCFullYear(), month: nowLocal.getUTCMonth() };
   const earliest = days[0]?.date;

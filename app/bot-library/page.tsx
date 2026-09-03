@@ -1,23 +1,28 @@
+import { connection } from "next/server";
 import { AppShell } from "@/components/app/AppShell";
 import { BotLibraryBrowser } from "@/components/bot-library/BotLibraryBrowser";
 import { GettingStarted } from "@/components/bot-library/GettingStarted";
 import { type BotTableRow } from "@/components/admin/BotsTable";
-import { blockExpiredGuest, getPageAccess } from "@/lib/auth/guards";
 import { countFor, deploymentCounts } from "@/lib/bots/deployment-counts";
 import { prisma } from "@/lib/db";
 
 /**
- * Bot Library. Open to visitors and active guests (read-only browsing) as well
- * as members — it's the landing destination for the "Check out Bot Library" CTA,
- * and one of the three surfaces a Guest Mode trial may explore. Expired guests
- * are walled to Billing like every other tab.
+ * Bot Library. Open to everyone — visitors, read-only guests and members alike.
+ * It is the landing destination for the "Check out Bot Library" CTA and the one
+ * surface that has to sell the platform before anybody has an account, so it is
+ * deliberately never gated; deploying is what needs membership, not browsing.
  *
  * Shows the real catalogue: every ACTIVE bot from the admin, in the same table
  * the admin manages them with (minus the admin-only Status column / actions).
+ *
+ * Rendered per request. Nothing else on this page reads a request-time API — the
+ * entitlement check moved out when the tabs stopped being walled — so without the
+ * `connection()` below Next would prerender it at BUILD time, which both freezes
+ * the catalogue until the next deploy and makes the build itself depend on the
+ * database being reachable. Neither is true of an admin-managed bot list.
  */
 export default async function BotLibraryPage() {
-  const { tier } = await getPageAccess();
-  blockExpiredGuest(tier);
+  await connection();
 
   // Only the table columns — skips the heavy csvData/config/results blobs. Only
   // ACTIVE bots are public; disabled bots are hidden from members.

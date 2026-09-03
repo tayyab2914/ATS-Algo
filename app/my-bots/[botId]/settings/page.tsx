@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { AppShell } from "@/components/app/AppShell";
 import { BotSettingsForm } from "@/components/my-bots/BotSettingsForm";
 import { AreaChart } from "@/components/dashboard/AreaChart";
-import { blockExpiredGuest, getPageAccess } from "@/lib/auth/guards";
+import { getPageAccess } from "@/lib/auth/guards";
 import { chosenExchange } from "@/lib/bot-exchanges";
 import { cn } from "@/lib/cn";
 import { monthlyCurve } from "@/lib/dashboard/metrics";
@@ -17,8 +17,7 @@ const RISK_EXPOSURE: Record<"LOW" | "MEDIUM" | "HIGH", string> = {
 
 export default async function BotSettingsPage({ params }: PageProps<"/my-bots/[botId]/settings">) {
   const { botId } = await params;
-  const { session, tier, entitled } = await getPageAccess();
-  blockExpiredGuest(tier);
+  const { session, entitled } = await getPageAccess();
 
   if (!session || !entitled) notFound();
 

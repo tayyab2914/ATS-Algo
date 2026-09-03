@@ -8,7 +8,7 @@ import { ExchangeSection } from "@/components/account/ExchangeSection";
 import { ProfileSection } from "@/components/account/ProfileSection";
 import { TwoFactorSection } from "@/components/account/TwoFactorSection";
 import type { ExchangeName } from "@/lib/account";
-import { blockExpiredGuest, getPageAccess } from "@/lib/auth/guards";
+import { getPageAccess } from "@/lib/auth/guards";
 import { prisma } from "@/lib/db";
 import { staticEgressIp } from "@/lib/execution/egress";
 
@@ -24,10 +24,7 @@ function AccountHeader() {
 }
 
 export default async function AccountPage() {
-  const { session, tier, entitled } = await getPageAccess();
-  // Account settings are members-only: expired guests go to Billing, active
-  // guests see the upgrade lock, visitors see the sign-in lock.
-  blockExpiredGuest(tier);
+  const { session, entitled } = await getPageAccess();
 
   if (!session) {
     return (

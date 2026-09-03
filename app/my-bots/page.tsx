@@ -4,16 +4,13 @@ import { GuestGate } from "@/components/app/GuestGate";
 import { SubscriptionGate } from "@/components/app/SubscriptionGate";
 import { TabPreviewSkeleton } from "@/components/app/TabPreviewSkeleton";
 import { MyBotsBrowser, type MyBotsKpis, type MyBotRow } from "@/components/my-bots/MyBotsBrowser";
-import { blockExpiredGuest, getPageAccess } from "@/lib/auth/guards";
+import { getPageAccess } from "@/lib/auth/guards";
 import { profileFor, type BotConfig } from "@/lib/bot-config";
 import { chosenExchange } from "@/lib/bot-exchanges";
 import { prisma } from "@/lib/db";
 
 export default async function MyBotsPage() {
-  const { session, tier, entitled } = await getPageAccess();
-  // Guests can't reach My Bots — expired ones go to Billing, active ones see the
-  // members-only lock below.
-  blockExpiredGuest(tier);
+  const { session, entitled } = await getPageAccess();
 
   return (
     <AppShell>

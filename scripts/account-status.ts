@@ -1,5 +1,5 @@
 /**
- * Print an account's entitlement-relevant state (role/status/subscription/guest),
+ * Print an account's entitlement-relevant state (role/status/subscription/community),
  * so we know whether the member Account page is reachable for testing.
  *   CHECK_EMAIL="you@example.com" npx tsx scripts/account-status.ts
  */
@@ -10,7 +10,11 @@ async function main() {
   const email = (process.env.CHECK_EMAIL ?? "you@example.com").toLowerCase();
   const u = await prisma.user.findUnique({
     where: { email },
-    include: { subscription: true, subscriptionRequest: true },
+    include: {
+      subscription: true,
+      subscriptionRequest: true,
+      communityLink: { select: { name: true, slug: true, active: true } },
+    },
   });
   if (!u) {
     console.log(`No user found for ${email}`);
@@ -24,7 +28,11 @@ async function main() {
         status: u.status,
         emailVerified: Boolean(u.emailVerified),
         policyAccepted: Boolean(u.policyAcceptedAt),
-        guestExpiresAt: u.guestExpiresAt,
+        // Null means an individual sign-up: a read-only guest until an admin
+        // makes them a member. A community sign-up is granted at registration.
+        community: u.communityLink
+          ? { name: u.communityLink.name, slug: u.communityLink.slug, linkActive: u.communityLink.active, joinedAt: u.communityJoinedAt }
+          : null,
         subscription: u.subscription
           ? {
               currentPeriodEnd: u.subscription.currentPeriodEnd,

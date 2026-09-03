@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { type ReactNode, useMemo, useState } from "react";
 import { AdminCard } from "@/components/admin/AdminCard";
@@ -28,14 +29,6 @@ export type MemberSubscription = {
   requested: boolean;
 };
 
-/** Guest Mode trial standing, present only for non-paying, non-admin accounts. */
-export type MemberGuest = {
-  /** "notStarted" before first login, "active" mid-trial, "expired" after. */
-  state: "notStarted" | "active" | "expired";
-  /** Whole days remaining in the trial (0 once expired). */
-  daysLeft: number;
-};
-
 export type MemberRow = {
   id: string;
   name: string;
@@ -46,8 +39,14 @@ export type MemberRow = {
   loggedIn: boolean;
   joined: string;
   subscription: MemberSubscription;
-  /** Trial standing for a Guest account; null for paying members and admins. */
-  guest: MemberGuest | null;
+  /**
+   * True for a signed-in account with no live access grant: a read-only GUEST.
+   * There is no trial clock any more — an individual sign-up simply stays here
+   * until an admin makes them a member.
+   */
+  guest: boolean;
+  /** The community whose link they registered through, or null for an individual. */
+  community: { id: string; name: string } | null;
   /** This row is the acting admin's own account (no self-targeting). */
   isSelf: boolean;
   /** This row is the superadmin (can't be demoted/deleted by others). */
@@ -99,7 +98,7 @@ function successMessage(member: MemberRow, action: MemberAction): string {
     case "forceLogout":
       return `${who} has been signed out of all sessions.`;
     case "grantFree":
-      return `Access granted to ${who}.`;
+      return `${who} is now a member and can use the bots.`;
     case "revokeFree":
       return `Access revoked from ${who}. Their live-trading arm was switched off.`;
     case "declineRequest":
@@ -130,13 +129,6 @@ function DownloadIcon() {
       <path d="M3 12.5h10" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
     </svg>
   );
-}
-
-/** Sub-label under the "Guest" pill describing trial standing. */
-function guestTrialText(guest: MemberGuest): string {
-  if (guest.state === "expired") return "Trial expired";
-  if (guest.state === "notStarted") return "Not started";
-  return guest.daysLeft === 1 ? "1 day left" : `${guest.daysLeft} days left`;
 }
 
 /** Access grant lengths offered in the row menu. `0` = no expiry. */
@@ -188,18 +180,12 @@ export function MembersTable({
   /** Download the currently-filtered members as a CSV (emails for marketing etc.). */
   function exportCsv() {
     const cell = (v: string) => `"${String(v).replace(/"/g, '""')}"`;
-    const header = ["Name", "Email", "Type", "Access", "Trial days left", "Status", "Session", "Joined"];
+    const header = ["Name", "Email", "Type", "Access", "Community", "Status", "Session", "Joined"];
     const rows = filtered.map((m) => {
       const type = memberType(m);
       const access = type === "MEMBER" ? m.subscription.label : m.subscription.requested ? "Requested" : "";
-      const trial = m.guest
-        ? m.guest.state === "expired"
-          ? "expired"
-          : m.guest.state === "notStarted"
-            ? "not started"
-            : String(m.guest.daysLeft)
-        : "";
-      return [m.name, m.email, TYPE_LABEL[type], access, trial, STATUS_LABEL[m.status], m.loggedIn ? "Signed in" : "Signed out", m.joined];
+      const community = m.community?.name ?? "Individual";
+      return [m.name, m.email, TYPE_LABEL[type], access, community, STATUS_LABEL[m.status], m.loggedIn ? "Signed in" : "Signed out", m.joined];
     });
     const csv = [header, ...rows].map((r) => r.map(cell).join(",")).join("\r\n");
     // Prepend a BOM so Excel reads UTF-8 emails/names correctly.
@@ -300,13 +286,14 @@ export function MembersTable({
       </div>
 
       <div className="max-h-[480px] overflow-auto">
-        <table className="w-full min-w-[960px] text-left">
+        <table className="w-full min-w-[1080px] text-left">
           <thead className="sticky top-0 z-10 bg-surface">
             <tr className="border-b border-line text-xs font-semibold text-muted">
               <th className="px-4 py-3 font-semibold">Name</th>
               <th className="px-4 py-3 text-center font-semibold">Email</th>
               <th className="px-4 py-3 text-center font-semibold">Role</th>
               <th className="px-4 py-3 text-center font-semibold">Access</th>
+              <th className="px-4 py-3 text-center font-semibold">Community</th>
               <th className="px-4 py-3 text-center font-semibold">Joined</th>
               <th className="px-4 py-3 text-center font-semibold">Session</th>
               <th className="px-4 py-3 text-center font-semibold">Status</th>
@@ -316,7 +303,7 @@ export function MembersTable({
           <tbody>
             {filtered.length === 0 ? (
               <tr>
-                <td colSpan={8} className="px-4 py-8 text-center text-sm text-muted">
+                <td colSpan={9} className="px-4 py-8 text-center text-sm text-muted">
                   {members.length === 0 ? "No members yet." : "No members match your filters."}
                 </td>
               </tr>
@@ -340,18 +327,28 @@ export function MembersTable({
                       {type === "ADMIN" ? (
                         <span className="text-sm text-muted">—</span>
                       ) : type === "GUEST" ? (
-                        // A guest who has asked for access is the one an admin
-                        // needs to spot in this table, so the request outranks
-                        // the trial countdown in the cell.
+                        // A guest with a request still waiting from the retired
+                        // Billing tab outranks the plain read-only label — it is
+                        // the one thing here an admin can still clear.
                         member.subscription.requested ? (
                           <Pill className="bg-[#F4A825]/10 text-[#F4A825]">Requested</Pill>
                         ) : (
-                          <span className="text-xs text-muted">
-                            {member.guest ? guestTrialText(member.guest) : "—"}
-                          </span>
+                          <span className="text-xs text-muted">Read-only</span>
                         )
                       ) : (
                         <Pill className="bg-accent/10 text-accent">{member.subscription.label}</Pill>
+                      )}
+                    </td>
+                    <td className="px-4 py-4 text-center">
+                      {member.community ? (
+                        <Link
+                          href={`/admin/community/${member.community.id}`}
+                          className="text-xs font-semibold text-accent underline-offset-4 hover:underline"
+                        >
+                          {member.community.name}
+                        </Link>
+                      ) : (
+                        <span className="text-xs text-muted">Individual</span>
                       )}
                     </td>
                     <td className="px-4 py-4 text-center text-sm text-muted">{member.joined}</td>
@@ -549,9 +546,27 @@ function RowMenu({
 
             <div className="my-1 h-px bg-line" />
 
+            {/* The headline action on this menu, and the reason it is not buried
+                in the submenu below: the platform is closed to individuals, so
+                promoting a read-only guest to a full member is the one access
+                decision an admin makes here day to day. It grants open-ended
+                access — the same thing a community link grants at registration —
+                because a member an admin vouched for personally is not on a
+                clock either. The submenu stays for the deliberate cases where a
+                grant should expire. */}
+            {!granted && (
+              <MenuItem
+                icon={<CheckIcon />}
+                label="Make member"
+                tone="success"
+                disabled={busy}
+                onClick={() => onAction(member, "grantFree", 0)}
+              />
+            )}
+
             <MenuItem
               icon={<GiftIcon />}
-              label={granted ? "Extend / change access" : "Grant access"}
+              label={granted ? "Extend / change access" : "Grant access for…"}
               disabled={busy}
               onClick={() => onView("grant")}
             />

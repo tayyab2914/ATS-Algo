@@ -169,3 +169,35 @@ export const BotIcon = (p: SVGProps<SVGSVGElement>) => (
     <path d="M2 12v3M22 12v3" />
   </Icon>
 );
+
+/** A chain link — the Community Access Links surface. */
+export const LinkIcon = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <path d="M10 13a5 5 0 0 0 7.5.5l2.5-2.5a5 5 0 0 0-7-7L11.5 5.5" />
+    <path d="M14 11a5 5 0 0 0-7.5-.5L4 13a5 5 0 0 0 7 7l1.5-1.5" />
+  </Icon>
+);
+
+/** Duplicate sheets — "copy this link to the clipboard". */
+export const CopyIcon = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <rect x="9" y="9" width="11" height="11" rx="2" />
+    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+  </Icon>
+);
+
+/** A solid play triangle — reactivating a paused community link. */
+export const PlayIcon = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <path d="M7 4.5v15l12-7.5z" />
+  </Icon>
+);
+
+/** Two people — a community, as distinct from the single-account UserIcon. */
+export const UsersIcon = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <path d="M16 19v-1.5a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4V19" />
+    <circle cx="9" cy="7" r="3.2" />
+    <path d="M22 19v-1.5a4 4 0 0 0-3-3.87M16 4.13a4 4 0 0 1 0 7.75" />
+  </Icon>
+);

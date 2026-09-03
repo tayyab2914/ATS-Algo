@@ -1,4 +1,3 @@
-import Link from "next/link";
 import type { ReactNode } from "react";
 import { ScrollLock } from "@/components/app/ScrollLock";
 
@@ -13,11 +12,16 @@ function LockIcon() {
 }
 
 /**
- * "Access not active" lock shown to a signed-in user whose access has not been
- * granted (or has lapsed). Renders the tab's content blurred and inert with a
- * centered modal that sends them to /billing to ask an admin — the counterpart
- * to {@link GuestGate} (which sends signed-out visitors to login). Rendered in
- * place so the tab opens instantly instead of redirecting.
+ * "Members only" lock shown to a signed-in guest — an account with no access
+ * grant. Renders the tab's content blurred and inert behind a centered card, in
+ * place, so the tab still opens instantly instead of redirecting.
+ *
+ * It carries NO call to action, and that is deliberate. There is nothing to buy
+ * and no request queue any more: access arrives either with a community's invite
+ * link (which grants it at registration) or from an admin flipping this account
+ * to Member. A button that only ever led to a page saying "ask someone else"
+ * was worse than telling them plainly here. The counterpart for signed-out
+ * visitors is {@link GuestGate}, which does have somewhere to send them — login.
  */
 export function SubscriptionGate({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -32,18 +36,12 @@ export function SubscriptionGate({ title, children }: { title: string; children:
             <LockIcon />
           </span>
           <div className="flex flex-col gap-1.5">
-            <h2 className="text-lg font-semibold text-white">Access not active</h2>
+            <h2 className="text-lg font-semibold text-white">Members only</h2>
             <p className="text-sm leading-[21px] text-muted">
-              Request access to unlock your {title.toLowerCase()}, deploy bots, and track live
-              performance.
+              Your {title.toLowerCase()} unlocks for community members. Join through your community&apos;s
+              invite link, or ask an admin to enable bot access for this account.
             </p>
           </div>
-          <Link
-            href="/billing?gated=1"
-            className="mt-1 inline-flex h-11 w-full items-center justify-center rounded-2xl bg-accent px-5 text-sm font-semibold text-[#06141a] transition-transform hover:-translate-y-0.5"
-          >
-            Request access
-          </Link>
         </div>
       </div>
     </div>

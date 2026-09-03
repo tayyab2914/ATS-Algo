@@ -6,7 +6,7 @@ import { BotDetailActions } from "@/components/my-bots/BotDetailActions";
 import { MonthlyBreakdown } from "@/components/my-bots/MonthlyBreakdown";
 import { TradeHistory } from "@/components/my-bots/TradeHistory";
 import { MultiLineChart } from "@/components/dashboard/MultiLineChart";
-import { blockExpiredGuest, getPageAccess } from "@/lib/auth/guards";
+import { getPageAccess } from "@/lib/auth/guards";
 import { configAtrValue, ratchetPct, type BotConfig } from "@/lib/bot-config";
 import { chosenExchange } from "@/lib/bot-exchanges";
 import { cn } from "@/lib/cn";
@@ -46,8 +46,7 @@ async function getUserBot(userId: string, botId: string) {
 
 export default async function MyBotDetailPage({ params }: PageProps<"/my-bots/[botId]">) {
   const { botId } = await params;
-  const { session, tier, entitled } = await getPageAccess();
-  blockExpiredGuest(tier);
+  const { session, entitled } = await getPageAccess();
 
   // Only members can deploy bots, so only members have detail pages to view.
   if (!session || !entitled) notFound();

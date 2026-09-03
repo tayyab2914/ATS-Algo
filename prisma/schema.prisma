@@ -51,16 +51,23 @@ model User {
   // cannot reach any in-app route.
   policyAcceptedAt DateTime?
 
-  // Guest Mode trial deadline. A signed-in, non-admin user with NO active
-  // subscription is a "guest": they may explore the dashboard, bot library and
-  // bot profiles read-only until this instant, after which they are hard-walled
-  // to the Billing tab until an admin grants them access. Set on first login
-  // (now + 3 days) and left untouched thereafter — a live grant supersedes it,
-  // and a revoked or lapsed grant falls back to this (past) date, so a former
-  // member is immediately walled again. Null means the clock hasn't started.
-  // Accounts are NOT auto-deleted on expiry; the email is retained for later
-  // marketing simply by keeping the row.
-  guestExpiresAt DateTime?
+  // The Community Access Link this account registered through, if any. NULL is an
+  // individual sign-up: they land as a read-only GUEST and stay one until an
+  // admin makes them a Member. A community sign-up is granted access at
+  // registration (see app/api/auth/signup/route.ts), which is the entire point of
+  // the link — a group is onboarded once, not member by member.
+  //
+  // `onDelete: SetNull` deliberately: deleting a link must never delete the people
+  // who joined through it, and it must never revoke their access either (the grant
+  // is a Subscription row, independent of this column). Losing a link only loses
+  // the attribution.
+  communityLinkId String?
+  communityLink   CommunityLink? @relation(fields: [communityLinkId], references: [id], onDelete: SetNull)
+  /// When they registered through that link — the timestamp the community's
+  /// sign-up calendar buckets by. Kept separate from `createdAt` because an
+  /// unverified row is REUSED on re-signup (see the signup route), so `createdAt`
+  /// can predate the click that actually converted.
+  communityJoinedAt DateTime?
 
   verificationTokens  VerificationToken[]
   passwordResetTokens PasswordResetToken[]
@@ -72,7 +79,70 @@ model User {
   emailChangeRequest  EmailChangeRequest?
   bots                UserBot[]
 
+  @@index([communityLinkId])
   @@map("users")
+}
+
+/// A Community Access Link ("reflink") — one invite URL owned by one community.
+///
+/// ATS targets GROUPS, not individuals, so access is granted to a community once
+/// rather than approved person by person: everybody who registers through
+/// `https://<app>/<slug>` is a full Member the moment they sign up, with no admin
+/// step in between. An individual who signs up at /signup gets nothing but
+/// read-only Guest access.
+///
+/// `active` is the pause switch. It gates NEW registrations only — deactivating a
+/// link never touches the people who already joined through it, because their
+/// access is a Subscription row of their own and revoking a whole community by
+/// accident is not a mistake worth making possible.
+model CommunityLink {
+  id   String @id @default(cuid())
+  /// Display name, e.g. "House of Crypto".
+  name String
+  /// The URL segment, lowercase and already normalised (see lib/community/slug.ts).
+  /// Unique platform-wide, and refused when it collides with an app route — the
+  /// link lives at the ROOT of the domain, so `/dashboard` is not available to a
+  /// community no matter how much they want it.
+  slug String @unique
+
+  /// False pauses the link: the landing page says so and a sign-up carrying this
+  /// ref is no longer auto-granted.
+  active Boolean @default(true)
+
+  clicks  CommunityLinkClick[]
+  members User[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("community_links")
+}
+
+/// One visit to a community's landing URL, bucketed to a UTC+2 calendar day.
+///
+/// A row is one VISITOR-DAY, not one page load: `(linkId, day, visitorHash)` is
+/// unique, so refreshing the page ten times — or a member re-opening the invite
+/// they were sent — counts once. A raw hit counter is trivially inflated by
+/// reloads and preview crawlers, and a click figure that can be inflated is not a
+/// figure a community can be judged on.
+///
+/// `visitorHash` is a salted SHA-256 of (IP + user agent) — enough to tell two
+/// visitors apart for a day, not enough to identify anyone, and never reversible
+/// back to an address.
+model CommunityLinkClick {
+  id     String        @id @default(cuid())
+  linkId String
+  link   CommunityLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+
+  /// `YYYY-MM-DD` on the UTC+2 clock the rest of the platform reports on.
+  day         String
+  visitorHash String
+
+  createdAt DateTime @default(now())
+
+  @@unique([linkId, day, visitorHash])
+  @@index([linkId, createdAt])
+  @@map("community_link_clicks")
 }
 
 /// A user's saved personal payment card, shown under Account Settings → Payment

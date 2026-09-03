@@ -7,7 +7,7 @@ import { EquityChart } from "@/components/bot-library/EquityChart";
 import { RISK_TO_PROFILE, type BotConfig } from "@/lib/backtest/engine";
 import { buildBotEquity } from "@/lib/backtest/equity-view";
 import { configAtrValue, ratchetPct } from "@/lib/bot-config";
-import { blockExpiredGuest, getPageAccess } from "@/lib/auth/guards";
+import { getPageAccess } from "@/lib/auth/guards";
 import { cn } from "@/lib/cn";
 import { prisma } from "@/lib/db";
 import { RISK_LABEL, RISK_TEXT_CLASS, riskBadgeClass } from "@/lib/risk";
@@ -57,8 +57,7 @@ function BackArrow() {
 export default async function BotDetailPage({ params }: PageProps<"/bot-library/[id]">) {
   const { id } = await params;
 
-  const { session, tier, entitled } = await getPageAccess();
-  blockExpiredGuest(tier);
+  const { session, entitled } = await getPageAccess();
 
   const bot = await getActiveBot(id);
   if (!bot) notFound();
