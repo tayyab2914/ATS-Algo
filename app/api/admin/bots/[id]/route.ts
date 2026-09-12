@@ -7,7 +7,8 @@ import { backtestBotColumns } from "@/lib/backtest/bot-record";
 import { profileLeverage, withLeverage, withRatchetPct } from "@/lib/bot-config";
 import { matchBotExchange } from "@/lib/bot-exchanges";
 import { prisma } from "@/lib/db";
-import { MAX_LEVERAGE, MIN_LEVERAGE, botConfigError, botExchangesSchema, ladderGeometryError, leverageError } from "@/lib/validation";
+import { normalizeTickerMap, tickerMapError } from "@/lib/ticker-map";
+import { MAX_LEVERAGE, MIN_LEVERAGE, botConfigError, botExchangesSchema, botTickerMapSchema, ladderGeometryError, leverageError } from "@/lib/validation";
 
 /**
  * Update a bot: optionally swap in a new config JSON and/or signal CSV, retune the
@@ -27,6 +28,11 @@ const updateBotSchema = z.object({
   timeframe: z.string().trim().min(1).max(20).optional(),
   exchanges: botExchangesSchema.optional(),
   exchange: z.string().trim().max(40).optional(), // legacy single
+  /**
+   * Per-venue instrument names. A FULL replacement of the stored map, like `config`
+   * — sending `{}` clears every override, and omitting it leaves them alone.
+   */
+  tickerMap: botTickerMapSchema.optional(),
   riskClass: z.enum(["LOW", "MEDIUM", "HIGH"]).optional(),
   config: z.any().optional(),
   /** Stop ladder, applied to every profile. `null` clears it (legacy `be` rule). */
@@ -45,7 +51,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   const { id } = await params;
   const parsed = updateBotSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return zodFail(parsed.error);
-  const { name, category, timeframe, exchanges, exchange, riskClass, config, tightenPct, leverage, csvText, csvFilename, message } =
+  const { name, category, timeframe, exchanges, exchange, tickerMap, riskClass, config, tightenPct, leverage, csvText, csvFilename, message } =
     parsed.data;
 
   // Deliberately narrow: an unscoped read pulled `csvData` (megabytes) and the
@@ -53,7 +59,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   // them. The CSV is fetched below only when a re-run actually needs it.
   const existing = await prisma.bot.findUnique({
     where: { id },
-    select: { riskClass: true, config: true, csvFilename: true },
+    select: { riskClass: true, config: true, csvFilename: true, exchanges: true, tickerMap: true },
   });
   if (!existing) return fail("Bot not found", 404);
 
@@ -67,6 +73,18 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     const m = matchBotExchange(exchange);
     exchangeUpdate = m ? { exchange: m, exchanges: [m] } : { exchange: null };
   }
+
+  // Per-venue instrument names, always re-narrowed to the venues this bot ends up
+  // allowed on — including when only `exchanges` changed. Dropping a venue has to
+  // drop its override with it, or the override comes back the day that venue is
+  // re-added and silently redirects the bot to a different instrument.
+  const mapError = tickerMapError(tickerMap);
+  if (mapError) return fail(mapError, 422);
+  const nextExchanges = exchangeUpdate.exchanges ?? existing.exchanges;
+  const nextTickerMap =
+    tickerMap !== undefined || exchangeUpdate.exchanges !== undefined
+      ? normalizeTickerMap(tickerMap ?? existing.tickerMap, nextExchanges)
+      : undefined;
 
   const configUploaded = config !== undefined;
   const csvProvided = csvText !== undefined;
@@ -168,6 +186,9 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       ...(configUploaded ? { ticker: nextConfig.ticker ?? null, assetType: nextConfig.type ?? null } : {}),
       // Admin's explicit allowed set wins; a swapped config never changes it.
       ...exchangeUpdate,
+      // Likewise the per-venue names: they are the admin's, so a replacement config
+      // must never blank them the way it redefines `ticker`.
+      ...(nextTickerMap !== undefined ? { tickerMap: nextTickerMap } : {}),
       ...(csvText !== undefined ? { csvData: csvText, csvFilename: csvFilename ?? existing.csvFilename } : {}),
       ...(metrics ?? {}),
       revisions: { create: { message } },

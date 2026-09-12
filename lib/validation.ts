@@ -2,6 +2,7 @@ import { z } from "zod";
 import { EXCHANGES } from "@/lib/account";
 import { BOT_EXCHANGES } from "@/lib/bot-exchanges";
 import { SLUG_MAX } from "@/lib/community/slug";
+import { TICKER_MAX_LENGTH } from "@/lib/ticker-map";
 import {
   DEFAULT_SLIPPAGE_PCT,
   minDistancePct,
@@ -105,6 +106,20 @@ export const emailChangeCodeSchema = z.object({
  * now does.
  */
 export const botExchangesSchema = z.array(z.string()).max(BOT_EXCHANGES.length);
+
+/**
+ * The per-venue instrument names on a bot: `{ "Bingx": "NCCO1OILWTI2USD" }`.
+ *
+ * Shape only — the venue keys, the character set and the "which venues is this bot
+ * even allowed on" narrowing all live in lib/ticker-map.ts, because the admin editor
+ * has to apply exactly the same rules before it ever reaches a route. Capped at the
+ * number of venues that exist, for the same reason `botExchangesSchema` is.
+ */
+export const botTickerMapSchema = z
+  .record(z.string(), z.string().trim().max(TICKER_MAX_LENGTH))
+  .refine((map) => Object.keys(map).length <= BOT_EXCHANGES.length, {
+    message: `A bot can have at most ${BOT_EXCHANGES.length} per-exchange tickers.`,
+  });
 
 export const exchangeAddSchema = z
   .object({

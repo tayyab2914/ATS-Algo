@@ -6,7 +6,8 @@ import { type BotConfig } from "@/lib/backtest/engine";
 import { backtestBotColumns } from "@/lib/backtest/bot-record";
 import { matchBotExchange } from "@/lib/bot-exchanges";
 import { prisma } from "@/lib/db";
-import { botConfigError, botExchangesSchema } from "@/lib/validation";
+import { normalizeTickerMap, tickerMapError } from "@/lib/ticker-map";
+import { botConfigError, botExchangesSchema, botTickerMapSchema } from "@/lib/validation";
 
 /**
  * Create a bot: run the backtest on the uploaded JSON config + signal CSV for
@@ -24,6 +25,8 @@ const createBotSchema = z.object({
   timeframe: z.string().trim().max(20).optional(),
   exchanges: botExchangesSchema.optional(),
   exchange: z.string().trim().max(40).optional(), // legacy / JSON-config fallback
+  /** Per-venue instrument names, for products the venues don't name alike. */
+  tickerMap: botTickerMapSchema.optional(),
   riskClass: z.enum(["LOW", "MEDIUM", "HIGH"]),
   config: z.any(),
   csvText: z.string().min(1, "CSV data is required"),
@@ -36,7 +39,7 @@ export async function POST(request: NextRequest) {
 
   const parsed = createBotSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return zodFail(parsed.error);
-  const { name, category, timeframe, exchanges, exchange, riskClass, config, csvText, csvFilename } = parsed.data;
+  const { name, category, timeframe, exchanges, exchange, tickerMap, riskClass, config, csvText, csvFilename } = parsed.data;
 
   // The live executor places one resting order per rung, so a malformed ladder is
   // a real-money bug — validate the whole config, and require the exact profile
@@ -52,6 +55,13 @@ export async function POST(request: NextRequest) {
   if (allowed.length === 0) {
     return fail("Pick at least one exchange for this bot.", 422);
   }
+
+  // Per-venue instrument names, narrowed to the venues this bot is actually allowed
+  // on. An override for a venue the bot doesn't run on is dead weight that would
+  // quietly come back to life the day someone adds that venue.
+  const mapError = tickerMapError(tickerMap);
+  if (mapError) return fail(mapError, 422);
+  const venueTickers = normalizeTickerMap(tickerMap, allowed);
 
   let metrics;
   try {
@@ -73,6 +83,7 @@ export async function POST(request: NextRequest) {
       timeframe: storedTimeframe,
       riskClass,
       ticker: cfg.ticker ?? null,
+      tickerMap: Object.keys(venueTickers).length ? venueTickers : undefined,
       assetType: cfg.type ?? null,
       exchange: allowed[0], // display-primary, mirrors exchanges[0]
       exchanges: allowed, // admin-allowed set the user picks one from

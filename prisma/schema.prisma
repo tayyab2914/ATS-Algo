@@ -332,6 +332,19 @@ model Bot {
   /// Exchanges the admin ALLOWS this bot to run on (1..3). The user picks ONE of
   /// these per deployment (see UserBot.exchangeSource).
   exchanges String[] @default([])
+  /// What each venue CALLS this bot's instrument, where they disagree. Shape:
+  /// `{ "Bingx": "NCCO1OILWTI2USD", "Bybit": "AXTI" }` — keys are BOT_EXCHANGES
+  /// values, and a venue that is absent falls back to `ticker`.
+  ///
+  /// Exists because `ticker` is ONE string and the venues only agree on crypto.
+  /// Bitcoin is "BTC" everywhere, so one name resolved on all four; WTI oil is
+  /// NCCO1OILWTI2USD on BingX, AXTI on Bybit and Bitget, WTIOIL on BloFin, and no
+  /// single string can be turned into all of those. Without this a commodities or
+  /// metals bot resolves on at most one venue and silently fails on the rest.
+  ///
+  /// A value is the venue's OWN name for the instrument (what its UI and its API
+  /// show), not a ccxt symbol — see resolveSymbol, which accepts either.
+  tickerMap Json?
   timeframe String
   riskClass RiskClass @default(MEDIUM)
   status    BotStatus @default(ACTIVE)

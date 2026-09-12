@@ -1,0 +1,11 @@
+-- Per-venue instrument names for one bot.
+--
+-- `ticker` is a single string, which only works because the venues agree on
+-- crypto: "BTC" resolves on all four. They do not agree on anything else — WTI
+-- oil is NCCO1OILWTI2USD on BingX, AXTI on Bybit and Bitget, WTIOIL on BloFin —
+-- so a commodities or metals bot could resolve on at most one of its allowed
+-- venues and failed with NO_MARKET on the others.
+--
+-- Nullable, and absent venues fall back to `ticker`, so every existing bot keeps
+-- resolving exactly as it did.
+ALTER TABLE "bots" ADD COLUMN "tickerMap" JSONB;

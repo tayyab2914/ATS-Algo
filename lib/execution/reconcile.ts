@@ -2,6 +2,7 @@ import "server-only";
 import { prisma } from "@/lib/db";
 import { chosenExchange, exchangeEnabled } from "@/lib/bot-exchanges";
 import { getDecryptedConnection } from "@/lib/exchanges/connection";
+import { tickerFor } from "@/lib/ticker-map";
 import { exchangeClient, livePosition, refreshMarketCache, type TradeCreds } from "./client";
 import { errorDetail, logExec } from "./log";
 import { syncPosition } from "./manage";
@@ -128,7 +129,7 @@ export async function scanForOrphans(limit = 50): Promise<OrphanResult> {
   const deployments = await prisma.userBot.findMany({
     where: { active: true, positions: { none: { status: "OPEN" } } },
     take: limit,
-    select: { id: true, userId: true, exchangeSource: true, bot: { select: { ticker: true, exchanges: true } } },
+    select: { id: true, userId: true, exchangeSource: true, bot: { select: { ticker: true, tickerMap: true, exchanges: true } } },
   });
 
   const result: OrphanResult = {
@@ -161,7 +162,7 @@ export async function scanForOrphans(limit = 50): Promise<OrphanResult> {
       apiKey: connection.apiKey, apiSecret: connection.apiSecret,
       passphrase: connection.passphrase, sandbox: connection.sandbox,
     };
-    const { symbol, market } = await resolveSymbol(chosen, deployment.bot.ticker, creds.sandbox);
+    const { symbol, market } = await resolveSymbol(chosen, tickerFor(deployment.bot, chosen), creds.sandbox);
     const ex = await exchangeClient(chosen, creds, [market]);
     const contracts = Number((await livePosition(ex, symbol))?.contracts ?? 0);
     result.checked++;

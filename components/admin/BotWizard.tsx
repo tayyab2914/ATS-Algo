@@ -9,11 +9,13 @@ import { LeverageField, parseLeverageInput } from "@/components/admin/LeverageFi
 import { parseTightenInput, StopLadderField } from "@/components/admin/StopLadderField";
 import { CheckIcon } from "@/components/admin/admin-icons";
 import { ExchangeMultiSelect } from "@/components/admin/ExchangeMultiSelect";
+import { TickerMapField } from "@/components/admin/TickerMapField";
 import { Notice, type NoticeData } from "@/components/ui/Notice";
 import { configRatchetPct, PROFILE_TO_RISK, profileKeys, profileLeverage, withLeverage, withRatchetPct } from "@/lib/bot-config";
 import { matchBotExchange } from "@/lib/bot-exchanges";
 import { runBacktest, type BacktestResult, type BotConfig, type RiskClass } from "@/lib/backtest/engine";
 import { cn } from "@/lib/cn";
+import { normalizeTickerMap, tickerMapError, type TickerMap } from "@/lib/ticker-map";
 import { botConfigError } from "@/lib/validation";
 
 const RISKS: { value: RiskClass; label: string }[] = [
@@ -49,6 +51,9 @@ export function BotWizard({ categories }: { categories: string[] }) {
   const [config, setConfig] = useState<BotConfig | null>(null);
   const [name, setName] = useState("");
   const [exchanges, setExchanges] = useState<string[]>([]);
+  // Per-venue instrument names. Empty for every crypto bot — the config's own ticker
+  // resolves on all four venues — and filled in for the products they name differently.
+  const [tickerMap, setTickerMap] = useState<TickerMap>({});
   const [riskClass, setRiskClass] = useState<RiskClass>("MEDIUM");
   const [csvText, setCsvText] = useState("");
   const [csvFilename, setCsvFilename] = useState("");
@@ -76,6 +81,8 @@ export function BotWizard({ categories }: { categories: string[] }) {
       : withLeverage(withRatchetPct(config, tighten.value), riskClass, leverage.value);
   const ladderError =
     tighten.error ?? leverage.error ?? (effectiveConfig ? botConfigError(effectiveConfig, riskClass) : null);
+  // What actually gets sent: narrowed to the ticked venues, exactly as the route narrows it.
+  const venueTickers = normalizeTickerMap(tickerMap, exchanges);
 
   async function onJsonPicked(file: File) {
     setNotice(null);
@@ -149,6 +156,11 @@ export function BotWizard({ categories }: { categories: string[] }) {
       setNotice({ type: "error", message: ladderError });
       return;
     }
+    const mapError = tickerMapError(tickerMap);
+    if (mapError) {
+      setNotice({ type: "error", message: mapError });
+      return;
+    }
     setPending(true);
     setNotice(null);
     try {
@@ -157,7 +169,7 @@ export function BotWizard({ categories }: { categories: string[] }) {
         headers: { "Content-Type": "application/json" },
         // No `timeframe`: it is not shown to members, so it is not asked for. The
         // route still records the config's own timeframe on the row for internal use.
-        body: JSON.stringify({ name, category, exchanges, riskClass, config: effectiveConfig, csvText, csvFilename }),
+        body: JSON.stringify({ name, category, exchanges, tickerMap: venueTickers, riskClass, config: effectiveConfig, csvText, csvFilename }),
       });
       const data = (await res.json().catch(() => null)) as { error?: string } | null;
       if (!res.ok) {
@@ -217,6 +229,9 @@ export function BotWizard({ categories }: { categories: string[] }) {
                 <div className="flex flex-col gap-2 lg:col-span-2">
                   <span className={labelCls}>Exchanges — allowed venues (users pick one)</span>
                   <ExchangeMultiSelect value={exchanges} onChange={setExchanges} />
+                </div>
+                <div className="md:col-span-2 lg:col-span-4">
+                  <TickerMapField exchanges={exchanges} value={tickerMap} fallback={config.ticker ?? null} onChange={setTickerMap} />
                 </div>
                 <label className="flex flex-col gap-2">
                   <span className={labelCls}>Risk Class</span>

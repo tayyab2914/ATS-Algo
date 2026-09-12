@@ -12,6 +12,7 @@ import { chosenExchange } from "@/lib/bot-exchanges";
 import { cn } from "@/lib/cn";
 import { prisma } from "@/lib/db";
 import { loadLiveView, relativeTime } from "@/lib/my-bots/live-view";
+import { tickerFor } from "@/lib/ticker-map";
 
 /** Risk class → the profile label the design uses. */
 const PROFILE_LABEL: Record<"LOW" | "MEDIUM" | "HIGH", string> = {
@@ -39,7 +40,7 @@ async function getUserBot(userId: string, botId: string) {
       capitalPerTrade: true,
       exchangeSource: true,
       liveArmed: true,
-      bot: { select: { id: true, name: true, ticker: true, exchanges: true, riskClass: true, config: true } },
+      bot: { select: { id: true, name: true, ticker: true, tickerMap: true, exchanges: true, riskClass: true, config: true } },
     },
   });
 }
@@ -57,7 +58,10 @@ export default async function MyBotDetailPage({ params }: PageProps<"/my-bots/[b
   const { bot, active, allocatedCapital } = userBot;
   // The exchange this deployment runs on: the user's pick from the admin-allowed set.
   const chosen = chosenExchange(userBot.exchangeSource, bot.exchanges);
-  const subtitle = [bot.ticker, chosen ?? bot.exchanges[0], `${money(allocatedCapital)} Allocated`]
+  // The instrument as THIS member's venue names it. Same product either way, but a
+  // member checking their positions on the exchange has to find it under the name
+  // the exchange shows — which for anything but crypto is not the bot's own ticker.
+  const subtitle = [tickerFor(bot, chosen ?? bot.exchanges[0]), chosen ?? bot.exchanges[0], `${money(allocatedCapital)} Allocated`]
     .filter(Boolean)
     .join(" · ");
 

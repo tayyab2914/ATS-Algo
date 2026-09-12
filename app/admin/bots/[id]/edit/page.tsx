@@ -6,6 +6,7 @@ import { type BacktestResult, type BotConfig } from "@/lib/backtest/engine";
 import { getCategoryNames } from "@/lib/categories";
 import { getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
+import { parseTickerMap } from "@/lib/ticker-map";
 
 export default async function EditBotPage({ params }: { params: Promise<{ id: string }> }) {
   const session = await getSession();
@@ -27,6 +28,8 @@ export default async function EditBotPage({ params }: { params: Promise<{ id: st
         category: true,
         exchange: true,
         exchanges: true,
+        ticker: true,
+        tickerMap: true,
         riskClass: true,
         status: true,
         csvFilename: true,
@@ -43,6 +46,8 @@ export default async function EditBotPage({ params }: { params: Promise<{ id: st
     name: bot.name,
     category: bot.category,
     exchanges: bot.exchanges.length ? bot.exchanges : bot.exchange ? [bot.exchange] : [],
+    ticker: bot.ticker,
+    tickerMap: parseTickerMap(bot.tickerMap),
     riskClass: bot.riskClass,
     status: bot.status,
     csvFilename: bot.csvFilename,

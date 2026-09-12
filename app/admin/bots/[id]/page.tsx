@@ -14,6 +14,7 @@ import { getSession } from "@/lib/auth/session";
 import { cn } from "@/lib/cn";
 import { prisma } from "@/lib/db";
 import { parseSignalMap } from "@/lib/execution/signal-map";
+import { parseTickerMap } from "@/lib/ticker-map";
 import { signalSecret } from "@/lib/execution/signal-secret";
 import { RISK_LABEL, RISK_TEXT_CLASS, riskBadgeClass } from "@/lib/risk";
 
@@ -34,6 +35,7 @@ export default async function ViewBotPage({ params }: { params: Promise<{ id: st
       id: true,
       name: true,
       ticker: true,
+      tickerMap: true,
       exchange: true,
       exchanges: true,
       assetType: true,
@@ -65,6 +67,11 @@ export default async function ViewBotPage({ params }: { params: Promise<{ id: st
   const weights = profile?.w ?? [];
 
   const subtitle = [bot.ticker, bot.assetType ?? bot.category].filter(Boolean).join(" · ");
+  // Only the venues that call this instrument something else. Shown so an admin can
+  // check what will actually be ordered without opening the editor; empty for every
+  // crypto bot, which is why it renders as nothing at all rather than as a row of
+  // repeated tickers.
+  const venueTickers = Object.entries(parseTickerMap(bot.tickerMap)).filter(([, name]) => name !== bot.ticker);
 
   const statCards: Stat[] = [
     { label: "30 Days Performance", value: signedPct(bot.d30), tone: tone(bot.d30) },
@@ -127,6 +134,18 @@ export default async function ViewBotPage({ params }: { params: Promise<{ id: st
             <span className="text-sm text-muted">Runs on</span>
             <ExchangePills exchanges={bot.exchanges} />
           </div>
+          {venueTickers.length > 0 && (
+            <p className="text-xs text-muted">
+              Trades as{" "}
+              {venueTickers.map(([venue, name], i) => (
+                <span key={venue}>
+                  {i > 0 && ", "}
+                  <span className="text-white">{name}</span> on {venue}
+                </span>
+              ))}
+              {bot.exchanges.length > venueTickers.length && bot.ticker ? `, ${bot.ticker} elsewhere` : ""}
+            </p>
+          )}
         </header>
 
         {/* headline stats */}

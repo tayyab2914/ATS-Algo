@@ -10,6 +10,7 @@ import { fanOut, killSwitchOn, liveDeploymentCount } from "@/lib/execution/dispa
 import { executionError } from "@/lib/execution/execute";
 import { errorDetail, logExec } from "@/lib/execution/log";
 import { resolveSymbol } from "@/lib/execution/symbol";
+import { tickerFor } from "@/lib/ticker-map";
 
 /**
  * Fire a signal by hand, without waiting for TradingView.
@@ -49,7 +50,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
   if (killSwitchOn()) return fail("SIGNALS_KILL_SWITCH is on — every signal is a no-op.", 409);
 
-  const bot = await prisma.bot.findUnique({ where: { id: botId }, select: { id: true, status: true, ticker: true, exchanges: true } });
+  const bot = await prisma.bot.findUnique({ where: { id: botId }, select: { id: true, status: true, ticker: true, tickerMap: true, exchanges: true } });
   if (!bot) return fail("Bot not found", 404);
   if (bot.status !== "ACTIVE") return fail("This bot is disabled — enable it before dispatching signals.", 409);
 
@@ -83,7 +84,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (action === "enter") {
       const venue = bot.exchanges.find((name) => exchangeEnabled(name));
       if (!venue) return fail("This bot has no exchange that is wired for trading yet.", 409);
-      const { symbol } = await resolveSymbol(venue, bot.ticker, false);
+      const { symbol } = await resolveSymbol(venue, tickerFor(bot, venue), false);
       price = await publicPrice(venue, symbol);
     }
 

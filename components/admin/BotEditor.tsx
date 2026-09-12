@@ -9,11 +9,13 @@ import { LeverageField, parseLeverageInput } from "@/components/admin/LeverageFi
 import { parseTightenInput, StopLadderField } from "@/components/admin/StopLadderField";
 import { CheckIcon } from "@/components/admin/admin-icons";
 import { ExchangeMultiSelect } from "@/components/admin/ExchangeMultiSelect";
+import { TickerMapField } from "@/components/admin/TickerMapField";
 import { Notice, type NoticeData } from "@/components/ui/Notice";
 import { Switch } from "@/components/ui/Switch";
 import { configRatchetPct, profileLeverage, withLeverage, withRatchetPct } from "@/lib/bot-config";
 import { runBacktest, type BacktestResult, type BotConfig, type RiskClass } from "@/lib/backtest/engine";
 import { cn } from "@/lib/cn";
+import { describeTickerMap, normalizeTickerMap, sameTickerMap, tickerMapError, type TickerMap } from "@/lib/ticker-map";
 import { botConfigError, ladderGeometryError } from "@/lib/validation";
 
 const RISKS: { value: RiskClass; label: string }[] = [
@@ -31,6 +33,10 @@ export type BotEditorData = {
   name: string;
   category: string;
   exchanges: string[];
+  /** The bot's ticker, which every venue with no override is asked for. */
+  ticker: string | null;
+  /** Per-venue instrument names, for the venues that don't use `ticker`. */
+  tickerMap: TickerMap;
   riskClass: RiskClass;
   status: "ACTIVE" | "DISABLED";
   csvFilename: string | null;
@@ -55,6 +61,7 @@ export function BotEditor({ bot, categories }: { bot: BotEditorData; categories:
   const [name, setName] = useState(bot.name);
   const [category, setCategory] = useState(bot.category);
   const [exchanges, setExchanges] = useState<string[]>(bot.exchanges);
+  const [tickerMap, setTickerMap] = useState<TickerMap>(bot.tickerMap);
   const [riskClass, setRiskClass] = useState<RiskClass>(bot.riskClass);
   const [enabled, setEnabled] = useState(bot.status === "ACTIVE");
   const [statusPending, setStatusPending] = useState(false);
@@ -112,12 +119,21 @@ export function BotEditor({ bot, categories }: { bot: BotEditorData; categories:
   const blockingError = useMemo(() => {
     if (tighten.error) return tighten.error;
     if (leverage.error) return leverage.error;
+    // Caught here rather than at the API, because a bad instrument name is invisible
+    // until a signal fires and then reads as "the bot just didn't trade".
+    const mapError = tickerMapError(tickerMap);
+    if (mapError) return mapError;
     // A replacement file is new material — hold it to everything.
     if (configChanged) return botConfigError(effectiveConfig, riskClass);
     // An in-place retune is held to the ladder's geometry only, exactly like the API.
     if (tightenChanged || leverageChanged) return ladderGeometryError(effectiveConfig)?.message ?? null;
     return null;
-  }, [tighten.error, leverage.error, configChanged, tightenChanged, leverageChanged, effectiveConfig, riskClass]);
+  }, [tighten.error, leverage.error, tickerMap, configChanged, tightenChanged, leverageChanged, effectiveConfig, riskClass]);
+
+  // What would actually be STORED: narrowed to the ticked exchanges, exactly as the
+  // server narrows it. Untick a venue and its override is gone, so the dirty check
+  // and the change note describe the save instead of the boxes on screen.
+  const nextTickerMap = useMemo(() => normalizeTickerMap(tickerMap, exchanges), [tickerMap, exchanges]);
 
   // Any edited field counts as a change — including metadata-only edits like
   // switching the category, which previously left Save disabled with no reason.
@@ -125,6 +141,7 @@ export function BotEditor({ bot, categories }: { bot: BotEditorData; categories:
     name !== bot.name ||
     category !== bot.category ||
     !sameSet(exchanges, bot.exchanges) ||
+    !sameTickerMap(nextTickerMap, bot.tickerMap) ||
     riskClass !== bot.riskClass ||
     configChanged ||
     tightenChanged ||
@@ -162,6 +179,8 @@ export function BotEditor({ bot, categories }: { bot: BotEditorData; categories:
     if (category !== bot.category) parts.push(`category ${bot.category} → ${category}`);
     if (!sameSet(exchanges, bot.exchanges))
       parts.push(`exchanges ${bot.exchanges.join(", ") || "none"} → ${exchanges.join(", ") || "none"}`);
+    if (!sameTickerMap(nextTickerMap, bot.tickerMap))
+      parts.push(`exchange tickers ${describeTickerMap(bot.tickerMap)} → ${describeTickerMap(nextTickerMap)}`);
     if (riskClass !== bot.riskClass) parts.push(`risk class ${bot.riskClass} → ${riskClass}`);
     if (leverageChanged) parts.push(`leverage ${storedLeverage ?? "—"}x → ${leverage.value}x`);
     if (tightenChanged) parts.push(`stop ladder ${storedTighten ?? "off"} → ${tighten.value ?? "off"}`);
@@ -297,6 +316,7 @@ export function BotEditor({ bot, categories }: { bot: BotEditorData; categories:
           name,
           category,
           exchanges,
+          tickerMap: nextTickerMap,
           riskClass,
           message: message.trim() || describeChanges(),
           // Only a replacement file ships a whole config. The ladder and leverage
@@ -371,6 +391,9 @@ export function BotEditor({ bot, categories }: { bot: BotEditorData; categories:
           <div className="flex flex-col gap-2 lg:col-span-2">
             <span className={labelCls}>Exchanges — allowed venues (users pick one)</span>
             <ExchangeMultiSelect value={exchanges} onChange={setExchanges} />
+          </div>
+          <div className="md:col-span-2 lg:col-span-4">
+            <TickerMapField exchanges={exchanges} value={tickerMap} fallback={bot.ticker} onChange={setTickerMap} />
           </div>
           <label className="flex flex-col gap-2">
             <span className={labelCls}>Risk Class</span>

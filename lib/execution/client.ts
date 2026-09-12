@@ -625,6 +625,13 @@ const missMemo = new Set<string>();
 const marketInflight = new Map<string, Promise<MarketInterface | null>>();
 const listInflight = new Map<string, Promise<Record<string, MarketInterface>>>();
 
+// The same three, for lookups by the venue's own instrument id. `idMemo` holds
+// id → ccxt symbol, so a hit rejoins the ordinary symbol path; `idMissMemo`
+// matters more here than above, because an id miss costs a full loadMarkets().
+const idMemo = new Map<string, string>();
+const idMissMemo = new Set<string>();
+const idInflight = new Map<string, Promise<MarketInterface | null>>();
+
 const memoKey = (exchange: string, symbol: string, sandbox: boolean) => `${exchange}:${sandbox}:${symbol}`;
 const listKey = (exchange: string, sandbox: boolean) => `${exchange}:${sandbox}`;
 
@@ -653,6 +660,83 @@ export async function getMarket(exchange: string, symbol: string, sandbox: boole
   const resolution = resolveMarket(exchange, symbol, sandbox, key).finally(() => marketInflight.delete(key));
   marketInflight.set(key, resolution);
   return resolution;
+}
+
+/**
+ * The ccxt market descriptor for the venue's OWN name for an instrument — its
+ * `market.id`, which is what the venue's UI and its API show and therefore the
+ * only name an admin can be expected to type.
+ *
+ * Exists for the instruments the venues don't name alike. `getMarket` above takes
+ * a ccxt SYMBOL, which for crypto is derivable ("BTC" → "BTC/USDT:USDT"); for WTI
+ * oil the four venues call the same product NCCO1OILWTI2USD, AXTI, AXTI and
+ * WTIOIL, and none of those can be derived from anything. So the per-venue
+ * override (see lib/ticker-map.ts) is matched against `id` instead.
+ *
+ * SWAP WINS on a tie: a venue may issue the same id for a spot market and its
+ * perpetual (Bitget's spot and swap BTCUSDT), and this platform only ever trades
+ * the perpetual.
+ *
+ * Cost: a miss pays `loadMarkets()` once per (venue, id, mode) per process — the
+ * id is not a cache key, so it cannot be looked up the way a symbol can. Both the
+ * hit and the miss are memoised, and a hit also writes the market_cache row under
+ * its real symbol, so the venue is contacted once and every later resolution goes
+ * through the ordinary symbol path.
+ */
+export async function getMarketByVenueId(exchange: string, venueId: string, sandbox: boolean): Promise<MarketInterface | null> {
+  const id = venueId.trim().toUpperCase();
+  if (!id) return null;
+
+  const key = `${exchange}:${sandbox}:${id}`;
+  const known = idMemo.get(key);
+  if (known) return getMarket(exchange, known, sandbox);
+  if (idMissMemo.has(key)) return null;
+
+  const pending = idInflight.get(key);
+  if (pending) return pending;
+
+  const resolution = resolveMarketByVenueId(exchange, id, sandbox, key).finally(() => idInflight.delete(key));
+  idInflight.set(key, resolution);
+  return resolution;
+}
+
+/** Prefer the perpetual when a venue issues one id for several market types. */
+function pickSwap(candidates: MarketInterface[]): MarketInterface | undefined {
+  return candidates.find((m) => m.swap) ?? candidates[0];
+}
+
+async function resolveMarketByVenueId(
+  exchange: string,
+  id: string,
+  sandbox: boolean,
+  key: string,
+): Promise<MarketInterface | null> {
+  // The cache first. It holds only the instruments this platform has actually
+  // traded — tens of rows, not the venue's whole list — so scanning it in memory
+  // is cheaper than a JSON-path query and doesn't depend on the id's casing.
+  const rows = await prisma.marketCache.findMany({ where: { exchange, sandbox }, select: { symbol: true, data: true } });
+  const cached = pickSwap(
+    rows
+      .map((row) => row.data as unknown as MarketInterface)
+      .filter((market) => String(market?.id ?? "").toUpperCase() === id),
+  );
+  if (cached) {
+    idMemo.set(key, cached.symbol);
+    marketMemo.set(memoKey(exchange, cached.symbol, sandbox), cached);
+    return cached;
+  }
+
+  const markets = await loadAllMarkets(exchange, sandbox);
+  const market = pickSwap(Object.values(markets).filter((m) => String(m?.id ?? "").toUpperCase() === id));
+  if (!market) {
+    idMissMemo.add(key); // the venue does not list this id in this mode
+    return null;
+  }
+
+  await cacheMarket(exchange, sandbox, market.symbol, market);
+  idMemo.set(key, market.symbol);
+  marketMemo.set(memoKey(exchange, market.symbol, sandbox), market);
+  return market;
 }
 
 async function resolveMarket(exchange: string, symbol: string, sandbox: boolean, key: string): Promise<MarketInterface | null> {

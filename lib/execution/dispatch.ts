@@ -5,6 +5,7 @@ import { chosenExchange, exchangeEnabled } from "@/lib/bot-exchanges";
 import { prisma } from "@/lib/db";
 import { getDecryptedConnection } from "@/lib/exchanges/connection";
 import { botReadiness } from "@/lib/my-bots/readiness";
+import { tickerFor } from "@/lib/ticker-map";
 import { publicPrice, type TradeCreds } from "./client";
 import { executionError, openPosition } from "./execute";
 import { errorDetail, logExec } from "./log";
@@ -86,7 +87,7 @@ export async function liveDeploymentCount(botId: string): Promise<number> {
 function loadSignal(signalId: string) {
   return prisma.signal.findUnique({
     where: { id: signalId },
-    include: { bot: { select: { id: true, status: true, ticker: true, riskClass: true, config: true, exchanges: true } } },
+    include: { bot: { select: { id: true, status: true, ticker: true, tickerMap: true, riskClass: true, config: true, exchanges: true } } },
   });
 }
 type LoadedSignal = NonNullable<Awaited<ReturnType<typeof loadSignal>>>;
@@ -278,7 +279,7 @@ async function enterAll(signal: LoadedSignal, result: FanOutResult): Promise<Fan
       passphrase: connection.passphrase,
       sandbox: connection.sandbox,
     };
-    const { symbol, market, requested, substituted } = await resolveSymbol(chosen, signal.bot.ticker, creds.sandbox);
+    const { symbol, market, requested, substituted } = await resolveSymbol(chosen, tickerFor(signal.bot, chosen), creds.sandbox);
     if (substituted) {
       await logExec({
         level: "warn", event: "symbol.substituted", botId: signal.botId, userBotId: deployment.id, signalId: signal.id,

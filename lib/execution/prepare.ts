@@ -4,6 +4,7 @@ import { profileFor, type BotConfig } from "@/lib/bot-config";
 import { chosenExchange, exchangeEnabled } from "@/lib/bot-exchanges";
 import { prisma } from "@/lib/db";
 import { getDecryptedConnection } from "@/lib/exchanges/connection";
+import { tickerFor } from "@/lib/ticker-map";
 import { adapterFor, exchangeClient, type TradeCreds } from "./client";
 import { resolveSymbol } from "./symbol";
 
@@ -249,7 +250,7 @@ export async function prepareDeployment(userId: string, botId: string): Promise<
       id: true,
       exchangeSource: true,
       exchangePrepared: true,
-      bot: { select: { ticker: true, riskClass: true, config: true, exchanges: true } },
+      bot: { select: { ticker: true, tickerMap: true, riskClass: true, config: true, exchanges: true } },
     },
   });
   if (!deployment) return { prepared: false, reason: "deployment not found" };
@@ -270,7 +271,7 @@ export async function prepareDeployment(userId: string, botId: string): Promise<
     passphrase: connection.passphrase,
     sandbox: connection.sandbox,
   };
-  const { symbol, market, substituted } = await resolveSymbol(chosen, deployment.bot.ticker, creds.sandbox);
+  const { symbol, market, substituted } = await resolveSymbol(chosen, tickerFor(deployment.bot, chosen), creds.sandbox);
 
   const contacted = await ensurePrepared({
     userBotId: deployment.id,
