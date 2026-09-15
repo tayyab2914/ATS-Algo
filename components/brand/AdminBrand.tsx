@@ -5,9 +5,9 @@ import { BRAND_MARK_SIZE, BRAND_MARK_SRC, BRAND_NAME } from "@/lib/brand";
  * "ATS-ALGO / Automated Trading" wordmark. Mirrors the 48px chip + 18px title
  * spec from the design.
  *
- * The glyph comes from `public/brand/ats-mark.svg`, the same file `<Logo>` reads,
- * so the official artwork lands on both surfaces from one file drop — see
- * lib/brand.ts.
+ * The glyph comes from `public/brand/ats-mark.png`, the official mark cut from the
+ * same artwork as `<Logo>`'s lockup — see lib/brand.ts. It is wide (about 2.5:1),
+ * so it is sized by width to fill the chip rather than by height.
  */
 export function AdminBrand() {
   return (
@@ -19,7 +19,7 @@ export function AdminBrand() {
           alt=""
           width={BRAND_MARK_SIZE.width}
           height={BRAND_MARK_SIZE.height}
-          className="h-6 w-7 object-contain"
+          className="h-auto w-9 object-contain"
         />
       </span>
 

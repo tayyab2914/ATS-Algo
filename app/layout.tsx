@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import { NavProgress } from "@/components/app/NavProgress";
+import { appBaseUrl } from "@/lib/app-url";
 import "./globals.css";
 
 const inter = Inter({
@@ -23,8 +24,13 @@ const inter = Inter({
  *
  * `template` is a bare "%s" — Next's types require one alongside `default`, and a
  * pass-through is the only value that doesn't decorate `/`'s marketing title.
+ *
+ * `metadataBase` makes the `app/opengraph-image.png` share card an absolute URL on
+ * the real domain. Without it Next falls back to localhost when self-hosted, and
+ * an invite link pasted into Discord or Telegram would preview with no image.
  */
 export const metadata: Metadata = {
+  metadataBase: new URL(appBaseUrl()),
   title: { default: "ATS-ALGO", template: "%s" },
   description: "Automate your trading. Maximize returns.",
 };

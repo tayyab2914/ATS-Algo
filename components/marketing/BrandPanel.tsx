@@ -12,8 +12,8 @@ import { FEATURES, HERO } from "@/lib/content";
  * Hidden below `lg`: on phones/tablets the auth + admin surfaces show only the
  * form, so this marketing column is suppressed rather than stacked on top.
  *
- * @param brand - Top-of-panel lockup. Defaults to the ADRIAN <Logo>; the admin
- *                surface passes its own ATS-ALGO mark.
+ * @param brand - Top-of-panel lockup. Defaults to the ATS-ALGO <Logo>; the admin
+ *                surface passes its own chip-style <AdminBrand>.
  */
 export function BrandPanel({ brand = <Logo /> }: { brand?: ReactNode }) {
   return (

@@ -2,19 +2,23 @@
  * Brand assets, in one place, so swapping in the official artwork is a file drop
  * rather than a hunt through components.
  *
- * There are two shapes a logo arrives in, and both are handled:
+ * Everything under `public/brand/` and the `app/` icons is cut from the official
+ * artwork in `ATS - LOGO/` (transparent padding trimmed, resized):
  *
- *  - **A mark / icon** (the glyph alone). Replace `public/brand/ats-mark.svg` —
- *    or point {@link BRAND_MARK_SRC} at a `.png`/`.webp` sitting beside it — and
- *    every logo on the site picks it up: sidebar, landing nav, footer, auth
- *    split-screen, admin rail. No code change.
+ *  - **The mark** (`ats-mark.png`, from `ICON/icon.png`) — the gradient glyph
+ *    alone. Used where only the glyph fits: the admin chip.
  *
- *  - **A full lockup** (glyph + their own wordmark typography). Set
- *    {@link BRAND_LOCKUP} to the file and its intrinsic size. `<Logo>` then renders
- *    that image instead of composing the mark with Inter-set type, because a
- *    supplied lockup carries its own typeface and must not be re-typeset.
+ *  - **The lockup** (`ats-lockup.png`, from `LOGO 2/PNG-2.png`) — glyph plus the
+ *    "AUTOMATED TRADING SYSTEM" wordmark in white, for the dark UI. `<Logo>`
+ *    renders it whole everywhere (sidebar, landing nav, footer, auth split-screen,
+ *    admin rail, community page) rather than re-typesetting the wordmark in Inter.
  *
- * `null` is the built-in behaviour and is what ships until the real files land.
+ *  - **The icons** — `app/icon.png`, `app/apple-icon.png`, `app/favicon.ico` and
+ *    `app/opengraph-image.png` are the mark (or lockup, for the share card) on the
+ *    product's #0a0a0a ground.
+ *
+ * If the artwork changes, regenerate all of them together so the tab, the page,
+ * the email and the link preview never disagree.
  */
 
 /** Product name, wherever it is written as text (page titles, emails, alt text). */
@@ -24,26 +28,36 @@ export const BRAND_NAME = "ATS-ALGO";
 export const BRAND_TAGLINE = "AUTOMATED TRADING SYSTEM";
 
 /** The glyph. Served from /public — swap the file, not this constant, when possible. */
-export const BRAND_MARK_SRC = "/brand/ats-mark.svg";
+export const BRAND_MARK_SRC = "/brand/ats-mark.png";
 
 /** Intrinsic size of the mark, so `<img>` reserves the right box and never reflows. */
-export const BRAND_MARK_SIZE = { width: 48, height: 40 } as const;
+export const BRAND_MARK_SIZE = { width: 397, height: 160 } as const;
 
 /**
- * A supplied full lockup, if there is one. Set it to e.g.
- * `{ src: "/brand/ats-lockup.svg", width: 248, height: 48 }` after dropping the
- * file into `public/brand/`, and `<Logo>` switches to it everywhere.
+ * The official full lockup. `<Logo>` renders this image instead of composing the
+ * mark with Inter-set type; set it to `null` to fall back to that composition.
  */
-export const BRAND_LOCKUP: { src: string; width: number; height: number } | null = null;
+export const BRAND_LOCKUP: { src: string; width: number; height: number } | null = {
+  src: "/brand/ats-lockup.png",
+  width: 857,
+  height: 144,
+};
 
 /**
  * The PNG this app serves as its own email logo, relative to the site root.
  *
- * PNG rather than the SVG mark on purpose: Gmail and Outlook do not render SVG in
- * a message body at all. Regenerate it from `app/icon.svg` whenever the mark
- * changes, so the tab icon and the email masthead stay the same artwork.
+ * PNG on purpose: Gmail and Outlook do not render SVG in a message body at all.
+ * It is the same lockup as {@link BRAND_LOCKUP} (white type, for the dark email
+ * card), cut at 2x of its rendered size.
  */
 export const BRAND_EMAIL_LOGO_PATH = "/brand/ats-email-logo.png";
+
+/**
+ * The size the email masthead renders at. Both dimensions go on the `<img>`:
+ * Outlook desktop ignores `width:auto` and would otherwise draw the 2x file at
+ * its native width.
+ */
+export const BRAND_EMAIL_LOGO_SIZE = { width: 238, height: 40 } as const;
 
 /**
  * An operator-supplied absolute URL for the email masthead logo, or null.

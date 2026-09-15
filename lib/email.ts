@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import nodemailer, { type Transporter } from "nodemailer";
-import { BRAND_EMAIL_LOGO_PATH, BRAND_NAME, emailLogoUrl } from "@/lib/brand";
+import { BRAND_EMAIL_LOGO_PATH, BRAND_EMAIL_LOGO_SIZE, BRAND_NAME, emailLogoUrl } from "@/lib/brand";
 
 /**
  * SMTP mailer (Gmail). The transporter is created lazily and cached so we don't
@@ -115,16 +115,24 @@ function embeddedLogo(): Buffer | null {
  *  3. Type. Reached only when the file cannot be read; renders everywhere.
  */
 function masthead(): { html: string; logo: Buffer | null } {
-  const style = "display:block;height:32px;width:auto;border:0;margin:0 0 20px";
+  const { width, height } = BRAND_EMAIL_LOGO_SIZE;
+  const style = `display:block;width:${width}px;height:${height}px;border:0;margin:0 0 20px`;
 
   const configured = emailLogoUrl();
   if (configured) {
-    return { html: `<img src="${configured}" alt="${BRAND_NAME}" height="32" style="${style}" />`, logo: null };
+    // Operator artwork of unknown proportions: pin the height only.
+    return {
+      html: `<img src="${configured}" alt="${BRAND_NAME}" height="${height}" style="display:block;height:${height}px;width:auto;border:0;margin:0 0 20px" />`,
+      logo: null,
+    };
   }
 
   const embedded = embeddedLogo();
   if (embedded) {
-    return { html: `<img src="cid:${LOGO_CID}" alt="${BRAND_NAME}" height="32" style="${style}" />`, logo: embedded };
+    return {
+      html: `<img src="cid:${LOGO_CID}" alt="${BRAND_NAME}" width="${width}" height="${height}" style="${style}" />`,
+      logo: embedded,
+    };
   }
 
   return {
