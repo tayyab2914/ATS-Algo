@@ -13,7 +13,7 @@ import { prisma } from "@/lib/db";
 import { getDecryptedConnection } from "@/lib/exchanges/connection";
 import { adapterFor, exchangeClient, getMarket, livePosition, type TradeCreds } from "./client";
 import { clientOrderId, closeAll, ratchetStop } from "./execute";
-import { logExec } from "./log";
+import { errorDetail, logExec } from "./log";
 import type { Side } from "./pricing";
 import { stopStrategyFor } from "./stops";
 
@@ -68,76 +68,213 @@ function positionSnapshot(position: LoadedPosition): ProfileSnapshot | null {
 }
 
 type Trades = Awaited<ReturnType<Exchange["fetchMyTrades"]>>;
+type Fill = Trades[number];
+
+/** The venue publishes a fill a beat after it executes; settle reads it seconds later. */
+const FILL_READ_ATTEMPTS = 3;
+const FILL_READ_BACKOFF_MS = 1_200;
+/** Past this, a still-provisional PnL is no longer publication lag but a fill we cannot own. */
+const PNL_STALE_AFTER_MS = 60 * 60_000;
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
- * `sell` proceeds minus `buy` cost, minus fees — correct for a long (bought then
- * sold) and for a short (sold then bought) alike. Also reports how much of the
- * position each side actually closed, so incomplete attribution can be detected.
+ * What the VENUE itself booked as realized profit on one fill, when it reports one.
+ *
+ * Every wired venue carries this on a closing fill — Bitget `profit` (UTA `execPnl`), Bybit
+ * `execPnl`, BingX `realizedPnl`, BloFin `pnl` — gross of fees, which are charged per fill
+ * and summed separately. Null when this venue, or this fill, reports none.
+ *
+ * Used as the PROVISIONAL figure for a set we cannot yet complete, and as a cross-check
+ * against our own arithmetic when we can. Never as the booked number on its own: the field
+ * name differs per venue and an unrecognised one must degrade to "no figure", not to a
+ * confident wrong one.
+ */
+function venueRealized(fill: Fill): number | null {
+  const info = fill.info as Record<string, unknown> | null | undefined;
+  if (!info) return null;
+  for (const key of ["profit", "execPnl", "realizedPnl", "pnl"]) {
+    const raw = info[key];
+    if (raw === undefined || raw === null || raw === "") continue;
+    const value = Number(raw);
+    if (Number.isFinite(value)) return value;
+  }
+  return null;
+}
+
+export type Attribution = {
+  /** Realized PnL from our own fills, net of fees. Meaningful only when `complete`. */
+  pnl: number;
+  /** The same trade as the venue booked it, when every fill reported a figure. */
+  venuePnl: number | null;
+  /** Both legs are present and each reconciles against `position.size`. */
+  complete: boolean;
+  openedAmount: number;
+  closedAmount: number;
+  fills: number;
+};
+
+/**
+ * Realized PnL for ONE position, from the venue's own fills — and only from the fills this
+ * position's own orders produced.
+ *
+ * BOTH LEGS OR NOTHING. `sell` proceeds minus `buy` cost is a PnL only when the set is
+ * BALANCED: every contract opened and every contract closed present. A missing fill does not
+ * make the number slightly wrong, it makes it wrong by that fill's whole notional. That is
+ * not hypothetical — position cmukej7fq01kimoqjlx51aam9 booked +$2,669.12 against a true
+ * +$18.22 because the closing fill had not been published when we read, 4.4s after it
+ * executed, and because the fallback then widened to every fill on the symbol and swept in
+ * the PREVIOUS trade's closing sell. On a reversal that trade closes ~3s before this one
+ * opens, so it is ALWAYS inside the window: there is deliberately no widening any more.
+ *
+ * Completeness is therefore checked on both sides and reported, never assumed. An incomplete
+ * set is not booked — the caller defers it, and `resettlePnl` finishes it once the venue has
+ * caught up.
  *
  * `contractSize` is the base amount ONE contract represents, and it is NOT optional on a
- * contract-denominated venue. ccxt reports `trade.amount` in the venue's own units, so on BloFin
- * a fill of "18.4" is 18.4 contracts = 0.0184 BTC, not 18.4 BTC. Without the factor a $300 trade
- * booked a PnL of 1,196,097 — a thousand times over — and that number is what `realizedBalance`
- * compounds from and sizes the next trade with. Caught by
- * scripts/verify-ratchet-fires-blofin-demo.ts.
- *
- * `closedAmount` deliberately stays in VENUE units, because the only thing compared against it is
- * `position.size`, which is stored in venue units too. Converting one and not the other is how
- * this class of bug happens in the first place.
+ * contract-denominated venue: ccxt reports `trade.amount` in the venue's own units, so on
+ * BloFin a fill of "18.4" is 18.4 contracts = 0.0184 BTC, not 18.4 BTC — without the factor a
+ * $300 trade booked a PnL of 1,196,097. Amounts stay in VENUE units throughout, because the
+ * only thing they are compared against is `position.size`, which is stored in venue units
+ * too. Converting one and not the other is how this class of bug happens in the first place.
  */
-function summarizeTrades(trades: Trades, exitSide: "buy" | "sell", ourOrderIds: Set<string> | null, contractSize: number) {
-  let pnl = 0;
+export function attribute(args: {
+  trades: Trades;
+  ourOrderIds: Set<string>;
+  exitSide: "buy" | "sell";
+  positionSize: number;
+  contractSize: number;
+}): Attribution {
+  const { trades, ourOrderIds, exitSide, positionSize, contractSize } = args;
+
+  let cashflow = 0;
+  let fees = 0;
+  let venueSum = 0;
+  let everyFillReports = true;
+  let openedAmount = 0;
   let closedAmount = 0;
-  let matched = 0;
+  let fills = 0;
+
   for (const trade of trades) {
-    if (ourOrderIds && (!trade.order || !ourOrderIds.has(trade.order))) continue;
-    matched++;
+    if (!trade.order || !ourOrderIds.has(trade.order)) continue;
+    fills++;
     const amount = Number(trade.amount);
-    pnl += (trade.side === "sell" ? 1 : -1) * Number(trade.price) * amount * contractSize;
-    pnl -= Number(trade.fee?.cost ?? 0);
+    cashflow += (trade.side === "sell" ? 1 : -1) * Number(trade.price) * amount * contractSize;
+    fees += Number(trade.fee?.cost ?? 0);
     if (trade.side === exitSide) closedAmount += amount;
+    else openedAmount += amount;
+
+    const realized = venueRealized(trade);
+    if (realized === null) everyFillReports = false;
+    else venueSum += realized;
   }
-  return { pnl, closedAmount, matched };
+
+  const reconciles = (amount: number) => Math.abs(amount - positionSize) <= positionSize * 0.01;
+  return {
+    pnl: cashflow - fees,
+    venuePnl: fills > 0 && everyFillReports ? venueSum - fees : null,
+    complete: fills > 0 && reconciles(openedAmount) && reconciles(closedAmount),
+    openedAmount,
+    closedAmount,
+    fills,
+  };
 }
 
 /**
- * Realized PnL from the venue's own fills, matched to the orders we placed — so a
- * member who also trades by hand on the same account cannot bleed fills into a
- * bot's PnL.
+ * Read the venue's fills for this position and attribute them, retrying while the set is
+ * still short — a fill is published a beat after it executes, and settle runs seconds after
+ * sending the close.
  *
- * The catch: if a closing fill belongs to an order id we never captured (a
- * liquidation, say), matching alone sees only the entry and returns roughly
- * `-entryValue`. That number would then be added to `realizedBalance` and used to
- * size the member's next trade. So we check that the matched fills actually closed
- * the position; when they don't, we widen to every fill on the symbol in this
- * position's lifetime and say so loudly, because that is the lesser error.
+ * Also folds in the fills whose order id we never recorded but which are provably ours:
+ *
+ *  - A STOP-OUT. When a pos_loss/preset TPSL fires, Bitget executes it with a CHILD market
+ *    order minted on trigger: the fill carries the CHILD's id, not the plan-order id we
+ *    recorded — but the child's clientOid IS that plan-order id (proven on the venue).
+ *  - A CLOSE whose id we lost. `closeAll` returns `order.id ?? null`, so a venue that
+ *    answers without one leaves the flatten fill unattributable. Its clientOid is ours and
+ *    deterministic, so it can still be recognised.
+ *
+ * Every rescued fill is matched on an id WE issued. Nothing is adopted because it merely
+ * happens to sit in the window.
  */
-async function realizedPnlFor(
-  trades: Trades,
-  exitSide: "buy" | "sell",
-  ourOrderIds: Set<string>,
-  positionSize: number,
-  positionId: string,
-  contractSize: number,
-): Promise<number> {
-  const matched = summarizeTrades(trades, exitSide, ourOrderIds, contractSize);
-  const accountedFor = Math.abs(matched.closedAmount - positionSize) <= positionSize * 0.01;
-  if (accountedFor) return matched.pnl;
+async function readAttribution(args: {
+  ex: Exchange;
+  exchange: string;
+  symbol: string;
+  since: number;
+  ourOrderIds: Set<string>;
+  ourClientOids: Set<string>;
+  stopPlanIds: Set<string>;
+  exitSide: "buy" | "sell";
+  positionSize: number;
+  contractSize: number;
+  attempts: number;
+}): Promise<{ attribution: Attribution | null; stoppedOut: boolean; error: unknown }> {
+  const { ex, exchange, symbol, since, ourOrderIds, ourClientOids, stopPlanIds, exitSide } = args;
 
-  const all = summarizeTrades(trades, exitSide, null, contractSize);
-  await logExec({
-    level: "warn",
-    event: "pnl.attributionIncomplete",
-    positionId,
-    detail: {
-      note: "a closing fill belonged to an order we never recorded; widened to every fill on this symbol",
-      matchedClose: matched.closedAmount,
-      positionSize,
-      matchedPnl: matched.pnl,
-      widenedPnl: all.pnl,
-    },
-  });
-  return all.pnl;
+  let attribution: Attribution | null = null;
+  let stoppedOut = false;
+  let error: unknown = null;
+  const unresolvable = new Set<string>();
+
+  for (let attempt = 0; attempt < args.attempts; attempt++) {
+    if (attempt > 0) await sleep(FILL_READ_BACKOFF_MS);
+    try {
+      const trades = await ex.fetchMyTrades(symbol, since, 100);
+
+      for (const t of trades) {
+        if (t.side !== exitSide || !t.order || ourOrderIds.has(t.order) || unresolvable.has(t.order)) continue;
+        try {
+          // Through the adapter, NOT `ex.fetchOrder` directly: BloFin has no `fetchOrder` at
+          // all, so a direct call threw there and this whole path was dead on that venue.
+          const child = await adapterFor(exchange).readFill(ex, symbol, t.order);
+          const childOid = child?.clientOrderId;
+          if (childOid && stopPlanIds.has(childOid)) {
+            ourOrderIds.add(t.order);
+            stoppedOut = true;
+          } else if (childOid && ourClientOids.has(childOid)) {
+            ourOrderIds.add(t.order);
+          } else {
+            unresolvable.add(t.order);
+          }
+        } catch {
+          /* unresolved; it stays foreign, and the set simply stays incomplete */
+        }
+      }
+
+      // Belt-and-braces: some venues DO carry the plan-order id directly on the fill.
+      if (!stoppedOut) stoppedOut = trades.some((t) => t.side === exitSide && t.order && stopPlanIds.has(t.order));
+
+      attribution = attribute({
+        trades,
+        ourOrderIds,
+        exitSide,
+        positionSize: args.positionSize,
+        contractSize: args.contractSize,
+      });
+      error = null;
+      if (attribution.complete) break;
+    } catch (caught) {
+      // A failed read is not a zero PnL. Keep whatever the last successful attempt saw; if
+      // none succeeded the caller defers, and the reconcile pass retries from scratch.
+      error = caught;
+    }
+  }
+
+  return { attribution, stoppedOut, error };
+}
+
+/**
+ * Does our own arithmetic agree with the venue's? They must, and on a complete set they do —
+ * verified against live Bitget fills. A divergence means one of the two is reading the trade
+ * in different units, which is precisely the failure mode that once booked 1,196,097 on a
+ * $300 trade, so it is worth a loud line in the log even though the booked number does not
+ * change. Tolerance is a cent, or half a percent on a large trade, to absorb the venue
+ * rounding its own figure.
+ */
+function pnlDisagrees(attribution: Attribution): boolean {
+  if (attribution.venuePnl === null) return false;
+  const tolerance = Math.max(0.01, Math.abs(attribution.pnl) * 0.005);
+  return Math.abs(attribution.pnl - attribution.venuePnl) > tolerance;
 }
 
 async function clientFor(position: LoadedPosition): Promise<{ ex: Exchange; creds: TradeCreds; contractSize: number } | null> {
@@ -332,9 +469,15 @@ export async function syncPosition(positionId: string, opts: { flatten?: boolean
     // the previous snapshot, and the next pass refreshes it.
     const mark = Number(live?.markPrice ?? live?.lastPrice ?? 0) || null;
     if (mark) {
-      const venueUpnl = Number(live?.unrealizedPnl);
+      // `Number(null)` is 0, and 0 is finite — so a venue that simply omits the field used to
+      // pin the member's page at "+$0.00" for the life of the position instead of falling
+      // back. Only an actual number counts as the venue having answered.
+      const venueUpnl = live?.unrealizedPnl;
       const dir = position.side === "LONG" ? 1 : -1;
-      const unrealizedPnl = Number.isFinite(venueUpnl) ? venueUpnl : (mark - position.entryPrice) * contracts * dir;
+      const unrealizedPnl =
+        typeof venueUpnl === "number" && Number.isFinite(venueUpnl)
+          ? venueUpnl
+          : (mark - position.entryPrice) * contracts * dir * contractSize;
       await prisma.position
         .update({ where: { id: position.id }, data: { lastMarkPrice: mark, unrealizedPnl, markedAt: new Date() } })
         .catch(() => {});
@@ -370,74 +513,237 @@ export async function syncPosition(positionId: string, opts: { flatten?: boolean
   const ourOrderIds = new Set(
     [...position.orders.map((o) => o.exchangeOrderId), closeOrderId].filter((id): id is string => Boolean(id)),
   );
+  // Every clientOid we issued for this position. Deterministic by construction, so a fill can
+  // still be recognised as ours when the venue answered `createOrder` without an id.
+  const ourClientOids = new Set([
+    ...position.orders.map((o) => o.clientOrderId),
+    clientOrderId(position.entrySignalId, position.userBotId, "CLOSE"),
+  ]);
   // Our STOP plan-order ids (the preset loss_plan + every ratchet pos_loss generation).
   const stopPlanIds = new Set(
     position.orders.filter((o) => o.kind === "STOP" && o.exchangeOrderId).map((o) => o.exchangeOrderId!),
   );
   const exitSide = position.side === "LONG" ? "sell" : "buy";
-  let realizedPnl = 0;
-  let stoppedOut = false;
-  try {
-    const since = position.createdAt.getTime() - 60_000;
-    const trades = await ex.fetchMyTrades(position.symbol, since, 100);
 
-    // Attribute a stop-out. When a pos_loss/preset TPSL fires, Bitget executes it with a
-    // CHILD market order minted on trigger: the fill carries the CHILD's id, not the plan-order
-    // id we recorded — but the child's clientOid IS that plan-order id (proven on the venue).
-    // So resolve any exit-side fill we don't already own; if its order's clientOid is one of
-    // our stop plan ids, it was a stop-out. Fold the child id into ourOrderIds BEFORE booking
-    // PnL, so the close attributes cleanly instead of taking the widened (contamination-prone)
-    // path. If it can't be resolved, `stoppedOut` stays false and the reason simply degrades to
-    // RECONCILE — never a wrong number, just a less specific label.
-    for (const t of trades) {
-      if (t.side !== exitSide || !t.order || ourOrderIds.has(t.order) || stopPlanIds.has(t.order)) continue;
-      try {
-        // Through the adapter, NOT `ex.fetchOrder` directly: BloFin has no `fetchOrder` at all, so
-        // a direct call threw there and this whole attribution path was dead on that venue —
-        // every BloFin stop-out fell through to the widened PnL calculation.
-        const child = await adapterFor(position.exchange).readFill(ex, position.symbol, t.order);
-        const childOid = child?.clientOrderId;
-        if (childOid && stopPlanIds.has(childOid)) {
-          ourOrderIds.add(t.order);
-          stoppedOut = true;
-        }
-      } catch {
-        /* unresolved; the close simply books as RECONCILE rather than SL */
-      }
-    }
+  const { attribution, stoppedOut, error: fillsError } = await readAttribution({
+    ex,
+    exchange: position.exchange,
+    symbol: position.symbol,
+    since: position.createdAt.getTime() - 60_000,
+    ourOrderIds,
+    ourClientOids,
+    stopPlanIds,
+    exitSide,
+    positionSize: position.size,
+    contractSize,
+    attempts: FILL_READ_ATTEMPTS,
+  });
 
-    realizedPnl = await realizedPnlFor(trades, exitSide, ourOrderIds, position.size, position.id, contractSize);
+  // THE POSITION IS GONE FROM THE VENUE AND MUST CLOSE HERE, whatever the fills say. A
+  // reversal refuses to open on top of a row still marked OPEN (`reversalCloseIncomplete`),
+  // so holding the row open until the arithmetic reconciles would stop the bot trading.
+  //
+  // What is deferred is the NUMBER, not the close. `pnlPending` says the venue had not
+  // published every fill yet; `resettlePnl` re-reads on the next pass and applies the
+  // difference. Until then we book the venue's own figure for the fills we could see, which
+  // is short by an unpublished fill's profit — a few dollars — rather than by its notional.
+  const complete = attribution?.complete === true;
+  const realizedPnl = complete ? attribution!.pnl : (attribution?.venuePnl ?? 0);
+  const pnlPending = !complete;
 
-    // Belt-and-braces: some venues DO carry the plan-order id directly on the fill.
-    if (!stoppedOut) {
-      stoppedOut = trades.some((t) => t.side === exitSide && t.order && stopPlanIds.has(t.order));
-    }
-  } catch {
-    /* leave at 0 rather than invent a number; the cron will retry */
+  if (complete && pnlDisagrees(attribution!)) {
+    await logExec({
+      level: "warn",
+      event: "pnl.venueMismatch",
+      positionId,
+      userBotId: position.userBotId,
+      detail: {
+        note: "our arithmetic and the venue's own realized figure disagree — suspect a units/contract-size fault",
+        ours: attribution!.pnl,
+        venue: attribution!.venuePnl,
+        fills: attribution!.fills,
+      },
+    });
+  }
+
+  if (pnlPending) {
+    await logExec({
+      level: "warn",
+      event: "pnl.settlementDeferred",
+      positionId,
+      userBotId: position.userBotId,
+      detail: {
+        note: "the venue had not published every fill of this position yet; booked provisionally and flagged for re-settlement",
+        provisional: realizedPnl,
+        openedAmount: attribution?.openedAmount ?? null,
+        closedAmount: attribution?.closedAmount ?? null,
+        positionSize: position.size,
+        fills: attribution?.fills ?? 0,
+        readFailed: fillsError ? errorDetail(fillsError).message : null,
+      },
+    });
   }
 
   const allRungsFilled = rungsFilled === position.orders.filter((o) => o.kind === "TP").length;
   const reason = opts.reason ?? (stoppedOut ? "SL" : allRungsFilled ? "TP_FULL" : "RECONCILE");
-  await prisma.$transaction([
-    prisma.position.update({
-      where: { id: position.id },
-      data: { status: "CLOSED", closedAt: new Date(), closedReason: reason, realizedPnl, tpRungsFilled: rungsFilled },
-    }),
+  // CLAIM the close, then book off it. A reversal and the cron can both reach a position that
+  // has just gone flat, and `realizedBalance` is an INCREMENT: settling twice would credit the
+  // member twice. The OPEN→CLOSED transition is the claim, so only one caller can book.
+  await prisma.$transaction(async (tx) => {
+    const claimed = await tx.position.updateMany({
+      where: { id: position.id, status: "OPEN" },
+      data: { status: "CLOSED", closedAt: new Date(), closedReason: reason, realizedPnl, pnlPending, tpRungsFilled: rungsFilled },
+    });
+    if (claimed.count === 0) return;
     // Whatever is still marked OPEN is gone from the venue by now — the sweep above, the
     // fill itself, or the position closing took it.
-    prisma.order.updateMany({
+    await tx.order.updateMany({
       where: { positionId: position.id, state: { in: ["OPEN", "PENDING"] } },
       data: { state: "CANCELED" },
-    }),
+    });
     // Compounding grows off realized PnL, so this is the number the next trade sizes from.
-    prisma.userBot.update({
+    await tx.userBot.update({
       where: { id: position.userBotId },
       data: { realizedBalance: { increment: realizedPnl } },
-    }),
-  ]);
-  await logExec({ level: "info", event: "position.closed", positionId, userBotId: position.userBotId, detail: { reason, realizedPnl, rungsFilled, stopStep: position.stopStep } });
+    });
+  });
+  await logExec({ level: "info", event: "position.closed", positionId, userBotId: position.userBotId, detail: { reason, realizedPnl, pnlPending, rungsFilled, stopStep: position.stopStep } });
 
   return { positionId, rungsFilled, stopMoved, closed: true, realizedPnl };
+}
+
+/**
+ * Finish a close whose fills the venue had not published when it settled.
+ *
+ * Re-reads, re-attributes, and applies the DIFFERENCE to both the position and the
+ * deployment's running balance — a difference, not an overwrite, so a pass that runs twice
+ * cannot double-count and a partially-booked figure is corrected rather than stacked on.
+ * Clears `pnlPending` only once the fills actually reconcile; until then it stays flagged and
+ * is picked up again next pass.
+ *
+ * Returns null when there was nothing to do.
+ */
+/**
+ * Re-read and attribute an already-closed position's fills. Writes nothing — shared by the
+ * re-settlement pass and by the audit script, so what an operator is shown before repairing
+ * is produced by exactly the code that will do the repairing.
+ */
+async function reattribute(position: LoadedPosition, attempts: number): Promise<Attribution | null> {
+  const client = await clientFor(position);
+  if (!client) return null;
+  const { ex, contractSize } = client;
+
+  const ourOrderIds = new Set(position.orders.map((o) => o.exchangeOrderId).filter((id): id is string => Boolean(id)));
+  const ourClientOids = new Set([
+    ...position.orders.map((o) => o.clientOrderId),
+    clientOrderId(position.entrySignalId, position.userBotId, "CLOSE"),
+  ]);
+  const stopPlanIds = new Set(
+    position.orders.filter((o) => o.kind === "STOP" && o.exchangeOrderId).map((o) => o.exchangeOrderId!),
+  );
+
+  const { attribution } = await readAttribution({
+    ex,
+    exchange: position.exchange,
+    symbol: position.symbol,
+    since: position.createdAt.getTime() - 60_000,
+    ourOrderIds,
+    ourClientOids,
+    stopPlanIds,
+    exitSide: position.side === "LONG" ? "sell" : "buy",
+    positionSize: position.size,
+    contractSize,
+    attempts,
+  });
+  return attribution;
+}
+
+/**
+ * What the venue says this closed position really made, against what we booked. Read-only;
+ * `scripts/verify-pnl-attribution.ts` reports from it and `resettlePnl` acts on it.
+ */
+export async function auditPnl(positionId: string) {
+  const position = await loadPosition(positionId);
+  if (!position || position.status !== "CLOSED") return null;
+  const attribution = await reattribute(position, 1);
+  return {
+    positionId,
+    userBotId: position.userBotId,
+    symbol: position.symbol,
+    side: position.side,
+    size: position.size,
+    closedAt: position.closedAt,
+    closedReason: position.closedReason,
+    pnlPending: position.pnlPending,
+    stored: position.realizedPnl,
+    attributed: attribution?.complete ? attribution.pnl : null,
+    venue: attribution?.venuePnl ?? null,
+    complete: attribution?.complete === true,
+    openedAmount: attribution?.openedAmount ?? 0,
+    closedAmount: attribution?.closedAmount ?? 0,
+    fills: attribution?.fills ?? 0,
+  };
+}
+
+export async function resettlePnl(positionId: string): Promise<{ settled: boolean; from: number; to: number } | null> {
+  const position = await loadPosition(positionId);
+  if (!position || position.status !== "CLOSED" || !position.pnlPending) return null;
+
+  // One read per pass: the cron IS the retry, once a minute, and a tight loop here would only
+  // hammer the venue on a position whose missing fill may never arrive.
+  const attribution = await reattribute(position, 1);
+
+  if (!attribution?.complete) {
+    // Loud once it is no longer just publication lag. A fill that never arrives means part of
+    // this position was closed by something we did not place — a liquidation, or the member
+    // by hand — and no arithmetic here can attribute it. Better visibly unsettled than
+    // silently wrong.
+    if (Date.now() - (position.closedAt?.getTime() ?? Date.now()) > PNL_STALE_AFTER_MS) {
+      await logExec({
+        level: "error",
+        event: "pnl.settlementStalled",
+        positionId,
+        userBotId: position.userBotId,
+        detail: {
+          note: "still cannot account for every fill of this position; its realized PnL is provisional",
+          booked: position.realizedPnl,
+          openedAmount: attribution?.openedAmount ?? null,
+          closedAmount: attribution?.closedAmount ?? null,
+          positionSize: position.size,
+          closedAt: position.closedAt,
+        },
+      });
+    }
+    return { settled: false, from: position.realizedPnl, to: position.realizedPnl };
+  }
+
+  const from = position.realizedPnl;
+  const to = attribution.pnl;
+  // CLAIM, then apply. The correction is an increment on a member's balance, so two passes
+  // that both decided to settle the same position would apply it twice. Clearing the flag is
+  // the claim: whoever clears it owns the increment, and the loser writes nothing at all.
+  const applied = await prisma.$transaction(async (tx) => {
+    const claimed = await tx.position.updateMany({
+      where: { id: position.id, pnlPending: true },
+      data: { realizedPnl: to, pnlPending: false },
+    });
+    if (claimed.count === 0) return false;
+    await tx.userBot.update({
+      where: { id: position.userBotId },
+      data: { realizedBalance: { increment: to - from } },
+    });
+    return true;
+  });
+  if (!applied) return { settled: false, from, to: from };
+  await logExec({
+    level: "info",
+    event: "pnl.settled",
+    positionId,
+    userBotId: position.userBotId,
+    detail: { note: "the venue published the remaining fills; provisional figure corrected", from, to, delta: to - from, fills: attribution.fills },
+  });
+
+  return { settled: true, from, to };
 }
 
 /** Every open position for a bot, across all the members running it. */

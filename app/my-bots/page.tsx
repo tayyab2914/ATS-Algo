@@ -52,7 +52,7 @@ async function MyBotsContent({ userId }: { userId: string }) {
         bot: { select: { id: true, name: true, exchanges: true, riskClass: true, winRate: true, d360: true, config: true } },
         // Both OPEN (to show the live position on the row) and CLOSED (for realized
         // KPIs). At most one is OPEN — the engine's positionAlreadyOpen guard.
-        positions: { select: { status: true, realizedPnl: true, tpRungsFilled: true, beMoved: true, side: true } },
+        positions: { select: { status: true, realizedPnl: true, unrealizedPnl: true, tpRungsFilled: true, beMoved: true, side: true } },
       },
     }),
     // Exchanges the member has a usable (encrypted) key for — drives activation readiness.
@@ -101,7 +101,14 @@ async function MyBotsContent({ userId }: { userId: string }) {
       // realized total the reconcile job has booked — so the row shows real state.
       realizedBalance: ub.realizedBalance,
       rungCount,
-      open: openPos ? { side: openPos.side, tpRungsFilled: openPos.tpRungsFilled, beMoved: openPos.beMoved } : null,
+      open: openPos
+        ? {
+            side: openPos.side,
+            tpRungsFilled: openPos.tpRungsFilled,
+            beMoved: openPos.beMoved,
+            unrealizedPnl: openPos.unrealizedPnl,
+          }
+        : null,
     };
   });
 

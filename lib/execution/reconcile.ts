@@ -5,7 +5,7 @@ import { getDecryptedConnection } from "@/lib/exchanges/connection";
 import { tickerFor } from "@/lib/ticker-map";
 import { exchangeClient, livePosition, refreshMarketCache, type TradeCreds } from "./client";
 import { errorDetail, logExec } from "./log";
-import { syncPosition } from "./manage";
+import { resettlePnl, syncPosition } from "./manage";
 import { resolveSymbol } from "./symbol";
 
 /**
@@ -91,6 +91,58 @@ export async function reconcileOpenPositions(limit = DEFAULT_LIMIT): Promise<Rec
 
   if (result.closed || result.stopsMoved || result.errors) {
     await logExec({ level: "info", event: "reconcile.pass", detail: { ...result } });
+  }
+  return result;
+}
+
+export type PendingPnlResult = {
+  /** Positions whose PnL was still provisional at the start of the pass. */
+  pending: number;
+  /** Of those, how many the venue had caught up on and we could finish. */
+  settled: number;
+  /** Net correction applied to members' balances this pass, in quote currency. */
+  corrected: number;
+};
+
+/**
+ * Finish the closes whose fills the venue had not published when they settled.
+ *
+ * A fill is visible a beat after it executes, and settle runs seconds after sending the
+ * close, so the closing leg is routinely missing at that moment. The position must close
+ * regardless — a reversal refuses to open on top of a row still marked OPEN — so the number
+ * is booked provisionally and flagged, and this pass corrects it once the venue catches up.
+ * That is normally the very next minute.
+ *
+ * Costs one `fetchMyTrades` per flagged position, and on a healthy fleet there are none, so
+ * it rides on the per-minute pass rather than the hourly one: a member should not see a
+ * provisional figure for an hour.
+ *
+ * Bounded to a week. A position still flagged after that is not waiting on the venue — part
+ * of it was closed by something we never placed — and re-reading it every minute forever
+ * would buy nothing. `resettlePnl` has already logged that case at error level.
+ */
+export async function settlePendingPnl(limit = DEFAULT_LIMIT): Promise<PendingPnlResult> {
+  const stale = new Date(Date.now() - 7 * 86_400_000);
+  const positions = await prisma.position.findMany({
+    where: { status: "CLOSED", pnlPending: true, closedAt: { gte: stale } },
+    orderBy: { closedAt: "asc" },
+    take: limit,
+    select: { id: true },
+  });
+
+  const result: PendingPnlResult = { pending: positions.length, settled: 0, corrected: 0 };
+  if (positions.length === 0) return result;
+
+  const outcomes = await inChunks(positions, CHUNK, (p) => resettlePnl(p.id));
+  for (const outcome of outcomes) {
+    if (outcome.status === "rejected") {
+      await logExec({ level: "warn", event: "pnl.resettleFailed", detail: errorDetail(outcome.reason) });
+      continue;
+    }
+    if (outcome.value?.settled) {
+      result.settled++;
+      result.corrected += outcome.value.to - outcome.value.from;
+    }
   }
   return result;
 }
