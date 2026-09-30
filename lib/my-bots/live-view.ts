@@ -169,8 +169,21 @@ export function describeEvent(event: string, detail: Record<string, unknown> | n
       return `Exchange not prepared — ${str(d.reason) ?? "unknown"}`;
     case "reconcile.orphan":
       return "A position exists on the exchange that this bot did not open";
+    // Historical only — the engine no longer widens. Kept because the rows it wrote are
+    // still in the log, and a member reading back through their timeline should see what
+    // it said at the time rather than a bare event name.
     case "pnl.attributionIncomplete":
       return "Realized PnL widened — a closing fill came from outside this bot";
+    case "pnl.settlementDeferred":
+      return "Closed — final PnL pending, the exchange has not published every fill yet";
+    case "pnl.settled": {
+      const to = num(d.to);
+      return to === null ? "Final PnL confirmed against the exchange" : `Final PnL confirmed — ${to >= 0 ? "+" : ""}${to.toFixed(2)} USDT`;
+    }
+    case "pnl.settlementStalled":
+      return "PnL still provisional — part of this position was closed by an order this bot did not place";
+    case "pnl.venueMismatch":
+      return "PnL cross-check disagreed with the exchange — reported for review";
     case "fanout.skip.liveNotArmed":
       return "Signal skipped — live trading is not armed";
     case "fanout.skip.notEntitled":

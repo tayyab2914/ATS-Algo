@@ -32,7 +32,13 @@ export type MyBotRow = {
   /** Number of take-profit rungs in the traded profile (the ladder length). */
   rungCount: number;
   /** The live position on this deployment right now, or null when flat. */
-  open: { side: "LONG" | "SHORT"; tpRungsFilled: number; beMoved: boolean } | null;
+  open: {
+    side: "LONG" | "SHORT";
+    tpRungsFilled: number;
+    beMoved: boolean;
+    /** Live-mark snapshot from the last sync — this is the figure the exchange shows. */
+    unrealizedPnl: number | null;
+  } | null;
 };
 
 export type MyBotsKpis = {
@@ -56,6 +62,7 @@ const PROFILE_LABEL: Record<MyBotRow["riskClass"], string> = {
 
 const money = (n: number) => `$${Math.round(n).toLocaleString("en-US")}`;
 const signedPct = (n: number) => `${n >= 0 ? "+" : ""}${n.toFixed(1)}%`;
+const signed = (n: number) => `${n >= 0 ? "+" : "-"}$${Math.abs(n).toFixed(2)}`;
 
 export function MyBotsBrowser({ rows, kpis }: { rows: MyBotRow[]; kpis: MyBotsKpis }) {
   const [tab, setTab] = useState<"active" | "inactive">("active");
@@ -106,7 +113,11 @@ export function MyBotsBrowser({ rows, kpis }: { rows: MyBotRow[]; kpis: MyBotsKp
 
 /* ── Active bots table ─────────────────────────────────────────────────── */
 
-const HEADERS = ["Bot Name", "Profile", "Exchange", "Capital", "PnL", "TP Levels", "Break-Even", "Status", "Action"];
+// "Realized P/L", spelled out: it is the lifetime total of CLOSED trades, and it sits one
+// column from a Status that says "In position". Labelled "PnL" it read as the open trade's
+// figure, and a member comparing it against the number on their exchange saw two unrelated
+// things disagree. The open trade's own figure now has its own line in the cell.
+const HEADERS = ["Bot Name", "Profile", "Exchange", "Capital", "Realized P/L", "TP Levels", "Break-Even", "Status", "Action"];
 
 function ActiveBots({ rows }: { rows: MyBotRow[] }) {
   return (
@@ -149,15 +160,23 @@ function ActiveBots({ rows }: { rows: MyBotRow[] }) {
                     </span>
                   </td>
                   <td className="px-4 py-4 text-center text-sm font-medium text-white">{money(r.allocatedCapital)}</td>
-                  {/* Realized PnL booked so far (unrealized on an open position needs a
-                      live price — shown on the detail page, not summarised here). */}
-                  <td
-                    className={cn(
-                      "px-4 py-4 text-center text-sm font-semibold",
-                      r.realizedBalance > 0 ? "text-success" : r.realizedBalance < 0 ? "text-[#D2031E]" : "text-muted",
+                  {/* Closed trades on top, the open one underneath — the two numbers a member
+                      would otherwise try to read out of one. The lower line is the live-mark
+                      snapshot, which is what their exchange screen shows. */}
+                  <td className="px-4 py-4 text-center text-sm">
+                    <span
+                      className={cn(
+                        "font-semibold",
+                        r.realizedBalance > 0 ? "text-success" : r.realizedBalance < 0 ? "text-[#D2031E]" : "text-muted",
+                      )}
+                    >
+                      {r.realizedBalance === 0 ? "—" : signed(r.realizedBalance)}
+                    </span>
+                    {r.open && (
+                      <span className="mt-0.5 block text-xs text-muted">
+                        open {r.open.unrealizedPnl == null ? "—" : signed(r.open.unrealizedPnl)}
+                      </span>
                     )}
-                  >
-                    {r.realizedBalance === 0 ? "—" : `${r.realizedBalance >= 0 ? "+" : "-"}$${Math.abs(r.realizedBalance).toFixed(2)}`}
                   </td>
                   <td className="px-4 py-4 text-center text-sm text-muted">
                     {r.open ? `${r.open.tpRungsFilled}/${r.rungCount}` : "—"}

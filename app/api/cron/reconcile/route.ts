@@ -1,7 +1,7 @@
 import type { NextRequest } from "next/server";
 import { authorizeCron } from "@/lib/execution/cron";
 import { errorDetail, logExec } from "@/lib/execution/log";
-import { reconcileOpenPositions, refreshCachedMarkets, scanForOrphans } from "@/lib/execution/reconcile";
+import { reconcileOpenPositions, refreshCachedMarkets, scanForOrphans, settlePendingPnl } from "@/lib/execution/reconcile";
 
 /**
  * The reconcile pass.
@@ -33,12 +33,17 @@ export async function GET(request: NextRequest) {
   try {
     const reconciled = await reconcileOpenPositions();
 
+    // Cheap and urgent: a position that closed before the venue published its last fill
+    // holds a provisional PnL, and a member should see the real one within the minute, not
+    // the hour. Usually reads nothing at all.
+    const pnl = await settlePendingPnl();
+
     // Expensive: one `fetchPositions` per idle deployment, plus a full loadMarkets
     // per venue. Never on the per-minute pass.
     const orphans = deep ? await scanForOrphans() : null;
     const markets = deep ? await refreshCachedMarkets() : null;
 
-    return Response.json({ ok: true, deep, ms: Date.now() - started, ...reconciled, orphans, markets });
+    return Response.json({ ok: true, deep, ms: Date.now() - started, ...reconciled, pnl, orphans, markets });
   } catch (error) {
     await logExec({ level: "error", event: "cron.reconcile.failed", detail: errorDetail(error) });
     // 5xx so the scheduler's own retry sees it as a failure worth repeating.
