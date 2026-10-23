@@ -34,10 +34,21 @@ export type OpenPositionView = {
 };
 
 export type PerformanceView = {
+  /** SETTLED trades only. A provisional figure is not a result and must never be averaged. */
   trades: number;
   wins: number;
   winRate: number;
   realizedPnl: number;
+  /**
+   * Closed trades whose PnL the engine has not finished confirming against the venue.
+   *
+   * Counted and shown, never folded in. The engine already flags these (`position.pnlPending`),
+   * but nothing on a member's page read the flag — so a placeholder zero was rendered as a
+   * result, in green, and dragged win rate, profit factor and the equity curve down with it. A
+   * member whose four real trades were -$45.64, -$4.38, +$12.93 and +$30.86 was shown four
+   * "+$0.00" rows, a 0% win rate and a flat curve.
+   */
+  pendingTrades: number;
   avgTrade: number;
   /** Deepest peak-to-trough of cumulative realized PnL, in quote currency. */
   maxDrawdown: number;
@@ -61,6 +72,8 @@ export type ClosedTradeView = {
   side: "LONG" | "SHORT";
   entryPrice: number;
   realizedPnl: number;
+  /** True while the engine is still confirming this figure — show it as pending, not as money. */
+  pnlPending: boolean;
   /** Position.closedReason — SL | TP_FULL | EXIT | REVERSAL | RECONCILE. */
   reason: string;
   rungsFilled: number;
@@ -98,7 +111,7 @@ const monthKey = (d: Date) => `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 
 const monthLabel = (d: Date) => `${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
 
 const EMPTY_PERFORMANCE: PerformanceView = {
-  trades: 0, wins: 0, winRate: 0, realizedPnl: 0, avgTrade: 0, maxDrawdown: 0, avgDurationMin: 0, equity: [],
+  trades: 0, wins: 0, winRate: 0, realizedPnl: 0, pendingTrades: 0, avgTrade: 0, maxDrawdown: 0, avgDurationMin: 0, equity: [],
 };
 
 /** "3 min ago", "2 h ago", "5 d ago". */
@@ -180,8 +193,13 @@ export function describeEvent(event: string, detail: Record<string, unknown> | n
       const to = num(d.to);
       return to === null ? "Final PnL confirmed against the exchange" : `Final PnL confirmed — ${to >= 0 ? "+" : ""}${to.toFixed(2)} USDT`;
     }
+    // NOT "closed by an order this bot did not place". That event fires whenever the fill set
+    // will not balance, for ANY reason — and the reason it fired most was a venue read coming
+    // back empty, on trades this bot had opened and closed entirely by itself. Telling a member
+    // their account had been touched by something else was simply untrue. State the fact (the
+    // figure is unconfirmed) and leave the cause to the operator, who has the detail.
     case "pnl.settlementStalled":
-      return "PnL still provisional — part of this position was closed by an order this bot did not place";
+      return "Final PnL still unconfirmed — the exchange's fills for this trade do not add up yet";
     case "pnl.venueMismatch":
       return "PnL cross-check disagreed with the exchange — reported for review";
     case "fanout.skip.liveNotArmed":
@@ -227,7 +245,7 @@ export async function loadLiveView(userBotId: string, config: BotConfig, riskCla
       where: { userBotId, status: "CLOSED" },
       orderBy: { closedAt: "asc" },
       select: {
-        id: true, symbol: true, side: true, entryPrice: true, realizedPnl: true,
+        id: true, symbol: true, side: true, entryPrice: true, realizedPnl: true, pnlPending: true,
         closedReason: true, tpRungsFilled: true, sandbox: true, createdAt: true, closedAt: true,
       },
     }),
@@ -263,21 +281,25 @@ export async function loadLiveView(userBotId: string, config: BotConfig, riskCla
       }
     : null;
 
-  let performance = EMPTY_PERFORMANCE;
-  if (closed.length > 0) {
+  // SETTLED only. A provisional figure is a placeholder the engine has not confirmed, and
+  // averaging it in is how four real trades read as a 0% win rate on a flat equity curve.
+  const settled = closed.filter((position) => !position.pnlPending);
+  let performance: PerformanceView = { ...EMPTY_PERFORMANCE, pendingTrades: closed.length - settled.length };
+  if (settled.length > 0) {
     let running = 0;
-    const equity = closed.map((position) => (running += position.realizedPnl));
-    const wins = closed.filter((position) => position.realizedPnl > 0).length;
-    const durations = closed
+    const equity = settled.map((position) => (running += position.realizedPnl));
+    const wins = settled.filter((position) => position.realizedPnl > 0).length;
+    const durations = settled
       .filter((position) => position.closedAt)
       .map((position) => (position.closedAt!.getTime() - position.createdAt.getTime()) / 60_000);
 
     performance = {
-      trades: closed.length,
+      trades: settled.length,
       wins,
-      winRate: (wins / closed.length) * 100,
+      winRate: (wins / settled.length) * 100,
       realizedPnl: running,
-      avgTrade: running / closed.length,
+      pendingTrades: closed.length - settled.length,
+      avgTrade: running / settled.length,
       maxDrawdown: maxDrawdown(equity),
       avgDurationMin: durations.length ? durations.reduce((sum, d) => sum + d, 0) / durations.length : 0,
       equity,
@@ -295,6 +317,7 @@ export async function loadLiveView(userBotId: string, config: BotConfig, riskCla
       side: position.side,
       entryPrice: position.entryPrice,
       realizedPnl: position.realizedPnl,
+      pnlPending: position.pnlPending,
       reason: position.closedReason ?? "RECONCILE",
       rungsFilled: position.tpRungsFilled,
       rungsTotal,
@@ -303,9 +326,10 @@ export async function loadLiveView(userBotId: string, config: BotConfig, riskCla
       closedAt: position.closedAt,
     }));
 
-  // Realized PnL by calendar month (UTC), from the full closed set — newest month first.
+  // Realized PnL by calendar month (UTC), SETTLED trades only — newest month first. Same
+  // reasoning as `performance`: an unconfirmed figure is not a month's result.
   const byMonth = new Map<string, { label: string; pnls: number[] }>();
-  for (const position of closed) {
+  for (const position of settled) {
     const when = position.closedAt ?? position.createdAt;
     const key = monthKey(when);
     const bucket = byMonth.get(key) ?? { label: monthLabel(when), pnls: [] };

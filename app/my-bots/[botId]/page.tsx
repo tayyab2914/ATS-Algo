@@ -252,6 +252,18 @@ export default async function MyBotDetailPage({ params }: PageProps<"/my-bots/[b
       {/* Performance Summary */}
       <section className="flex flex-col gap-4">
         <h2 className="text-base font-semibold text-white">Performance Summary</h2>
+        {/*
+          Say what is MISSING from these figures. They count settled trades only, so without
+          this line a member with unconfirmed trades reads a total that silently omits them —
+          which is the same lie as showing those trades at +$0.00, just better hidden.
+        */}
+        {performance.pendingTrades > 0 && (
+          <p className="rounded-2xl border border-[#F5A524]/30 bg-[#F5A524]/5 px-4 py-3 text-sm text-[#F5A524]">
+            {performance.pendingTrades === 1 ? "1 closed trade is" : `${performance.pendingTrades} closed trades are`} still
+            being confirmed against your exchange. The figures below leave {performance.pendingTrades === 1 ? "it" : "them"} out
+            until the exchange accounts for every fill.
+          </p>
+        )}
         {performance.trades === 0 ? (
           <div className="rounded-2xl border border-line bg-surface p-6 text-sm text-muted">
             No closed trades yet. These fill in from real fills once this bot completes its first trade.

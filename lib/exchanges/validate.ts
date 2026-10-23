@@ -1,6 +1,6 @@
 import type { Exchange } from "ccxt";
 import { ccxtIdFor, exchangeMeta, exchangeRequiresPassphrase } from "@/lib/bot-exchanges";
-import { adapterFor, clockOffsetFor } from "@/lib/execution/client";
+import { adapterFor, clockOffsetFor, hardenJsonParsing } from "@/lib/execution/client";
 
 export type ValidateInput = { apiKey: string; apiSecret: string; passphrase?: string };
 
@@ -85,6 +85,9 @@ export async function validateExchangeKey(
       enableRateLimit: true,
       options: { ...adapter.options, ...(adapter.syncClock ? { timeDifference } : {}) },
     });
+    // Validation reads the same endpoints the engine does, so it needs the same repair — a key
+    // whose account carries a tax breakdown must not read as "no permissions" either.
+    hardenJsonParsing(ex);
     // NOT `setSandboxMode` — that is the executor's mistake to avoid too. On Bybit it selects
     // api-TESTNET, a separate exchange with its own registration and its own keys, while the
     // demo engine is api-demo. A member's Bybit demo key would fail BOTH attempts and be

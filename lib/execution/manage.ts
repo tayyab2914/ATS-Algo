@@ -260,6 +260,29 @@ async function readAttribution(args: {
     }
   }
 
+  // The venue's OWN realized figure, where it is booked per closed POSITION rather than on the
+  // fill (Bybit). Without it `settle` falls through to `?? 0` on that venue, and every deferred
+  // close books a confident +$0.00.
+  //
+  // ONLY for a set we could not balance, and deliberately NOT as a cross-check on one we could.
+  // A per-position figure is not the same measurement as ours: Bybit computes it off the
+  // POSITION's running average entry and its own fee accounting, so on live fills it came in
+  // 4% and 11% from our own arithmetic on two of four trades — both correct, neither wrong.
+  // Feeding that into `pnlDisagrees`, whose 0.5% tolerance is set to catch a 1000x units fault,
+  // would warn on ordinary trades and bury the signal it exists for. A per-FILL figure
+  // (`venueRealized`) IS like-for-like and still cross-checks everywhere it is reported.
+  //
+  // Read once, after the retries, and only when it will actually be used — so the happy path
+  // costs no extra round-trip.
+  if (attribution && !attribution.complete && attribution.venuePnl === null) {
+    try {
+      const venuePnl = await adapterFor(exchange).venueRealizedFor?.(ex, symbol, since, ourOrderIds);
+      if (venuePnl !== null && venuePnl !== undefined) attribution = { ...attribution, venuePnl };
+    } catch {
+      /* the venue would not answer; venuePnl stays null and the caller defers exactly as before */
+    }
+  }
+
   return { attribution, stoppedOut, error };
 }
 
@@ -694,11 +717,15 @@ export async function resettlePnl(positionId: string): Promise<{ settled: boolea
   const attribution = await reattribute(position, 1);
 
   if (!attribution?.complete) {
-    // Loud once it is no longer just publication lag. A fill that never arrives means part of
-    // this position was closed by something we did not place — a liquidation, or the member
-    // by hand — and no arithmetic here can attribute it. Better visibly unsettled than
-    // silently wrong.
-    if (Date.now() - (position.closedAt?.getTime() ?? Date.now()) > PNL_STALE_AFTER_MS) {
+    // Loud ONCE it is no longer just publication lag, and once is the operative word: this pass
+    // runs every minute for the seven days the position stays in the window, so logging on
+    // every attempt wrote a red line a minute, per position, forever. Three stuck trades
+    // produced 23,149 rows and buried a member's whole activity timeline in an error they
+    // could do nothing about. The condition is unchanged — only the repetition is gone.
+    const stale = Date.now() - (position.closedAt?.getTime() ?? Date.now()) > PNL_STALE_AFTER_MS;
+    const alreadyReported =
+      stale && (await prisma.executionLog.findFirst({ where: { positionId, event: "pnl.settlementStalled" }, select: { id: true } })) !== null;
+    if (stale && !alreadyReported) {
       await logExec({
         level: "error",
         event: "pnl.settlementStalled",

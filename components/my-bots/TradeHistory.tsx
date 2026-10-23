@@ -55,14 +55,25 @@ export function TradeHistory({ trades }: { trades: ClosedTradeView[] }) {
                     {trade.sandbox ? <span className="ml-1.5 text-[10px] uppercase text-muted">paper</span> : null}
                   </td>
                   <td className="px-4 py-3 text-right text-muted">{trade.entryPrice.toLocaleString("en-US")}</td>
-                  <td
-                    className={cn(
-                      "px-4 py-3 text-right font-semibold",
-                      trade.realizedPnl >= 0 ? "text-success" : "text-[#D2031E]",
-                    )}
-                  >
-                    {signed(trade.realizedPnl)}
-                  </td>
+                  {/*
+                    A PENDING figure is a placeholder, not money. Rendering it as "+$0.00" in
+                    green told a member their trade broke even when it had made $30.86 — so the
+                    pending row says so instead, and the number appears once it is confirmed.
+                  */}
+                  {trade.pnlPending ? (
+                    <td className="px-4 py-3 text-right font-semibold text-[#F5A524]" title="Waiting on the exchange to confirm every fill of this trade.">
+                      Pending
+                    </td>
+                  ) : (
+                    <td
+                      className={cn(
+                        "px-4 py-3 text-right font-semibold",
+                        trade.realizedPnl >= 0 ? "text-success" : "text-[#D2031E]",
+                      )}
+                    >
+                      {signed(trade.realizedPnl)}
+                    </td>
+                  )}
                   <td className="px-4 py-3 text-center">
                     <span className={cn("rounded-full px-2.5 py-1 text-xs font-semibold", reason.cls)}>{reason.label}</span>
                   </td>

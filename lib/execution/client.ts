@@ -42,6 +42,17 @@ type AccountInfoExchange = Exchange & {
   privateGetV5AccountInfo(params: Record<string, unknown>): Promise<unknown>;
 };
 
+/**
+ * ccxt implicit method for GET /v5/position/closed-pnl — where Bybit books realized PnL.
+ *
+ * Bybit is the one wired venue that reports realized profit PER CLOSED POSITION rather than on
+ * the fill, so `venueRealized` finds nothing on a Bybit execution and this is the only place
+ * the venue's own figure can be read.
+ */
+type ClosedPnlExchange = Exchange & {
+  privateGetV5PositionClosedPnl(params: Record<string, unknown>): Promise<unknown>;
+};
+
 /** Bybit's account-level margin modes, mapped to the vocabulary the engine speaks. */
 const BYBIT_MARGIN_MODES: Record<string, string> = {
   ISOLATED_MARGIN: "isolated",
@@ -225,6 +236,23 @@ type VenueAdapter = {
    */
   readFill(ex: Exchange, symbol: string, orderId: string): Promise<FillRead | null>;
   /**
+   * The venue's OWN realized PnL for a set of orders we placed, NET of fees.
+   *
+   * Only defined on a venue that books realized profit per CLOSED POSITION instead of on the
+   * fill. Everywhere else each fill carries its own figure — Bitget `profit`, BingX
+   * `realizedPnl`, BloFin `pnl` — and `venueRealized` in manage.ts reads it straight off the
+   * trade, so there is nothing for this to do.
+   *
+   * Bybit is the exception, and the gap was not cosmetic: with no per-fill figure the
+   * provisional PnL of an unbalanced set fell back to `?? 0`, so every deferred close on that
+   * venue booked a confident +$0.00. Matched on order ids WE issued, exactly like the fill
+   * attribution it stands in for — a venue row we did not place is never counted.
+   *
+   * Returns null when the venue reports nothing for these orders, which must degrade to "no
+   * figure", never to zero.
+   */
+  venueRealizedFor?(ex: Exchange, symbol: string, since: number, ourOrderIds: Set<string>): Promise<number | null>;
+  /**
    * How ISOLATED margin is achieved on this venue — and whether we may set it at all.
    *
    * `"set"`   — the mode is per-symbol, so applying it touches only the instrument this bot
@@ -307,6 +335,38 @@ const ADAPTERS: Record<string, VenueAdapter> = {
     batchMax: 10,
     fetchOrderParams: { acknowledged: true },
     readFill: fillViaFetchOrder({ acknowledged: true }),
+    // Bybit's executions carry no realized-PnL field at all — proven on the live account: a
+    // /v5/execution/list row has execFee, execValue and closedSize, and nothing else. The
+    // figure lives here, one row per closing order, already net of fees (18.0359 against a
+    // 19.1352 gross and 1.1172 of fees on the trade this was read from).
+    async venueRealizedFor(ex, symbol, since, ourOrderIds) {
+      // The VENUE's id, never the unified symbol — this is a raw endpoint, and a client built
+      // for the order path knows exactly one market.
+      const marketId = ex.markets?.[symbol]?.id;
+      if (!marketId) return null;
+      const response = (await (ex as ClosedPnlExchange).privateGetV5PositionClosedPnl({
+        category: "linear",
+        symbol: marketId,
+        startTime: since,
+        limit: 100,
+      })) as { result?: { list?: { orderId?: string; closedPnl?: string }[] } } | undefined;
+
+      const rows = response?.result?.list;
+      // A STRING here means ccxt could not parse the body — see `hardenJsonParsing`. Null, not
+      // zero: the whole point of this method is to stop a read failure reading as "no profit".
+      if (!Array.isArray(rows)) return null;
+
+      let sum = 0;
+      let matched = 0;
+      for (const row of rows) {
+        if (!row.orderId || !ourOrderIds.has(row.orderId)) continue;
+        const value = Number(row.closedPnl);
+        if (!Number.isFinite(value)) continue;
+        sum += value;
+        matched++;
+      }
+      return matched > 0 ? sum : null;
+    },
     // ACCOUNT-WIDE on Bybit UTA: `setMarginMode` sends no symbol and reconfigures margin for
     // every position the member holds. We refuse to do that on their behalf — check and decline.
     marginModePolicy: "check",
@@ -471,7 +531,7 @@ async function clockSkewFor(exchange: string): Promise<number> {
       const Ctor = await venueCtor(exchange);
       // Public `fetchTime` only — no credentials, and never on the paper host: the demo engine
       // shares the venue's clock, and a public read is a public read.
-      const probe = new Ctor({ enableRateLimit: true, timeout: 10_000, options: { ...adapter.options } });
+      const probe = hardenJsonParsing(new Ctor({ enableRateLimit: true, timeout: 10_000, options: { ...adapter.options } }));
       const diffMs = await probe.loadTimeDifference();
       clockSkew.set(adapter.ccxtId, { diffMs, at: Date.now() });
       return diffMs;
@@ -782,7 +842,7 @@ function loadAllMarkets(exchange: string, sandbox: boolean): Promise<Record<stri
 
     let lastError: unknown;
     for (let attempt = 0; attempt < 2; attempt++) {
-      const ex = new Ctor({ enableRateLimit: true, timeout: 15_000, options: { ...adapter.options } });
+      const ex = hardenJsonParsing(new Ctor({ enableRateLimit: true, timeout: 15_000, options: { ...adapter.options } }));
       ex.has["fetchCurrencies"] = false;
       adapter.paperMode(ex, sandbox);
       try {
@@ -866,6 +926,46 @@ export async function publicPrice(exchange: string, symbol: string): Promise<num
  * entry order pays nothing and only a following call can wait ~50 ms — and that
  * lands on the resting take-profit batch, which is not latency-sensitive.
  */
+/**
+ * Stop ccxt's number-quoting from corrupting a response that EMBEDS JSON inside a string.
+ *
+ * ccxt rewrites every bare number in a body into a quoted string before parsing, so an 18-digit
+ * order id or a 20-decimal price never passes through a JS float. Worth keeping. But the regex
+ * it uses keys on `":` and does not care whether that quote is escaped:
+ *
+ *     /":([+.0-9eE-]+)([,}])/g  →  '":"$1"$2'
+ *
+ * Bybit attaches a TAX BREAKDOWN to every execution and order-history row for a member in a
+ * region that levies one, and it is a JSON document serialised INTO a string field:
+ *
+ *     "extraFees":"{\"AUS_GST\":{\"extraFeeRateE8\":5500,\"feeCoin\":\"USDT\"}}"
+ *
+ * The inner `\":5500,` matches. ccxt inserts UNESCAPED quotes inside an escaped string, the
+ * body stops being valid JSON, `parseJson` swallows the SyntaxError and returns undefined, and
+ * `handleRestResponse` hands back the RAW TEXT instead. Every unified method then reads
+ * `result.list` off a string, finds nothing, and returns an EMPTY ARRAY. No throw, no warning.
+ *
+ * That is not a cosmetic fault. `fetchMyTrades` reported zero fills for every trade on an
+ * Australian Bybit account, so attribution could never balance both legs, every close booked
+ * the `?? 0` provisional, and four real trades worth -$45.64, -$4.38, +$12.93 and +$30.86
+ * showed the member +$0.00 each. Confirmed against the live key: /v5/execution/list and
+ * /v5/order/history came back as strings; /v5/order/realtime, /v5/position/list and
+ * /v5/position/closed-pnl parsed normally, which is why stops and position reads kept working
+ * and only the money was wrong.
+ *
+ * The lookbehind is the whole repair. A real JSON key's closing quote is never escaped and an
+ * embedded document's always is, so this still quotes every genuine number and skips the ones
+ * that are already inside a string. Applied to every client we build, not just Bybit's: the
+ * fault is in the shared base class, and any venue may add such a field tomorrow.
+ */
+export function hardenJsonParsing<T extends Exchange>(ex: T): T {
+  ex.onJsonResponse = (body: unknown) =>
+    ex.quoteJsonNumbers && typeof body === "string"
+      ? body.replace(/(?<!\\)":([+.0-9eE-]+)([,}])/g, '":"$1"$2')
+      : body;
+  return ex;
+}
+
 export async function exchangeClient(exchange: string, creds: TradeCreds, markets: MarketInterface[]): Promise<Exchange> {
   const adapter = adapterFor(exchange);
   const Ctor = await venueCtor(exchange);
@@ -882,6 +982,7 @@ export async function exchangeClient(exchange: string, creds: TradeCreds, market
     timeout: 10_000,
     options: { ...adapter.options, ...(adapter.syncClock ? { timeDifference } : {}) },
   });
+  hardenJsonParsing(ex);
   adapter.paperMode(ex, creds.sandbox);
   ex.setMarkets(markets);
   return ex;

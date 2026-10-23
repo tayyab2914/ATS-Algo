@@ -32,7 +32,9 @@ export default async function BotSettingsPage({ params }: PageProps<"/my-bots/[b
       exchangeSource: true,
       realizedBalance: true,
       bot: { select: { id: true, name: true, riskClass: true, exchanges: true } },
-      positions: { where: { status: "CLOSED" }, select: { realizedPnl: true, closedAt: true, marginUsed: true } },
+      // Settled only — an unconfirmed `realizedPnl` is a placeholder, and ROI below divides by
+      // the margin it was supposedly earned on.
+      positions: { where: { status: "CLOSED", pnlPending: false }, select: { realizedPnl: true, closedAt: true, marginUsed: true } },
     },
   });
   if (!userBot) notFound();

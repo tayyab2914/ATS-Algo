@@ -287,14 +287,23 @@ export async function loadDashboard(
             allocatedCapital: true,
             realizedBalance: true,
             bot: { select: { id: true, name: true, riskClass: true } },
-            positions: { where: { status: "CLOSED" }, select: { realizedPnl: true, closedAt: true } },
+            // SETTLED only — see the note on the window query below.
+            positions: { where: { status: "CLOSED", pnlPending: false }, select: { realizedPnl: true, closedAt: true } },
           },
         })
       : Promise.resolve([]),
     // `Position.userId` is denormalized, so scoping costs no join.
+    //
+    // `pnlPending: false` is load-bearing, not tidiness. A position closes before the venue has
+    // published every fill, and until the engine can account for all of them its `realizedPnl`
+    // is a PLACEHOLDER. Counting placeholders here is what put a member's dashboard at
+    // "$0 P/L, 0% profitable, profit factor —" across four trades that really made -$45.64,
+    // -$4.38, +$12.93 and +$30.86: four zeros scored as four break-even losses. Excluding them
+    // means a figure can lag by a trade; including them means it can be WRONG, and a member
+    // cannot tell which. The per-bot page names the count it is leaving out.
     userId
       ? prisma.position.findMany({
-          where: { userId, status: "CLOSED", closedAt: { gte: periodFrom } },
+          where: { userId, status: "CLOSED", pnlPending: false, closedAt: { gte: periodFrom } },
           select: { realizedPnl: true, marginUsed: true },
           take: 5000,
         })

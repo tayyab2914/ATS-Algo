@@ -50,13 +50,16 @@ export async function loadPortfolio(userId: string, now: Date = new Date()): Pro
       allocatedCapital: true,
       realizedBalance: true,
       bot: { select: { id: true, name: true, ticker: true, riskClass: true } },
-      positions: { select: { status: true, realizedPnl: true, closedAt: true } },
+      positions: { select: { status: true, realizedPnl: true, closedAt: true, pnlPending: true } },
     },
     orderBy: { createdAt: "asc" },
   });
 
   const bots: PortfolioBot[] = deployments.map((deployment, index) => {
-    const closed = deployment.positions.filter((p) => p.status === "CLOSED");
+    // CLOSED *and settled*. `realizedPnl` on a pending row is a placeholder the engine has not
+    // confirmed, and a placeholder zero scores here as a losing trade — which is how a member
+    // whose trades were -45.64, -4.38, +12.93 and +30.86 read 0 wins from 4 trades.
+    const closed = deployment.positions.filter((p) => p.status === "CLOSED" && !p.pnlPending);
     const wins = closed.filter((p) => p.realizedPnl > 0).length;
     return {
       id: deployment.bot.id,
@@ -83,7 +86,10 @@ export async function loadPortfolio(userId: string, now: Date = new Date()): Pro
   const ranked = [...traded].sort((a, b) => b.realized - a.realized);
 
   const allClosed = deployments.flatMap((deployment) =>
-    deployment.positions.filter((p): p is { status: "CLOSED"; realizedPnl: number; closedAt: Date } => p.status === "CLOSED" && p.closedAt !== null),
+    deployment.positions.filter(
+      (p): p is { status: "CLOSED"; realizedPnl: number; closedAt: Date; pnlPending: boolean } =>
+        p.status === "CLOSED" && !p.pnlPending && p.closedAt !== null,
+    ),
   );
   const { labels, curve } = monthlyCurve(allClosed, 8, now);
 

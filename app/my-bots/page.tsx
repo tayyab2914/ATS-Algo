@@ -52,7 +52,7 @@ async function MyBotsContent({ userId }: { userId: string }) {
         bot: { select: { id: true, name: true, exchanges: true, riskClass: true, winRate: true, d360: true, config: true } },
         // Both OPEN (to show the live position on the row) and CLOSED (for realized
         // KPIs). At most one is OPEN — the engine's positionAlreadyOpen guard.
-        positions: { select: { status: true, realizedPnl: true, unrealizedPnl: true, tpRungsFilled: true, beMoved: true, side: true } },
+        positions: { select: { status: true, realizedPnl: true, pnlPending: true, unrealizedPnl: true, tpRungsFilled: true, beMoved: true, side: true } },
       },
     }),
     // Exchanges the member has a usable (encrypted) key for — drives activation readiness.
@@ -119,7 +119,9 @@ async function MyBotsContent({ userId }: { userId: string }) {
   // The member's own record, from trades the engine actually closed. Falling back
   // to the bots' backtested win rate is fine — but it must be labelled, never
   // passed off as this member's result.
-  const closed = userBots.flatMap((ub) => ub.positions).filter((p) => p.status === "CLOSED");
+  // Settled closes only: a pending `realizedPnl` is a placeholder, and counting it as a trade
+  // with a non-positive result scores it as a loss in the win rate below.
+  const closed = userBots.flatMap((ub) => ub.positions).filter((p) => p.status === "CLOSED" && !p.pnlPending);
   const wins = closed.filter((p) => p.realizedPnl > 0).length;
   const hasLive = closed.length > 0;
 
