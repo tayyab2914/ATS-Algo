@@ -300,6 +300,38 @@ function pnlDisagrees(attribution: Attribution): boolean {
   return Math.abs(attribution.pnl - attribution.venuePnl) > tolerance;
 }
 
+/**
+ * Cancel the take-profit rungs ONE position placed, and nothing else on the symbol — see the
+ * settle path for why a symbol-wide sweep is unsafe there.
+ *
+ * A rung is ours by the venue id we recorded, or by its deterministic client id when the venue
+ * never returned one (a batch that threw and still placed it — the same match `openPosition`'s
+ * recovery re-read uses). A failed read only loses the second kind; the recorded ids are still
+ * cancelled blind, and a rung that already filled or went just rejects the cancel.
+ */
+export async function cancelOwnLadder(
+  ex: Exchange,
+  position: { symbol: string; orders: { kind: string; state: string; exchangeOrderId: string | null; clientOrderId: string }[] },
+): Promise<void> {
+  const rungs = position.orders.filter((o) => o.kind === "TP");
+  const ids = new Set(
+    rungs
+      .filter((o) => o.exchangeOrderId && o.state !== "FILLED" && o.state !== "CANCELED")
+      .map((o) => o.exchangeOrderId!),
+  );
+  const oids = new Set(rungs.map((o) => o.clientOrderId));
+  for (const order of await ex.fetchOpenOrders(position.symbol).catch(() => [])) {
+    const raw = (order.info ?? {}) as { clientOrderID?: string; clientOid?: string; clientOrderId?: string };
+    const cid = order.clientOrderId ?? raw.clientOrderID ?? raw.clientOrderId ?? raw.clientOid;
+    if (order.id && cid && oids.has(String(cid))) ids.add(order.id);
+  }
+  for (const id of ids) {
+    await ex.cancelOrder(id, position.symbol).catch(() => {
+      /* filled, or already gone */
+    });
+  }
+}
+
 async function clientFor(position: LoadedPosition): Promise<{ ex: Exchange; creds: TradeCreds; contractSize: number } | null> {
   const connection = await getDecryptedConnection(position.userId, position.exchange);
   if (!connection) return null;
@@ -508,29 +540,27 @@ export async function syncPosition(positionId: string, opts: { flatten?: boolean
     return { positionId, rungsFilled, stopMoved, closed: false, realizedPnl: null };
   }
 
+  // Our STOP plan-order ids (the preset loss_plan + every ratchet pos_loss generation).
+  const stopPlanIds = new Set(
+    position.orders.filter((o) => o.kind === "STOP" && o.exchangeOrderId).map((o) => o.exchangeOrderId!),
+  );
+
   // The position is gone, but OUR orders are not. When a stop fires, nothing cancels the
   // remaining take-profit limits — and a reduce-only limit left resting from THIS trade
   // would close the NEXT one at this trade's prices. `closeAll` already sweeps on an exit
-  // signal; the stop-out path must sweep too. Idempotent (22001 "no order to cancel").
+  // signal; the stop-out path must clean up too. A movable stop can outlive the position the
+  // same way (on Bitget it lives in its own plan family) and would bind the next trade, and
+  // there is no reconcile backstop for orphan ORDERS (scanForOrphans keys on contracts).
+  //
+  // BY OWNERSHIP, NEVER BY SYMBOL. "Flat" was true when we read it, not now: this pass can be
+  // a reconcile that loaded the position just before a reversal flattened it, and by the time
+  // it gets here the reversal may already have opened the next position on the same symbol.
+  // A bare `cancelAllOrders` or `clearWorking` then strips THAT position — on 2026-11-02 one
+  // cleared a fresh Bybit short's stop a second after its entry attached it. So this cancels
+  // only ids this position recorded, which no later position can share.
   if (!opts.flatten) {
-    for (const params of [{}, { trigger: true }]) {
-      try {
-        await ex.cancelAllOrders(position.symbol, params);
-      } catch {
-        /* nothing of this kind was resting */
-      }
-    }
-    // A movable stop can survive the sweeps above (on Bitget it lives in its own plan family).
-    // At settle the position is already flat, so it SHOULD have died with the position — but if
-    // the position closed by some other cause (TP-full, the backstop, an under-filled close)
-    // while a ratchet stop still rested, it is orphaned and would bind the next same-symbol
-    // trade. There is no reconcile backstop for orphan ORDERS (scanForOrphans keys on
-    // contracts), so clear it explicitly.
-    //
-    // Safe here even on a venue where this also removes the backstop: `contracts === 0` was
-    // just confirmed above, so there is no position left to leave unprotected. That is NOT true
-    // in `closeAll`, which is why the ordering there is venue-dependent.
-    await strategy.clearWorking(ex, position.symbol).catch(() => {});
+    await cancelOwnLadder(ex, position);
+    await strategy.clearOwned(ex, position.symbol, stopPlanIds).catch(() => {});
   }
 
   const ourOrderIds = new Set(
@@ -542,10 +572,6 @@ export async function syncPosition(positionId: string, opts: { flatten?: boolean
     ...position.orders.map((o) => o.clientOrderId),
     clientOrderId(position.entrySignalId, position.userBotId, "CLOSE"),
   ]);
-  // Our STOP plan-order ids (the preset loss_plan + every ratchet pos_loss generation).
-  const stopPlanIds = new Set(
-    position.orders.filter((o) => o.kind === "STOP" && o.exchangeOrderId).map((o) => o.exchangeOrderId!),
-  );
   const exitSide = position.side === "LONG" ? "sell" : "buy";
 
   const { attribution, stoppedOut, error: fillsError } = await readAttribution({

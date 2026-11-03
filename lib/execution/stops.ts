@@ -104,8 +104,21 @@ export type StopStrategy = {
   findWorking(ex: Exchange, symbol: string): Promise<RestingStop[]>;
   /** Move the working stop to a new price. Owns the cancel-vs-overwrite decision. */
   moveWorking(ex: Exchange, args: MoveWorkingArgs): Promise<MoveWorkingResult>;
-  /** Remove every movable stop. Called at flatten and settle, never mid-trade. */
+  /** Remove every movable stop. Called at flatten, never mid-trade — and never at settle. */
   clearWorking(ex: Exchange, symbol: string): Promise<void>;
+  /**
+   * Remove only the stops whose ids are in `owned` — the ids ONE position recorded — backstop
+   * included. The settle path's cleanup, and the reason it is not `clearWorking`.
+   *
+   * At settle the position is flat, but the ACCOUNT may already hold the next one on the same
+   * symbol: a reversal flattens and re-enters within seconds, and a reconcile pass that read the
+   * old position mid-flip settles it concurrently. Anything symbol-wide then lands on the NEW
+   * position. It did: on 2026-11-02 a settle sweep cleared a fresh Bybit short's stop a second
+   * after its entry attached it, and the position ran 4.6 hours naked until a ratchet re-armed it.
+   * Ids are per position on every venue (30 live Bybit positions, 30 distinct stop ids), so an
+   * ownership filter cannot touch a stop it did not place, however the two passes interleave.
+   */
+  clearOwned(ex: Exchange, symbol: string, owned: ReadonlySet<string>): Promise<void>;
 };
 
 // ── shared helpers ───────────────────────────────────────────────────────────
@@ -211,6 +224,14 @@ const bitget: StopStrategy = {
       await ex.cancelOrder(stop.id, symbol, { planType: "pos_loss", trigger: true }).catch(() => {});
     }
   },
+
+  async clearOwned(ex, symbol, owned) {
+    // pos_loss generations only. Our loss_plan is uncancellable and died with the position.
+    for (const stop of await bitget.findWorking(ex, symbol)) {
+      if (!owned.has(stop.id)) continue;
+      await ex.cancelOrder(stop.id, symbol, { planType: "pos_loss", trigger: true }).catch(() => {});
+    }
+  },
 };
 
 // ── Bybit ────────────────────────────────────────────────────────────────────
@@ -305,6 +326,15 @@ const bybit: StopStrategy = {
       .catch(() => {
         /* nothing set, or the position is already gone */
       });
+  },
+
+  async clearOwned(ex, symbol, owned) {
+    // The raw clear above is SYMBOL-WIDE: it cannot tell our stop from the next position's, and
+    // that is exactly what stripped a live position on 2026-11-02. So it runs only when the one
+    // slot still holds a stop THIS position recorded. A stop the next entry attached carries a
+    // fresh id and is left alone.
+    const [resting] = await bybit.findWorking(ex, symbol);
+    if (resting && owned.has(resting.id)) await bybit.clearWorking(ex, symbol);
   },
 };
 
@@ -415,6 +445,16 @@ const blofin: StopStrategy = {
     // Ratchet generations only. The backstop is deliberately left alive — it dies with the
     // position, and on this venue nothing else protects it.
     for (const stop of await blofin.findWorking(ex, symbol)) {
+      await ex.cancelOrder(stop.id, symbol, { tpsl: true }).catch(() => {});
+    }
+  },
+
+  async clearOwned(ex, symbol, owned) {
+    // The WHOLE family, oldest included: age says "backstop" only while one position is live.
+    // Once a reversal has re-entered, the oldest TPSL may be ours and the newest the next
+    // position's backstop — which `findWorking` would hand straight to a cancel. Ids cannot lie.
+    for (const stop of await tpslByAge(ex, symbol)) {
+      if (!owned.has(stop.id)) continue;
       await ex.cancelOrder(stop.id, symbol, { tpsl: true }).catch(() => {});
     }
   },
@@ -556,6 +596,15 @@ const bingx: StopStrategy = {
   async clearWorking(ex, symbol) {
     // Ratchet generations only — the oldest is the backstop and dies with the position anyway.
     for (const stop of await bingx.findWorking(ex, symbol)) {
+      await ex.cancelOrder(stop.id, symbol).catch(() => {});
+    }
+  },
+
+  async clearOwned(ex, symbol, owned) {
+    // Stops are reaped with the position here, so this is normally a no-op. The whole family,
+    // oldest included, for the same reason as BloFin: after a re-entry, age no longer means ours.
+    for (const stop of await bingxStopsByAge(ex, symbol)) {
+      if (!owned.has(stop.id)) continue;
       await ex.cancelOrder(stop.id, symbol).catch(() => {});
     }
   },
