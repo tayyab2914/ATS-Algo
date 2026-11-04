@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { useState, type ReactNode } from "react";
 import { ExchangeBadge } from "@/components/admin/ExchangeBadge";
 import { cn } from "@/lib/cn";
+import { tradeMargin } from "@/lib/execution/pricing";
+import { displayMinimum } from "@/lib/my-bots/readiness";
 
 export type BotSettingsValues = {
   allocationType: "FIXED" | "PERCENTAGE";
@@ -29,6 +31,8 @@ export function BotSettingsForm({
   exchanges,
   chosen,
   connectedByExchange,
+  minCapitalPerTrade,
+  rungCount,
   children,
 }: {
   botId: string;
@@ -39,6 +43,17 @@ export function BotSettingsForm({
   chosen: string | null;
   /** Connection status per allowed exchange — lets switching be instant client-side. */
   connectedByExchange: Record<string, boolean>;
+  /**
+   * Smallest per-trade collateral that can actually open this bot on `chosen`, in USDT, or
+   * null when it could not be established. Priced server-side at render — it moves with the
+   * instrument, so it is a hint and a gate, never something stored.
+   *
+   * Deliberately NOT recomputed when the exchange chips are clicked: the figure is per-venue,
+   * and a stale one is worse than none. Switching venue reloads the page's data anyway.
+   */
+  minCapitalPerTrade: number | null;
+  /** Take-profit rungs in the traded profile — the "why" behind the minimum. */
+  rungCount: number;
   children: ReactNode;
 }) {
   const router = useRouter();
@@ -102,6 +117,18 @@ export function BotSettingsForm({
   }
 
   const isPercent = allocationType === "PERCENTAGE";
+
+  // What the CURRENTLY TYPED settings would actually commit to one trade — a percentage bot
+  // puts a slice of the pool on the table, not the number in the field. Compounding is left
+  // out so the warning answers "can this bot place its first trade", which is the question.
+  const typedMargin = tradeMargin({
+    allocationType,
+    capitalPerTrade: Math.max(0, Number(capital) || 0),
+    allocatedCapital: isPercent ? Math.max(0, Number(allocated) || 0) : Math.max(0, Number(capital) || 0),
+    realizedBalance: 0,
+    compounding: false,
+  });
+  const belowMinimum = minCapitalPerTrade !== null && typedMargin > 0 && typedMargin < minCapitalPerTrade;
 
   return (
     <div className="flex flex-col gap-5">
@@ -170,6 +197,19 @@ export function BotSettingsForm({
                   className="h-11 w-full rounded-2xl border border-line bg-background pl-8 pr-4 text-sm text-white placeholder:text-muted focus:border-accent focus:outline-none"
                 />
               </div>
+              {/* The floor, before a signal fires rather than days after one did. Both the
+                  venue's minimum order size and the per-rung minimum are folded into it. */}
+              {minCapitalPerTrade !== null && (
+                <span className={cn("text-xs", belowMinimum ? "text-[#f5a623]" : "text-muted")}>
+                  {belowMinimum ? "⚠ " : ""}
+                  This bot needs at least ${displayMinimum(minCapitalPerTrade)} of collateral per trade
+                  {selected ? ` on ${selected}` : ""}
+                  {rungCount > 0
+                    ? ` — its ${rungCount} take-profit rungs are separate orders, and each must clear the exchange's minimum on its own.`
+                    : "."}
+                  {isPercent && " A percentage bot is measured on what the trade actually commits, not the percentage."}
+                </span>
+              )}
             </div>
           </div>
         </div>

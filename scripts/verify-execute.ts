@@ -2,7 +2,8 @@
 // Run: npx tsx scripts/verify-execute.ts
 import { readFileSync } from "node:fs";
 import { beRungIndex, profileFor, type BotConfig } from "../lib/bot-config.ts";
-import { closingSide, rungSizes, sizeFromMargin, slPrice, tpPrice, tradeMargin } from "../lib/execution/pricing.ts";
+import type { MarketInterface } from "ccxt";
+import { closingSide, ladderFloorSize, planLadder, rungSizes, sizeFromMargin, slPrice, tpPrice, tradeMargin } from "../lib/execution/pricing.ts";
 
 const config = JSON.parse(readFileSync("fixtures/BTC.json", "utf8")) as BotConfig;
 
@@ -67,6 +68,102 @@ for (const [name, p] of [["safe", safe], ["balanced", balanced], ["aggressive", 
 const partial = rungSizes(1, [0.25, 0.25], roundAmount);
 check("Σw=0.5 leaves half the position open", near(partial.reduce((s, x) => s + x, 0), 0.5), `[${partial.join(", ")}]`);
 check("empty ladder -> no rungs", rungSizes(1, [], roundAmount).length === 0);
+
+console.log("\n── ladder floor: the minimum a member is actually told to fund ──");
+// Bybit BTC/USDT:USDT as measured on the venue: 0.001 BTC minimum order, 5 USDT minimum
+// notional, a 0.001 amount step, and one contract is one BTC.
+const bybitBtc = {
+  limits: { amount: { min: 0.001 }, cost: { min: 5 } },
+  precision: { amount: 0.001, price: 0.1 },
+  contractSize: 1,
+} as unknown as MarketInterface;
+// The venue's own rounding: `amountToPrecision` TRUNCATES, which is the whole point.
+const step001 = (n: number) => Math.floor(n * 1e3 + 1e-9) / 1e3;
+const tick01 = (n: number) => Math.round(n * 10) / 10;
+
+// The live report, reproduced: $140 per trade on the balanced BTC profile (lev 7, smallest
+// rung 8%), BTC around 77,142. Both bots sat at $0 volume for twelve days on this.
+const PRICE = 77_142.4;
+const rawSize = sizeFromMargin(140, balanced.lev, PRICE);
+const sent = step001(rawSize);
+check("$140 @ 7x truncates to 0.012 BTC", near(sent, 0.012, 1e-12), `raw=${rawSize.toFixed(6)} sent=${sent}`);
+check("…whose 8% rung is under Bybit's 0.001 minimum", sent * 0.08 < 0.001, `rung=${(sent * 0.08).toFixed(5)}`);
+
+let quotedSize = 0;
+let quotedNotional = 0;
+try {
+  planLadder(PRICE, sent, balanced, "LONG", bybitBtc, step001, tick01);
+  check("$140 is rejected before the entry is sent", false, "it was accepted");
+} catch (error) {
+  const raw = error instanceof Error ? error.message : String(error);
+  const [tag, size, notional] = raw.split(":");
+  check("$140 is rejected with LADDER_TOO_SMALL", tag === "LADDER_TOO_SMALL", raw);
+  quotedSize = Number(size);
+  quotedNotional = Number(notional);
+}
+
+// THE REGRESSION. The old message quoted the untruncated arithmetic — 0.0125 BTC, ~964.28
+// USDT, $137.75 of margin at 7x. A member who funded exactly that was rejected a second time,
+// because 0.0125 truncates straight back down to 0.012. The quote must be a reachable size.
+check("quoted size is a whole step above, not the unreachable 0.0125", near(quotedSize, 0.013, 1e-9), `quoted=${quotedSize}`);
+check("quoted size survives the venue's truncation", near(step001(quotedSize), quotedSize, 1e-12));
+check("quoted notional is ~1002.86, not the old ~964.28", quotedNotional > 1000 && quotedNotional < 1005, `quoted=${quotedNotional}`);
+
+// And the proof that closes the loop: fund exactly what the message now asks for, and the
+// ladder places. This is the assertion the old code could not pass.
+const fundedMargin = quotedNotional / balanced.lev;
+const fundedSent = step001(sizeFromMargin(fundedMargin, balanced.lev, PRICE));
+let placed = false;
+try {
+  const rungs = planLadder(PRICE, fundedSent, balanced, "LONG", bybitBtc, step001, tick01);
+  placed = rungs.length === balanced.w.length && rungs.every((r) => r.size >= 0.001);
+} catch {
+  placed = false;
+}
+check(`funding exactly the quoted ${fundedMargin.toFixed(2)} now WORKS`, placed, `size=${fundedSent}`);
+check("and $1 under it still does not", !(() => {
+  const under = step001(sizeFromMargin(fundedMargin - 1, balanced.lev, PRICE));
+  try { planLadder(PRICE, under, balanced, "LONG", bybitBtc, step001, tick01); return true; } catch { return false; }
+})());
+
+console.log("\n── ladderFloorSize ──");
+for (const [name, p] of [["safe", safe], ["balanced", balanced], ["aggressive", aggressive]] as const) {
+  const floor = ladderFloorSize(PRICE, p, "SHORT", bybitBtc, step001, tick01);
+  const minW = Math.min(...p.w);
+  check(`${name}: a floor is found`, floor !== null);
+  if (floor === null) continue;
+  check(`${name}: floor clears the arithmetic minimum ${(0.001 / minW).toFixed(5)}`, floor >= 0.001 / minW - 1e-12, `floor=${floor}`);
+  check(`${name}: floor lands on the venue's step`, near(step001(floor), floor, 1e-12), `floor=${floor}`);
+  check(`${name}: the floor itself places a full ladder`, planLadder(PRICE, floor, p, "SHORT", bybitBtc, step001, tick01).length === p.w.length);
+  // One step BELOW the floor must fail, or the floor is not the floor.
+  const below = step001(floor - 0.001);
+  let belowFails = false;
+  try { planLadder(PRICE, below, p, "SHORT", bybitBtc, step001, tick01); } catch { belowFails = true; }
+  check(`${name}: one step below (${below}) is rejected`, belowFails);
+  console.log(`      ${name}: min ${(((floor * PRICE) / p.lev)).toFixed(2)} per trade at ${p.lev}x`);
+}
+
+// A SHORT prices its rungs below entry, so it clears a minimum NOTIONAL least easily — the
+// figure quoted to a member has to hold for the harder side.
+const costBound = {
+  limits: { amount: { min: 0 }, cost: { min: 5 } },
+  precision: { amount: 0.001, price: 0.1 },
+  contractSize: 1,
+} as unknown as MarketInterface;
+const shortFloor = ladderFloorSize(100, balanced, "SHORT", costBound, step001, tick01);
+const longFloor = ladderFloorSize(100, balanced, "LONG", costBound, step001, tick01);
+check("SHORT floor is never below the LONG floor", shortFloor !== null && longFloor !== null && shortFloor >= longFloor, `short=${shortFloor} long=${longFloor}`);
+
+// `precision.amount` is a STEP only under ccxt's TICK_SIZE mode. A DECIMAL_PLACES venue puts
+// a digit COUNT in the same field, and trusting a `3` as a 3-BTC step would quote a member an
+// absurd minimum. The guard must reject it and fall back, never multiply by it.
+const decimalPlacesVenue = {
+  limits: { amount: { min: 0.001 }, cost: { min: 5 } },
+  precision: { amount: 3, price: 1 },
+  contractSize: 1,
+} as unknown as MarketInterface;
+const guarded = ladderFloorSize(PRICE, balanced, "SHORT", decimalPlacesVenue, step001, tick01);
+check("a digit-count precision is not mistaken for a 3 BTC step", guarded === null || guarded < 1, `floor=${guarded}`);
 
 console.log(failures === 0 ? "\nPASS" : `\nFAIL (${failures})`);
 process.exit(failures === 0 ? 0 : 1);

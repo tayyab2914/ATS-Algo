@@ -4,10 +4,12 @@ import { AppShell } from "@/components/app/AppShell";
 import { BotSettingsForm } from "@/components/my-bots/BotSettingsForm";
 import { AreaChart } from "@/components/dashboard/AreaChart";
 import { getPageAccess } from "@/lib/auth/guards";
+import { profileFor, type BotConfig } from "@/lib/bot-config";
 import { chosenExchange } from "@/lib/bot-exchanges";
 import { cn } from "@/lib/cn";
 import { monthlyCurve } from "@/lib/dashboard/metrics";
 import { prisma } from "@/lib/db";
+import { cachedMinCapitalPerTrade } from "@/lib/my-bots/min-capital";
 
 const RISK_EXPOSURE: Record<"LOW" | "MEDIUM" | "HIGH", string> = {
   LOW: "Low",
@@ -31,7 +33,7 @@ export default async function BotSettingsPage({ params }: PageProps<"/my-bots/[b
       compounding: true,
       exchangeSource: true,
       realizedBalance: true,
-      bot: { select: { id: true, name: true, riskClass: true, exchanges: true } },
+      bot: { select: { id: true, name: true, riskClass: true, exchanges: true, ticker: true, tickerMap: true, config: true } },
       // Settled only — an unconfirmed `realizedPnl` is a placeholder, and ROI below divides by
       // the margin it was supposedly earned on.
       positions: { where: { status: "CLOSED", pnlPending: false }, select: { realizedPnl: true, closedAt: true, marginUsed: true } },
@@ -66,6 +68,12 @@ export default async function BotSettingsPage({ params }: PageProps<"/my-bots/[b
     bot.exchanges.map((e) => [e, connectedSet.has(e)]),
   );
 
+  // The smallest trade this bot can actually place on the chosen venue, shown right under the
+  // field it constrains. One public round-trip, memoised for a minute; null when the venue
+  // won't quote, and the form then shows nothing rather than a number it cannot stand behind.
+  const minCapital = chosen ? await cachedMinCapitalPerTrade(chosen, bot) : null;
+  const rungCount = profileFor(bot.config as unknown as BotConfig, bot.riskClass)?.tp.length ?? 0;
+
   return (
     <AppShell>
       {/* top bar */}
@@ -90,6 +98,8 @@ export default async function BotSettingsPage({ params }: PageProps<"/my-bots/[b
         exchanges={bot.exchanges}
         chosen={chosen}
         connectedByExchange={connectedByExchange}
+        minCapitalPerTrade={minCapital}
+        rungCount={rungCount}
         initial={{
           allocationType: userBot.allocationType,
           capitalPerTrade: userBot.capitalPerTrade,

@@ -6,7 +6,7 @@ import { beRungIndex } from "@/lib/bot-config";
 import { prisma } from "@/lib/db";
 import { adapterFor, exchangeClient, livePosition, venueOf, type TradeCreds } from "./client";
 import { logExec } from "./log";
-import { closingSide, notionalOf, rungSizes, sizeFromMargin, slPrice, tpPrice, tradeMargin, type Side, type SizingInput } from "./pricing";
+import { closingSide, notionalOf, planLadder, sizeFromMargin, slPrice, tradeMargin, type LadderRung, type Side, type SizingInput } from "./pricing";
 import { MARGIN_MODE, ensurePrepared } from "./prepare";
 import { stopStrategyFor } from "./stops";
 
@@ -101,57 +101,6 @@ export type OrderKindName = "ENTRY" | "STOP" | "TP" | "CLOSE";
 export function clientOrderId(signalId: string, userBotId: string, kind: OrderKindName, rungIndex?: number): string {
   const seed = `${signalId}:${userBotId}:${kind}:${rungIndex ?? ""}`;
   return createHash("sha256").update(seed).digest("hex").slice(0, 32);
-}
-
-export type LadderRung = { rungIndex: number; size: number; price: number };
-
-/**
- * Split the position across the ladder and price each rung off the real entry.
- *
- * Every rung is an independent order, so each must clear the venue's minimum
- * amount *and* minimum notional on its own — a 6-rung ladder whose smallest
- * weight is 0.08 needs a position ~12.5x the minimum order size. Checked before
- * the entry is sent: discovering it afterwards would leave a leveraged position
- * open with no take-profits at all.
- */
-export function planLadder(entryPrice: number, size: number, profile: ProfileConfig, side: Side, market: MarketInterface, round: (n: number) => number, roundPrice: (n: number) => number): LadderRung[] {
-  const minAmount = Number(market.limits?.amount?.min ?? 0);
-  const minCost = Number(market.limits?.cost?.min ?? 0);
-  // `size` and every rung are in VENUE units. On a contract-denominated venue those are not base
-  // units, so notional needs converting back before it can be compared to a minimum COST.
-  const contractSize = Number(market.contractSize ?? 1) || 1;
-
-  const tooSmall = () => {
-    const needed = Math.max(
-      ...profile.w.map((weight) =>
-        Math.max(minAmount / weight, minCost > 0 ? minCost / (weight * contractSize * entryPrice) : 0),
-      ),
-    );
-    return new Error(`LADDER_TOO_SMALL:${needed.toPrecision(4)}:${notionalOf(needed, entryPrice, contractSize).toFixed(2)}`);
-  };
-
-  // Check the UNROUNDED rungs first. `amountToPrecision` throws for anything below
-  // one precision step, so rounding before this would raise a ccxt error instead of
-  // our actionable one — and would do it after the position was already open.
-  for (let k = 0; k < profile.w.length; k++) {
-    const raw = size * profile.w[k];
-    const price = tpPrice(entryPrice, profile.tp[k], side);
-    if (raw < minAmount || (minCost > 0 && notionalOf(raw, price, contractSize) < minCost)) throw tooSmall();
-  }
-
-  const sizes = rungSizes(size, profile.w, round);
-  const rungs: LadderRung[] = sizes.map((rungSize, rungIndex) => ({
-    rungIndex,
-    size: rungSize,
-    price: roundPrice(tpPrice(entryPrice, profile.tp[rungIndex], side)),
-  }));
-
-  // And again after rounding: the final rung absorbs the remainder and could land
-  // under the minimum even when its unrounded share cleared it.
-  for (const rung of rungs) {
-    if (rung.size < minAmount || (minCost > 0 && notionalOf(rung.size, rung.price, contractSize) < minCost)) throw tooSmall();
-  }
-  return rungs;
 }
 
 export type OpenPositionInput = {
@@ -733,10 +682,22 @@ export function executionError(error: unknown): { message: string; status: numbe
       status: 400,
     };
   }
+  // The quoted size is the one that ACTUALLY works — rounded up to the venue's amount step and
+  // verified against the real ladder. Quoting the raw arithmetic instead sent members to fund
+  // an amount that was rejected all over again; see ladderFloorSize.
   if (raw.startsWith("LADDER_TOO_SMALL:")) {
     const [, size, notional] = raw.split(":");
     return {
       message: `Capital per trade is too small to place all take-profit rungs — each rung is a separate order and must clear your exchange's minimum on its own. This bot needs a position of at least ${size} contracts (~${notional} USDT notional).`,
+      status: 400,
+    };
+  }
+  // No position size places this ladder on this instrument at all — the smallest rung is under
+  // the venue's minimum however big the trade gets. Nothing the member can fix by adding money,
+  // so it must not read like the message above.
+  if (raw === "LADDER_UNPLACEABLE") {
+    return {
+      message: "This bot's take-profit ladder can't be placed on your exchange — one of its rungs stays below the exchange's minimum order size at any trade size. Run this bot on a different exchange, or let us know so we can re-check the instrument.",
       status: 400,
     };
   }

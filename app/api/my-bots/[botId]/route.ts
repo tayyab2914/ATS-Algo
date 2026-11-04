@@ -6,6 +6,7 @@ import { chosenExchange } from "@/lib/bot-exchanges";
 import { prisma } from "@/lib/db";
 import { errorDetail, logExec } from "@/lib/execution/log";
 import { prepareDeployment } from "@/lib/execution/prepare";
+import { cachedMinCapitalPerTrade } from "@/lib/my-bots/min-capital";
 import { botReadiness } from "@/lib/my-bots/readiness";
 
 /**
@@ -63,7 +64,9 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
           capitalPerTrade: true,
           allocatedCapital: true,
           exchangeSource: true,
-          bot: { select: { exchanges: true } },
+          // ticker/tickerMap/config/riskClass feed the minimum-capital floor below — the
+          // instrument to price and the profile whose ladder and leverage decide the size.
+          bot: { select: { exchanges: true, ticker: true, tickerMap: true, config: true, riskClass: true } },
         },
       })
     : null;
@@ -101,6 +104,13 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
             select: { apiKeyEnc: true },
           })
         : null;
+      // The smallest trade this bot can actually place on that venue. Costs one public
+      // round-trip (memoised for a minute), and only on the arm/activate path — never on an
+      // ordinary settings save. A null means the venue wouldn't answer or the instrument
+      // isn't listed, and that must NOT stand between a member and their own bot: the check
+      // is skipped, and the engine's refusal at signal time remains the backstop.
+      const minCapital = chosen ? await cachedMinCapitalPerTrade(chosen, current.bot) : null;
+
       const { ready, missing } = botReadiness({
         exchanges,
         chosen,
@@ -108,6 +118,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         capitalPerTrade: effPerTrade,
         allocationType: effType,
         allocatedCapital: effAllocated,
+        minCapitalPerTrade: minCapital ?? undefined,
       });
       if (!ready) {
         const verb = parsed.data.liveArmed === true ? "arm live trading" : "activate";
